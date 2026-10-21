@@ -1,0 +1,29 @@
+# Workflow defaults. Matching arrays are [azimuth, range].
+# Local input/output paths, burst ID and geocoding EPSG belong in pair overrides.
+inputs:
+  polarization: VV
+  subswaths: [1, 2, 3]
+gross_offsets:
+  mode: zero  # zero | constant | velocity; velocity requires explicit source/conventions
+  constant:
+    azimuth_px: 0
+    range_px: 0
+burst_merge:
+  enabled: true  # AOI workflows assemble coregistered SLCs before matching.
+  alignment_tolerance_px: 0.001
+matching:
+  backend: auto
+  window: [64, 256]
+  search: [10, 40]
+  stride: [32, 128]
+  raw_oversampling: 2
+  oversampling: 32
+  zoom: 16
+  deramp: 1
+  batch: [1, 8]
+  snr_threshold: 0.0
+  correlation_threshold: 0.0
+geocoding:
+  spacing_m: 200
+  resampling: nearest
+  mask: input

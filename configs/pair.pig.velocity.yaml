@@ -1,0 +1,19 @@
+extends: pair.pig.yaml
+output:
+  directory: ../work/pig/m5/velocity
+gross_offsets:
+  mode: velocity
+  velocity:
+    vx:
+      path: ../../../glaciers/antarctica/measures/antarctica_ice_velocity_450m_v2.nc
+      variable: VX
+    vy:
+      path: ../../../glaciers/antarctica/measures/antarctica_ice_velocity_450m_v2.nc
+      variable: VY
+    basis: map_xy
+    map_units: ground
+    units: m/year
+    year_days: 365.25
+    interpolation: bilinear
+    product: MEaSUREs InSAR-Based Antarctica Ice Velocity Map (NSIDC-0484)
+    version: '2'

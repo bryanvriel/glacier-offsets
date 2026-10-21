@@ -1,0 +1,46 @@
+# Track Python source and explicitly selected project/reference files only.
+# Directory traversal keeps Python audit utilities in docs/ trackable without
+# including their reports, images or other working documents.
+*
+!*/
+!*.py
+!/.gitignore
+!/README.md
+!/pyproject.toml
+!/environment.yml
+!/requirements.txt
+!/requirements-diagnostics.txt
+!/bin/glacier-offsets
+!/src/glacier_offsets/defaults.yaml
+
+# Reference configurations. Other local/generated configs remain ignored.
+!/configs/defaults.yaml
+!/configs/pair.example.yaml
+!/configs/pair.initialized.example.yaml
+!/configs/pair.constant.yaml
+!/configs/pair.pig.yaml
+!/configs/pair.pig.velocity.yaml
+!/configs/pair.pig.aoi.yaml
+
+# Exclude entire data/output/document/runtime trees, including the data symlink.
+/data
+/work
+/plans
+/.runtime
+/build
+/dist
+wheel-smoke/
+site-packages/
+/.venv
+/venv
+/.agents
+/.codex
+/.aws
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.DS_Store

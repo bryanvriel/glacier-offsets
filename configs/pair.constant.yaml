@@ -1,0 +1,22 @@
+extends: defaults.yaml
+inputs:
+  reference_safe: ../data/safe/S1A_IW_SLC__1SSH_20200110T080237_20200110T080304_030735_03861B_8696.zip
+  secondary_safe: ../data/safe/S1A_IW_SLC__1SSH_20200122T080237_20200122T080304_030910_038C43_0938.zip
+  reference_orbit: ../data/orbits/S1A_OPER_AUX_POEORB_OPOD_20210316T211354_V20200109T225942_20200111T005942.EOF
+  secondary_orbit: ../data/orbits/S1A_OPER_AUX_POEORB_OPOD_20210317T010452_V20200121T225942_20200123T005942.EOF
+  dem: ../data/dem/elevation_REMA_354878e45593.tif
+  polarization: HH
+  burst_id: t038_080975_iw2
+output:
+  directory: ../work/jan10_jan22
+gross_offsets:
+  mode: constant
+  constant:
+    azimuth_px: 2
+    range_px: -3
+geocoding:
+  epsg: 3031
+matching:
+  first_center:
+  - 47.5
+  - 175.5

@@ -1,0 +1,12 @@
+# PIG AOI: assemble the selected COMPASS bursts before native offset tracking.
+extends: pair.pig.yaml
+inputs:
+  burst_id: null
+aoi:
+  path: ../data/pig/pig_isce3_poly.kml
+output:
+  directory: ../work/pig/multi-burst-aoi
+gross_offsets:
+  mode: zero
+burst_merge:
+  enabled: true

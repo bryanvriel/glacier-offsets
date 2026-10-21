@@ -1,0 +1,9 @@
+# Workspace-local plotting packages, installed --no-deps --target .runtime/deps.
+# numpy, packaging and python-dateutil come from the pinned conda environment.
+matplotlib==3.10.8
+pillow==11.3.0
+contourpy==1.3.3
+cycler==0.12.1
+fonttools==4.60.1
+kiwisolver==1.4.9
+pyparsing==3.2.5

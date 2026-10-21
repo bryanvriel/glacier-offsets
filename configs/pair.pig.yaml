@@ -1,0 +1,13 @@
+extends: defaults.yaml
+inputs:
+  reference_safe: ../data/pig/safe/S1A_IW_SLC__1SSH_20200112T043556_20200112T043623_030762_038717_3E04.zip
+  secondary_safe: ../data/pig/safe/S1B_IW_SLC__1SSH_20200118T043514_20200118T043541_019866_025927_DD28.zip
+  reference_orbit: ../data/pig/orbits/S1A_OPER_AUX_POEORB_OPOD_20210316T215224_V20200111T225942_20200113T005942.EOF
+  secondary_orbit: ../data/pig/orbits/S1B_OPER_AUX_POEORB_OPOD_20210316T232904_V20200117T225942_20200119T005942.EOF
+  dem: ../data/pig/dem/elevation_REMA_7913bbb002ed.tif
+  polarization: HH
+  burst_id: t065_139122_iw2
+output:
+  directory: ../work/pig/jan12_jan18
+geocoding:
+  epsg: 3031

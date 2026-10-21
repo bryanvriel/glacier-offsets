@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+_go_root=$(cd "$(dirname "$0")/.." && pwd)
+export PYTHONPATH="$_go_root/src:$_go_root/.runtime/deps${PYTHONPATH:+:$PYTHONPATH}"
+export MPLCONFIGDIR="$_go_root/.runtime/matplotlib"
+exec "${GLACIER_OFFSETS_PYTHON:-python}" -m glacier_offsets "$@"
