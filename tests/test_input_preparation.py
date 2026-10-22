@@ -218,6 +218,113 @@ class PreparationTests(unittest.TestCase):
             output=prep.get_dem(self.bounds,self.root/'dem',self.args)
         self.assertTrue(Path(output).is_file())
 
+    def local_source(self, value=123):
+        path=self.root/'local DEM.tif'
+        x0,y0,x1,y1=prep.rema_geometry(self.bounds)
+        # Offset origin deliberately: cropping must preserve the source grid.
+        gt=(np.floor(x0/100)*100-83,100.,0.,np.ceil(y1/100)*100+127,0.,-100.)
+        width=int(np.ceil((x1-gt[0])/100))+3;height=int(np.ceil((gt[3]-y0)/100))+3
+        ds=gdal.GetDriverByName('GTiff').Create(str(path),width,height,1,gdal.GDT_Float32)
+        srs=osr.SpatialReference();srs.ImportFromEPSG(3031)
+        ds.SetProjection(srs.ExportToWkt());ds.SetGeoTransform(gt)
+        ds.GetRasterBand(1).SetNoDataValue(-32767);ds.GetRasterBand(1).Fill(value);ds=None
+        return path
+
+    def test_local_raster_crops_at_native_resolution_and_records_source(self):
+        source=self.local_source();before=checksum(source)
+        self.args.dem_source=str(source)
+        with contextlib.redirect_stdout(self.stream):
+            output=prep.get_dem(self.bounds,self.root/'dem',self.args)
+        ds=gdal.Open(output);gt=ds.GetGeoTransform();original=gdal.Open(str(source)).GetGeoTransform()
+        self.assertEqual(gt[1],100.);self.assertEqual(gt[5],-100.)
+        self.assertAlmostEqual((gt[0]-original[0])/100,round((gt[0]-original[0])/100))
+        self.assertAlmostEqual((gt[3]-original[3])/100,round((gt[3]-original[3])/100))
+        np.testing.assert_array_equal(ds.ReadAsArray(),123)
+        report=json.loads(Path(output+'.preparation.json').read_text())
+        self.assertEqual(report['valid_fraction'],1.)
+        self.assertEqual(report['local_source']['files'][0]['sha256'],before)
+        self.assertEqual(report['local_source']['path'],str(source))
+        self.assertEqual(report['local_source']['nodata'],-32767)
+        self.assertIn('no vertical conversion',report['height_reference_basis'])
+        self.assertEqual(checksum(source),before)
+        self.assertEqual(ds.GetRasterBand(1).GetUnitType(),'m')
+
+    def test_local_raster_cache_reuse_and_changed_source_invalidation(self):
+        source=self.local_source();self.args.dem_source=str(source)
+        with contextlib.redirect_stdout(self.stream):
+            first=prep.get_dem(self.bounds,self.root/'dem',self.args)
+            before=(checksum(first),Path(first).stat().st_mtime_ns)
+            with patch.object(prep,'generate_local_dem',side_effect=AssertionError('regenerated valid cache')):
+                self.assertEqual(prep.get_dem(self.bounds,self.root/'dem',self.args),first)
+            self.assertEqual(before,(checksum(first),Path(first).stat().st_mtime_ns))
+            ds=gdal.Open(str(source),gdal.GA_Update);ds.GetRasterBand(1).Fill(456);ds=None
+            second=prep.get_dem(self.bounds,self.root/'dem',self.args)
+        self.assertNotEqual(first,second)
+        np.testing.assert_array_equal(gdal.Open(second).ReadAsArray(),456)
+        self.assertEqual(checksum(first),before[0])
+
+    def test_local_raster_respects_nodata_and_valid_fraction(self):
+        source=self.local_source();self.args.dem_source=str(source)
+        ds=gdal.Open(str(source),gdal.GA_Update);ds.GetRasterBand(1).WriteArray(np.array([[-32767]],'float32'),3,3);ds=None
+        with contextlib.redirect_stdout(self.stream):
+            output=prep.get_dem(self.bounds,self.root/'dem',self.args)
+        ds=gdal.Open(output);data=ds.ReadAsArray()
+        self.assertEqual(ds.GetRasterBand(1).GetNoDataValue(),-9999)
+        self.assertTrue(np.any(data==-9999));self.assertFalse(np.any(data==-32767))
+        self.args.min_dem_valid_fraction=1.
+        with contextlib.redirect_stdout(self.stream),self.assertRaisesRegex(ValueError,'valid fraction'):
+            prep.get_dem(self.bounds,self.root/'dem',self.args)
+        self.assertTrue(Path(output).is_file())
+
+    def test_local_raster_extent_pixel_limit_and_metadata_checked_before_warp(self):
+        source=self.local_source();self.args.dem_source=str(source)
+        with patch('osgeo.gdal.Warp',side_effect=AssertionError('warped invalid request')),contextlib.redirect_stdout(self.stream):
+            with self.assertRaisesRegex(ValueError,'extent'):
+                prep.get_dem([-101,-76,-99,-74],self.root/'dem',self.args)
+            self.args.max_dem_pixels=1
+            with self.assertRaisesRegex(ValueError,'limit'):
+                prep.get_dem(self.bounds,self.root/'dem',self.args)
+        source.write_text('not a raster')
+        with contextlib.redirect_stdout(self.stream),self.assertRaises(RuntimeError):
+            prep.local_dem_source(source)
+
+    def test_local_raster_envi_uses_geographic_crs_and_retains_header(self):
+        source=self.local_source();self.args.dem_source=str(source);self.args.dem_format='ENVI'
+        with contextlib.redirect_stdout(self.stream):
+            output=prep.get_dem(self.bounds,self.root/'dem',self.args)
+        ds=gdal.Open(output);srs=osr.SpatialReference(wkt=ds.GetProjection())
+        self.assertEqual(srs.GetAuthorityCode(None),'4326')
+        self.assertGreater(prep.validate_dem(output,self.bounds)['valid_fraction'],.9)
+        self.assertTrue(any(p.endswith('.hdr') for p in ds.GetFileList()))
+
+    def test_local_raster_cli_records_manifest_without_downloads(self):
+        source=self.local_source()
+        orbits=self.output/'orbits';orbits.mkdir(parents=True)
+        orbit(orbits/'cached.EOF',self.time-timedelta(hours=3))
+        with patch.object(prep,'generate_rema',side_effect=AssertionError('downloaded REMA')), \
+             self.downloader(lambda **kw:self.fail('downloaded a cached orbit')),contextlib.redirect_stdout(self.stream):
+            result=main(['prepare-inputs',str(self.safe),'-o',str(self.output),
+                         '--dem-source',str(source),'--padding-km','0','--min-dem-valid-fraction','1'])
+        self.assertEqual(result,0)
+        m=json.loads((self.output/'manifest.json').read_text())
+        self.assertEqual(m['dem_source'],str(source));self.assertEqual(m['status'],'complete')
+        self.assertEqual(m['dems'][0]['validation']['local_source']['path'],str(source))
+        self.assertEqual(prepared_paths(self.output/'manifest.json')[2],m['dem'])
+        with contextlib.redirect_stderr(self.stream),self.assertRaises(SystemExit):
+            main(['prepare-inputs',str(self.safe),'--dem-source',str(source)+'.missing'])
+
+    def test_invalid_local_raster_records_failure_before_orbit_download(self):
+        source=self.local_source()
+        ds=gdal.Open(str(source),gdal.GA_Update);ds.GetRasterBand(1).SetUnitType('ft');ds=None
+        with patch.object(prep,'get_orbit',side_effect=AssertionError('started orbit processing')), \
+             contextlib.redirect_stdout(self.stream),contextlib.redirect_stderr(self.stream):
+            result=main(['prepare-inputs',str(self.safe),'-o',str(self.output),'--dem-source',str(source)])
+        self.assertEqual(result,1)
+        m=json.loads((self.output/'manifest.json').read_text())
+        self.assertEqual(m['status'],'failed');self.assertIn('metres',m['error'])
+        with self.assertRaisesRegex(ValueError,'failures'):
+            prepared_paths(self.output/'manifest.json')
+
     def test_envi_header_survives_and_xml_names_final_binary(self):
         self.args.dem_format='ENVI'
         self.args.isce2_xml=True

@@ -9,6 +9,7 @@ Examples
   glacier-offsets prepare-inputs /data/SLCs --dem-source REMA --rema-resolution 10
   glacier-offsets prepare-inputs scene.SAFE -o inputs --dem-format ENVI
   glacier-offsets prepare-inputs /data/SLCs --skip-dem --aux cal-ins
+  glacier-offsets prepare-inputs /data/SLCs -o inputs --dem-source /data/Gapless-REMA100.tif
 
 REMA data are loaded from the public Polar Geospatial Center mosaic VRT on AWS,
 not the OpenTopography globaldem API (which does not serve REMA rasters).
@@ -350,13 +351,13 @@ def get_aux(product: str, mission: str, acquired: datetime, icid: int | None,
     return str(path)
 
 
-def rema_geometry(bounds: list[float]):
-    """Projected bounds of sampled WGS84 bbox edges, using native EPSG:3031."""
+def projected_bounds(bounds, crs):
+    """Projected bounds of sampled WGS84 bbox edges."""
     from osgeo import osr
 
     src, dst = osr.SpatialReference(), osr.SpatialReference()
     src.ImportFromEPSG(4326)
-    dst.ImportFromEPSG(3031)
+    dst.SetFromUserInput(crs)
     src.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
     dst.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
     transformer = osr.CoordinateTransformation(src, dst)
@@ -369,6 +370,111 @@ def rema_geometry(bounds: list[float]):
     xy = [transformer.TransformPoint(lon, lat) for lon, lat in points]
     return [min(p[0] for p in xy), min(p[1] for p in xy),
             max(p[0] for p in xy), max(p[1] for p in xy)]
+
+
+def rema_geometry(bounds: list[float]):
+    return projected_bounds(bounds, 'EPSG:3031')
+
+
+DEM_PROVIDERS = ('auto', 'COP', 'NISAR', 'REMA')
+
+
+def dem_source(value):
+    """Resolve local paths at invocation time; preserve existing provider names."""
+    if value in DEM_PROVIDERS:
+        return value
+    path = Path(value).expanduser().resolve()
+    if not path.is_file():
+        raise argparse.ArgumentTypeError(f'DEM source must be auto, COP, NISAR, REMA or an existing raster: {value}')
+    return str(path)
+
+
+def local_dem_source(path):
+    """Inspect and fingerprint local elevation data without loading the mosaic."""
+    from osgeo import gdal
+    from pyproj import CRS
+
+    gdal.UseExceptions()
+    path = Path(path).expanduser().resolve(strict=True)
+    ds = gdal.Open(str(path))
+    if ds.RasterCount != 1 or not ds.GetProjection():
+        raise ValueError('Local DEM must be a single-band georeferenced raster')
+    band = ds.GetRasterBand(1)
+    if gdal.DataTypeIsComplex(band.DataType):
+        raise ValueError('Local DEM elevations must be real-valued')
+    if band.GetUnitType().lower() not in ('','m','metre','meter','metres','meters'):
+        raise ValueError('Local DEM elevations must already be in metres')
+    if band.GetScale() not in (None,1.) or band.GetOffset() not in (None,0.):
+        raise ValueError('Local DEM must contain unpacked elevations; apply its scale/offset first')
+    gt = ds.GetGeoTransform(can_return_null=True)
+    if (gt is None or not all(math.isfinite(v) for v in gt) or
+            gt[1] <= 0 or gt[5] >= 0 or gt[2] != 0 or gt[4] != 0):
+        raise ValueError('Local DEM must have a north-up, unrotated affine grid')
+    epsg = CRS.from_wkt(ds.GetProjection()).to_epsg()
+    if epsg is None:
+        raise ValueError('Local DEM CRS must have an identifiable EPSG code for ISCE3')
+    files = []
+    print(f'  Fingerprinting local DEM: {path}', flush=True)
+    for name in sorted(set(ds.GetFileList() or [str(path)])):
+        file = Path(name).resolve(strict=True)
+        if not file.is_file():
+            raise ValueError(f'Local DEM dependency is not a local file: {name}')
+        files.append({'path':str(file),'size_bytes':file.stat().st_size,'sha256':checksum(file)})
+    nodata = band.GetNoDataValue()
+    return {'path':str(path),'files':files,'epsg':epsg,'shape':[ds.RasterYSize,ds.RasterXSize],
+            'transform':list(gt),'nodata':nodata if nodata is None or math.isfinite(nodata) else str(nodata),
+            'height_reference':'WGS84 ellipsoid',
+            'height_reference_basis':'User-supplied raster must already contain WGS84 ellipsoidal heights in metres; no vertical conversion'}
+
+
+def generate_local_dem(output, bounds, source, fmt, max_pixels):
+    """Crop on the source grid; optionally reproject the crop to geographic ENVI."""
+    from osgeo import gdal
+
+    gdal.UseExceptions()
+    ds = gdal.Open(source['path'])
+    gt = source['transform']
+    box = projected_bounds(bounds, f"EPSG:{source['epsg']}")
+    dx,dy = gt[1],-gt[5]
+    # Round outwards relative to the actual source origin, preserving pixel centers.
+    left = math.floor((box[0]-gt[0])/dx)
+    right = math.ceil((box[2]-gt[0])/dx)
+    top = math.floor((gt[3]-box[3])/dy)
+    bottom = math.ceil((gt[3]-box[1])/dy)
+    if left < 0 or top < 0 or right > ds.RasterXSize or bottom > ds.RasterYSize:
+        raise ValueError('Local DEM extent does not cover requested buffered bounds')
+    width,height = right-left,bottom-top
+    if width*height > max_pixels:
+        raise ValueError(f'Local DEM crop would contain {width*height:,} pixels; limit is {max_pixels:,}')
+    crop = gdal.Translate('',ds,format='VRT',srcWin=[left,top,width,height],
+                          outputSRS=f"EPSG:{source['epsg']}")
+    crs = f"EPSG:{source['epsg']}"
+    box = [gt[0]+left*dx,gt[3]-bottom*dy,gt[0]+right*dx,gt[3]-top*dy]
+    if fmt == 'ENVI':
+        if bounds[0] < -180 or bounds[2] > 180:
+            raise ValueError('Local DEM ENVI across the date line is not supported; use GTiff')
+        crs = 'EPSG:4326'
+        estimate = gdal.AutoCreateWarpedVRT(crop,None,crs,gdal.GRA_Bilinear)
+        transform = estimate.GetGeoTransform()
+        dx,dy = abs(transform[1]),abs(transform[5]);estimate=None
+        box = bounds
+    pixels = estimate_pixels(box,dx,dy)
+    if pixels > max_pixels:
+        raise ValueError(f'Local DEM output would contain ~{pixels:,} pixels; limit is {max_pixels:,}')
+    # Geographic bounds rarely span an exact number of pixels. Explicit shape
+    # retains the full requested extent instead of rounding a boundary inward.
+    sampling = ({'width':math.ceil((box[2]-box[0])/dx),'height':math.ceil((box[3]-box[1])/dy)}
+                if fmt == 'ENVI' else {'xRes':dx,'yRes':dy})
+    print(f'  Local DEM: output {crs}, ~{pixels:,} pixels; source resolution retained for GeoTIFF')
+    creation = ['COMPRESS=DEFLATE','TILED=YES','BIGTIFF=IF_SAFER'] if fmt == 'GTiff' else []
+    result = gdal.Warp(str(output),crop,options=gdal.WarpOptions(
+        format=fmt,outputBounds=box,outputBoundsSRS=crs,dstSRS=crs,**sampling,
+        outputType=gdal.GDT_Float32,resampleAlg='bilinear',dstNodata=-9999,
+        creationOptions=creation,multithread=True))
+    if result is None:
+        raise RuntimeError('GDAL Warp returned no dataset for local DEM')
+    result.GetRasterBand(1).SetUnitType('m')
+    result.FlushCache();result=None
 
 
 def estimate_pixels(box: list[float], dx: float, dy: float) -> int:
@@ -421,12 +527,14 @@ def generate_rema(output: Path, bounds: list[float], resolution: int,
 
 
 def dem_filename(folder: Path, bounds: list[float], args: argparse.Namespace) -> Path:
-    key = json.dumps({"bounds": [round(float(x), 9) for x in bounds], "source": args.dem_source,
+    local = getattr(args,'local_dem_source',None)
+    key = json.dumps({"bounds": [round(float(x), 9) for x in bounds], "source": local or args.dem_source,
                       "resolution": args.rema_resolution if args.dem_source == "REMA" else None,
                       "format": args.dem_format, "padding": args.padding_km}, sort_keys=True)
     digest = hashlib.sha256(key.encode()).hexdigest()[:12]
     ext = ".tif" if args.dem_format == "GTiff" else ".dem.wgs84"
-    return folder / f"elevation_{args.dem_source}_{digest}{ext}"
+    label = 'LOCAL' if args.dem_source not in DEM_PROVIDERS else args.dem_source
+    return folder / f"elevation_{label}_{digest}{ext}"
 
 
 def validate_dem(path, bounds, min_valid_fraction=.01, max_pixels=200_000_000):
@@ -502,6 +610,15 @@ def get_dem(bounds: list[float], folder: Path, args: argparse.Namespace) -> str:
     args = argparse.Namespace(**vars(args))
     if args.dem_source == 'auto':
         args.dem_source = 'REMA' if bbox[3] <= -55 else 'COP'
+    local = None
+    if args.dem_source not in DEM_PROVIDERS:
+        local = getattr(args,'local_dem_source',None) or local_dem_source(args.dem_source)
+        args.local_dem_source = local
+    def provenance(report):
+        report.update(source=args.dem_source,rema_resolution=args.rema_resolution if args.dem_source=='REMA' else None)
+        if local:
+            report.update(local_source=local,height_reference_basis=local['height_reference_basis'])
+        return report
     folder.mkdir(parents=True, exist_ok=True)
     print(f"  DEM W,S,E,N: {[round(x, 5) for x in bbox]}")
     output = dem_filename(folder, bbox, args)
@@ -513,7 +630,7 @@ def get_dem(bounds: list[float], folder: Path, args: argparse.Namespace) -> str:
         except (ValueError,RuntimeError,OSError) as exc:
             print(f'  Cached DEM is unusable; rebuilding: {exc}')
         else:
-            report.update(source=args.dem_source,rema_resolution=args.rema_resolution if args.dem_source=='REMA' else None)
+            provenance(report)
             write_json(str(output)+'.preparation.json',report)
             print(f"  Reusing validated DEM: {output}")
             return str(output)
@@ -528,7 +645,9 @@ def get_dem(bounds: list[float], folder: Path, args: argparse.Namespace) -> str:
             raise ImportError('--isce2-xml requires ISCE2 and sardem; omit it for the ISCE3 workflow') from exc
     with tempfile.TemporaryDirectory(dir=folder,prefix='.dem-') as scratch:
         staged = Path(scratch)/output.name
-        if args.dem_source == "REMA":
+        if local:
+            generate_local_dem(staged,bbox,local,args.dem_format,args.max_dem_pixels)
+        elif args.dem_source == "REMA":
             generate_rema(staged,bbox,args.rema_resolution,args.dem_format,args.max_dem_pixels)
         else:
             if bbox[2]-bbox[0] > 90:
@@ -554,7 +673,7 @@ def get_dem(bounds: list[float], folder: Path, args: argparse.Namespace) -> str:
             files.append(xml_path)
         for p in sorted(files,key=lambda p:p==staged):
             p.replace(folder/p.name)  # Promote the binary last, after companions.
-    report.update(source=args.dem_source,rema_resolution=args.rema_resolution if args.dem_source=='REMA' else None)
+    provenance(report)
     write_json(str(output)+'.preparation.json',report)
     print(f"  DEM created: {output}")
     return str(output)
@@ -578,6 +697,13 @@ def prepare(args: argparse.Namespace) -> int:
     # An interrupted refresh must not leave an earlier success manifest current.
     write_json(root/'manifest.json',{'method':'s1-input-preparation-v1','status':'running',
                                     'input':str(input_path),'scenes':[]})
+    if not args.skip_dem and args.dem_source not in DEM_PROVIDERS:
+        try:
+            args.local_dem_source = local_dem_source(args.dem_source)
+        except Exception as exc:
+            write_json(root/'manifest.json',{'method':'s1-input-preparation-v1','status':'failed',
+                'input':str(input_path),'scenes':[],'failed_steps':1,'dem_source':args.dem_source,'error':str(exc)})
+            raise
     print(f"Found {len(safes)} usable SAFE product(s) in {args.safe}; "
           f"skipped {len(invalid_zips)} invalid ZIP(s)")
     counts = Counter(scene_stem(p) for p in safes)
@@ -698,8 +824,8 @@ def main(argv=None) -> int:
     parser.add_argument("--bbox", type=float, nargs=4, metavar=("W", "S", "E", "N"),
                         help="DEM AOI in W,S,E,N order (not ISCE2 SNWE); east may exceed 180")
     parser.add_argument("--padding-km", type=float, default=5.0)
-    parser.add_argument("--dem-source",choices=("auto","COP","NISAR","REMA"),default="auto",
-                        help='auto selects REMA south of 55S, otherwise COP')
+    parser.add_argument("--dem-source",type=dem_source,default="auto",metavar='PROVIDER_OR_RASTER',
+                        help='auto, COP, NISAR, REMA or a local raster path; local elevations must be WGS84 ellipsoidal metres')
     parser.add_argument("--rema-resolution", type=int, choices=(10, 32), default=32,
                         help="REMA mosaic resolution in meters (default 32)")
     parser.add_argument("--dem-mode", choices=("combined", "per-safe"), default="combined",

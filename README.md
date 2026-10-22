@@ -223,6 +223,36 @@ Sources supply WGS84 ellipsoidal heights; this datum is recorded as provenance,
 not inferred from elevation values. `--dem-format ENVI` also works through GDAL;
 the optional `--isce2-xml` flag additionally requires ISCE2 and sardem.
 
+`--dem-source` also accepts a local raster path, including the published
+Gapless-REMA100 mosaic:
+
+```bash
+glacier-offsets prepare-inputs data/larsen/safe -o data/larsen/prepared \
+  --dem-source /Volumes/TU200Pro/glaciers/antarctica/rema/Gapless-REMA100.tif
+```
+
+Local rasters are cropped to the buffered SAFE footprints or `--bbox` without
+downloading a DEM. GeoTIFF output retains the source CRS, pixel spacing and grid
+alignment; this mosaic therefore stays at 100 m in EPSG:3031. `--rema-resolution`
+applies only to the remote REMA provider. ENVI output is reprojected to EPSG:4326.
+The local raster must be single-band, north-up, unrotated, have an identifiable
+EPSG CRS, and already contain unpacked WGS84 ellipsoidal elevations in metres.
+No vertical-datum conversion or gap filling is performed. The Gapless-REMA100
+README explicitly specifies ellipsoidal metre heights. Its nodata value is
+honored and normalized to -9999 in the prepared crop.
+
+Preparation hashes the local source and its GDAL-listed dependencies once per
+invocation and records their paths and SHA256 values alongside the cropped DEM.
+Changing source contents changes the cache key. A large mosaic can take some
+time to fingerprint, but its pixels are only loaded for cropping/validation,
+not as one in-memory array. Local DEM preparation needs GDAL, without the
+optional DEM-downloader packages. Existing orbit downloads still use sentineleof.
+
+Use `--min-dem-valid-fraction 1` when the requested crop must be completely free
+of nodata; the default fraction below is unchanged. Existing stacks pin their
+DEM: initialize a new configuration/output root using the updated preparation
+manifest when switching DEMs, then regenerate geometry and aligned acquisitions.
+
 New and cached DEMs are opened with GDAL and checked for CRS, geotransform,
 buffered extent, real-valued metre elevations and valid pixels. The default
 `--min-dem-valid-fraction 0.01` rejects rasters with less than 1% finite,
