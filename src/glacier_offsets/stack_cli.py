@@ -31,6 +31,7 @@ def main(argv=None):
         for stage, description in STAGE_DESCRIPTIONS.items():
             print(f'{stage:12} {description}')
         print('\nrun executes all stages; plan and validate inspect inputs without processing.')
+        print('Input downloads: glacier-offsets prepare-inputs --help')
         return 0
     if not args.config:
         parser.error('config is required for this command')

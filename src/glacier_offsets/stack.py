@@ -41,7 +41,7 @@ class StackPlan:
     anchor: dict
 
 
-def scan_safes(directory):
+def scan_safes(directory, recursive=True):
     """Visit visible SAFE containers, pruning hidden and measurement trees."""
     result = []
     for root, directories, files in os.walk(directory):
@@ -52,7 +52,19 @@ def scan_safes(directory):
                 directories.remove(name)
         result.extend(Path(root) / name for name in sorted(files)
                       if not name.startswith('.') and name.lower().endswith('.zip'))
-    return sorted(result)
+        if not recursive:
+            directories[:] = []
+    # An unpacked SAFE and its original archive are the same scene container.
+    # Distinct scene names/dates still go through normal duplicate-date checks.
+    def stem(path):
+        name = path.name
+        if name.lower().endswith('.zip'):
+            name = name[:-4]
+        return name[:-5] if name.lower().endswith('.safe') else name
+    selected = {}
+    for path in sorted(result, key=lambda p: (p.is_file(), str(p))):
+        selected.setdefault((path.parent, stem(path)), path)
+    return sorted(selected.values())
 
 
 def read_catalog(root):

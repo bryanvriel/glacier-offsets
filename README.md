@@ -1,6 +1,6 @@
 # Sentinel-1 glacier offsets
 
-A small, restartable Python workflow for local Sentinel-1 TOPS SAFE pairs and acquisition stacks, one polarization and either one geographic burst or complete bursts intersecting an AOI. COMPASS performs geometry-only radar coregistration; native ISCE3 Ampcor tracks **amplitudes of complex SLCs**. Offset products retain applied gross, native residual and total separately. Only total motion is converted to displacement/velocity and geocoded. Local georeferenced velocity fields can guide searches. Pair AOI processing assembles compatible SLCs on one radar grid before tracking beneath `merged/`. Stack processing prepares each acquisition once on a pinned reference frame and reuses its SLC across pairs. There are no downloads, NESD or custom correlators.
+A small, restartable Python workflow for local Sentinel-1 TOPS SAFE pairs and acquisition stacks, one polarization and either one geographic burst or complete bursts intersecting an AOI. COMPASS performs geometry-only radar coregistration; native ISCE3 Ampcor tracks **amplitudes of complex SLCs**. Offset products retain applied gross, native residual and total separately. Only total motion is converted to displacement/velocity and geocoded. Local georeferenced velocity fields can guide searches. Pair AOI processing assembles compatible SLCs on one radar grid before tracking beneath `merged/`. Stack processing prepares each acquisition once on a pinned reference frame and reuses its SLC across pairs. Optional input preparation downloads precise orbits and a cropped DEM; processing stages use those local files. There is no NESD or custom correlator.
 
 Git tracks Python source (including audit scripts), the launcher, package/environment files, this README and selected reference configs. Data, processing outputs, images, plans, validation reports and other working documents stay local; links to those records below describe the working installation and may not exist in a fresh clone. New reference configs or non-Python source assets must be added to the explicit allowlist in `.gitignore`.
 
@@ -53,6 +53,8 @@ The inspected native **PyCPUAmpcor 0.25.21 does not parallelize its chunk loop**
 ## Local inputs
 
 ### Reference-geometry stacks
+
+If you have only SAFE scenes, first use the [input preparation command](#prepare-orbits-and-a-dem).
 
 Use [stack.example.yaml](configs/stack.example.yaml) or initialize a separate stack
 configuration; no pair-specific SAFE/orbit fields are required:
@@ -176,6 +178,79 @@ glacier-offsets stack run configs/stack.pig.interior.yaml --backend cpu
 Multi-slice assembly, NESD, time-series inversion, raster cubes, parallel stack
 execution and fractional alignment of reference bursts remain outside V1.
 
+### Prepare orbits and a DEM
+
+Install optional preparation dependencies in the existing ISCE3 environment:
+
+```bash
+python -m pip install -e '.[preparation]'
+```
+
+Given a directory of SAFE ZIPs or unpacked SAFEs:
+
+```bash
+glacier-offsets prepare-inputs data/pig/safe -o data/pig/prepared --dem-source REMA
+glacier-offsets stack init --prepared-inputs data/pig/prepared/manifest.json \
+  --polarization HH --aoi data/pig/pig_isce3_poly.kml --epsg 3031 \
+  --output configs/stack.generated.yaml --output-directory work/pig/stack-prepared \
+  --relative-paths
+glacier-offsets stack validate configs/stack.generated.yaml
+glacier-offsets stack run configs/stack.generated.yaml --backend cpu
+```
+
+`tools/s1_prepare.py` remains an equivalent source-tree entry point. Preparation
+recursively scans visible SAFE containers, ignoring dot-prefixed files and
+directories. An unpacked SAFE takes precedence over its same-named ZIP in the
+same directory; distinct products on the same date still trigger the stack's
+duplicate-date checks. Use `--no-recursive` for a shallow preparation scan.
+
+Precise orbits are downloaded through `sentineleof` using its ASF backend by
+default; `--use-cdse` selects CDSE and its authentication requirements. Scene
+mission/times come from `manifest.safe`. Cached and downloaded orbits must pass
+the same XML, state-vector, interpolation-margin and latest-creation selection
+rules as processing. RESORB fallback is rejected. Downloads are staged and
+validated before cached precise files are replaced. `--refresh-orbits` queries
+the provider even if the cache is valid.
+
+DEM defaults are one shared GeoTIFF, a 5 km footprint buffer, and automatic
+source selection: REMA for buffered bounds entirely south of 55°S, otherwise
+COP. REMA defaults to 32 m and native EPSG:3031; `--rema-resolution 10` selects
+10 m. COP uses `sardem` with geoid-to-ellipsoid conversion enabled; the NISAR
+option uses its pre-converted ellipsoidal DEM and requires Earthdata access.
+REMA uses unsigned public S3 access without AWS credentials. The unsigned-access
+and retry settings apply to GDAL's worker threads and are restored after the warp.
+Sources supply WGS84 ellipsoidal heights; this datum is recorded as provenance,
+not inferred from elevation values. `--dem-format ENVI` also works through GDAL;
+the optional `--isce2-xml` flag additionally requires ISCE2 and sardem.
+
+New and cached DEMs are opened with GDAL and checked for CRS, geotransform,
+buffered extent, real-valued metre elevations and valid pixels. The default
+`--min-dem-valid-fraction 0.01` rejects rasters with less than 1% finite,
+unmasked elevation coverage, including entirely nodata results. This is a
+whole-output raster fraction, not a promise that every glacier pixel is valid.
+Nodata is retained without filling. `--max-dem-pixels` defaults to 200 million;
+REMA estimates this before downloading, and every output is checked afterward.
+GeoTIFFs are validated in temporary files before atomic replacement. Validation
+statistics are saved beside each DEM in `<filename>.preparation.json`.
+
+Use `--bbox W S E N` to override DEM bounds. This can be smaller than a SAFE
+scene, but must still cover complete bursts selected for processing. When
+consuming a prepared manifest, `stack init` checks selected reference-burst
+extent coverage before writing its YAML. `--dem-mode per-safe`, `--skip-dem`
+and single-SAFE preparation need explicit path overrides at initialization
+where no shared DEM or SAFE directory is recorded.
+
+The preparation output contains `orbits/`, `dem/`, per-scene input reports and
+`manifest.json`. A failed scene, invalid ZIP or DEM failure gives a nonzero exit
+code and a failure record; `stack init --prepared-inputs` refuses failed
+manifests. Re-run preparation to retry while reusing validated products. AUX
+downloads default to `--aux none`; optional CAL/INS downloads are retained for
+external workflows and are not applied by this processor. Preparation never
+downloads SAFE imagery, runs COMPASS, or changes an existing stack's pin.
+
+Interrupted preparation leaves a `running` manifest, which initialization also
+rejects until preparation finishes successfully.
+
 ### Initialize a pair YAML
 
 Given two SAFE directories or ZIP files, a DEM and a directory of local precise orbits:
@@ -227,7 +302,7 @@ Local paths may be absolute or relative to the directory of the YAML that declar
 
 All maintained pair YAMLs now inherit from the shared file. Changing a default affects pairs that have not explicitly overridden it. Existing result files are not rewritten on edit; processing identities use resolved settings when stages are next run. Archived validation configs/results retain their as-run parameters. The initializer writes only overrides, including an explicit EPSG inferred from the DEM; it does not duplicate matching defaults or a default map spacing. To freeze a configuration for archival reproducibility, save the resolved config from `load_config()` rather than a live inheritance document.
 
-`--max-separation-days 12` optionally rejects a pair whose exact manifest start-time gap exceeds 12 days; a gap of exactly 12 days is accepted. This is an initialization check; processing still uses the selected burst's exact interval. The scene reader, orbit catalog and pair checks are reusable functions in `initialization.py`, so a future stack planner can index scenes/orbits once and filter candidate pairs by temporal separation. The current initializer generates one pair config and supports AOI selection; date-stack orchestration remains outside scope. Default output directories include both full SAFE product names to distinguish acquisition pairs before the existing per-burst subdirectory is added.
+`--max-separation-days 12` optionally rejects a pair whose exact manifest start-time gap exceeds 12 days; a gap of exactly 12 days is accepted. This is an initialization check; processing still uses the selected burst's exact interval. The scene reader, orbit catalog and pair checks in `initialization.py` are shared with stack planning and input preparation. This initializer generates one pair config and supports AOI selection; use `glacier-offsets stack init` for acquisition stacks. Default output directories include both full SAFE product names to distinguish acquisition pairs before the existing per-burst subdirectory is added.
 
 `configs/pair.example.yaml` contains the actual Jan 10/22 2020 S1A HH SAFE ZIPs, their precise orbits and the ellipsoidal-height REMA DEM. It intentionally omits burst_id, so `list-bursts` works before selection. This command needs only local SAFE/orbit paths, polarization, and optional integer subswaths; no DEM, AOI, matching settings or output directory is required for discovery. Geographic IDs, subswaths and UTC sensing times are printed. No common IDs exits 2; duplicated IDs or parse failures give an explicit error. No burst is automatically selected.
 

@@ -9,11 +9,15 @@ from .inputs import discover, select_pair
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == 'prepare-inputs':
+        from .input_preparation import main as prepare_inputs
+        return prepare_inputs(argv[1:])
     if argv and argv[0] == 'stack':
         from .stack_cli import main as stack_main
         return stack_main(argv[1:])
     parser = argparse.ArgumentParser(prog="glacier-offsets")
-    parser.epilog = 'Stack workflows: glacier-offsets stack --help'
+    parser.epilog = ('Stack workflows: glacier-offsets stack --help. '
+                     'Download inputs: glacier-offsets prepare-inputs --help')
     parser.add_argument("command", choices=["list-bursts", "validate", "coregister", "assemble", "match", "geocode", "diagnostics", "run"])
     parser.add_argument("config")
     parser.add_argument("--backend", choices=["cpu", "gpu", "auto"])
