@@ -21,6 +21,16 @@ def inventory(safe, orbit, polarization, swaths, loader=None):
         loader = load_bursts
     result = []
     for swath in swaths:
+        if loader.__module__.startswith('s1reader'):
+            from .input_preparation import annotation_paths, safe_xml
+            annotations = [p for p in annotation_paths(Path(safe))
+                           if f'iw{swath}-slc-{polarization.lower()}' in p.lower()]
+            if len(annotations) == 1:
+                bursts = safe_xml(Path(safe), annotations[0]).find('swathTiming/burstList')
+                if bursts is not None and bursts.get('count') == '0' and len(bursts) == 0:
+                    # Keep the annotation on disk for neighboring-swath
+                    # corrections, but do not ask s1-reader to parse dummy data.
+                    continue
         try:
             items = loader(str(safe), str(orbit), swath, polarization.lower(), flag_apply_eap=False)
         except Exception as exc:

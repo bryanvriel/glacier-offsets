@@ -11,6 +11,7 @@ dependencies = ["numpy>=1.26,<2", "scipy>=1.12", "h5py>=3", "PyYAML>=6", "pyproj
 
 [project.optional-dependencies]
 preparation = ["sentineleof", "sardem", "requests>=2"]
+burst-download = ["burst2safe~=2.0.3", "asf-search>=14.0.3,<15"]
 
 [project.scripts]
 glacier-offsets = "glacier_offsets.cli:main"

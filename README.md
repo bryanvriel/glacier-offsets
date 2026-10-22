@@ -52,6 +52,75 @@ The inspected native **PyCPUAmpcor 0.25.21 does not parallelize its chunk loop**
 
 ## Local inputs
 
+### Download bursts for an AOI
+
+Install the optional downloader in the processing environment:
+
+```bash
+python -m pip install -e '.[burst-download]'
+```
+
+The download command uses ASF search and [burst2safe](https://github.com/ASFHyP3/burst2safe),
+with `all_anns=True` for s1-reader compatibility. Supply existing Earthdata
+credentials in `.netrc`, or set `EARTHDATA_TOKEN`. The command never creates a
+credential file. Search and `--dry-run` need no credentials.
+
+Download, prepare local inputs, then initialize the existing stack workflow:
+
+```bash
+glacier-offsets download-bursts --aoi data/larsen/LAR2_small.kml \
+  --start-date 2018-01-08 --end-date 2018-01-20 \
+  --relative-orbit 38 --polarization HH --subswaths 2 \
+  -o data/larsen/burst-downloads --dry-run
+# Remove --dry-run to download the planned acquisition groups.
+glacier-offsets download-bursts --aoi data/larsen/LAR2_small.kml \
+  --start-date 2018-01-08 --end-date 2018-01-20 \
+  --relative-orbit 38 --polarization HH --subswaths 2 \
+  -o data/larsen/burst-downloads
+glacier-offsets prepare-inputs data/larsen/burst-downloads \
+  -o data/larsen/prepared-bursts \
+  --dem-source /Volumes/TU200Pro/glaciers/antarctica/rema/Gapless-REMA100.tif
+glacier-offsets stack init \
+  --prepared-inputs data/larsen/prepared-bursts/manifest.json \
+  --aoi data/larsen/LAR2_small.kml --polarization HH --epsg 3031 \
+  --neighbors 2 --max-separation-days 12 \
+  --output configs/stack.lar.bursts.yaml \
+  --output-directory work/larsen/stack-bursts --relative-paths
+glacier-offsets stack validate configs/stack.lar.bursts.yaml
+glacier-offsets stack run configs/stack.lar.bursts.yaml --backend cpu
+```
+
+AOI files use the same polygon validation, CRS and antimeridian handling as
+processing. `--aoi-layer` selects a vector layer; `--bbox W S E N` replaces
+`--aoi`. Start/end dates include the entire specified UTC days. Omit
+`--subswaths` to consider IW1–IW3. Dry runs print requested bursts, intervening
+context bursts and acquisition incompatibilities, and create no files.
+Positive-area intersection preserves AOI holes. Intervening bursts are included
+within each swath even when they fall outside the AOI. Missing interior bursts,
+ambiguous duplicate products, incompatible swath combinations, and multiple
+groups on a UTC date are explicit errors.
+
+Collections contain `download_manifest.json`, visible completed SAFEs beneath
+`safe/<spacecraft>_<absolute-orbit>/`, and hidden `.staging/` work. Downloads
+validate XML, complex TIFF dimensions/readability and required helper annotations
+before publishing a complete acquisition directory. The manifest records
+granules/parents, coverage, context, checksums, package versions and group status.
+Rerunning the same request verifies checksums and reuses unchanged files;
+incomplete/corrupt groups are retried and independent groups continue after a
+failure. Concurrent writers to one collection are rejected. Keep AOI, track,
+polarization and swaths fixed; date ranges may expand, but narrowing dates or
+changing selection requires a new collection.
+
+`prepare-inputs` accepts either the collection root or its `safe/` directory and
+refuses running, failed or inconsistent collections. It carries download
+provenance into its manifest. Empty helper annotations remain available for
+s1-reader corrections but contribute no imagery bursts or DEM footprint.
+Full-SAFE inputs and downstream commands retain their existing behavior. Use
+separate preparation/configuration/stack output roots when comparing reconstructed
+and full SAFEs, since stack reference geometry is pinned. Exit codes are 0 for
+success, 1 for acquisition failures, 2 for invalid preflight/empty dry runs, and
+130 for interruption.
+
 ### Reference-geometry stacks
 
 If you have only SAFE scenes, first use the [input preparation command](#prepare-orbits-and-a-dem).

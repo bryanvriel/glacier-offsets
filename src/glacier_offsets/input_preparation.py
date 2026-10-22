@@ -147,7 +147,7 @@ def annotation_paths(safe: Path) -> list[str]:
                      if n.count("/annotation/") == 1
                      and n.split("/")[-2] == "annotation"
                      and n.lower().endswith(".xml")]
-    return sorted(set(p for p in paths if "-slc-" in p.lower()))
+    return sorted(set(p for p in paths if "-slc-" in p.lower() and not Path(p).name.startswith('.')))
 
 
 def read_ipf_version(safe: Path) -> str | None:
@@ -183,6 +183,11 @@ def footprint(safe: Path) -> tuple[list[float], int | None]:
         raise ValueError(f"No SLC annotation XMLs in {safe}")
     for path in paths:
         root = safe_xml(safe, path)
+        # burst2safe --all-anns retains empty helper products for s1-reader.
+        # Their neighboring-swath metadata must not enlarge the DEM footprint.
+        bursts = root.find('swathTiming/burstList')
+        if bursts is not None and bursts.get('count') == '0' and len(bursts) == 0:
+            continue
         for elem in root.iter():
             tag = local_name(elem.tag)
             if tag == "instrumentconfigurationid" and icid is None:
@@ -681,7 +686,12 @@ def get_dem(bounds: list[float], folder: Path, args: argparse.Namespace) -> str:
 
 def prepare(args: argparse.Namespace) -> int:
     input_path = args.safe.expanduser().resolve()
-    safes, invalid_zips = find_safes(input_path, args.recursive)
+    from .burst_downloads import managed_collection
+    download_provenance = managed_collection(input_path)
+    scan_path = Path(download_provenance['safe_directory']) if download_provenance else input_path
+    if download_provenance and not args.recursive:
+        raise ValueError('Managed burst collections require recursive preparation')
+    safes, invalid_zips = find_safes(scan_path, args.recursive)
     for item in invalid_zips:
         print(f"  WARNING: Skipping invalid SAFE ZIP: {item['path']}\n"
               f"           Reason: {item['reason']}", file=sys.stderr)
@@ -696,7 +706,7 @@ def prepare(args: argparse.Namespace) -> int:
         folder.mkdir(parents=True, exist_ok=True)
     # An interrupted refresh must not leave an earlier success manifest current.
     write_json(root/'manifest.json',{'method':'s1-input-preparation-v1','status':'running',
-                                    'input':str(input_path),'scenes':[]})
+                                    'input':str(input_path),'scenes':[], 'burst_download':download_provenance})
     if not args.skip_dem and args.dem_source not in DEM_PROVIDERS:
         try:
             args.local_dem_source = local_dem_source(args.dem_source)
@@ -801,7 +811,8 @@ def prepare(args: argparse.Namespace) -> int:
         write_json(scene['report'],scene)
     manifest = {"method":"s1-input-preparation-v1",'status':'failed' if failures else 'complete',
                 "input":str(input_path),"count":len(scenes),
-                'safe_directory':str(input_path) if input_path.is_dir() and not input_path.name.lower().endswith('.safe') else None,
+                'safe_directory':str(scan_path) if scan_path.is_dir() and not scan_path.name.lower().endswith('.safe') else None,
+                'burst_download':download_provenance,
                 'orbit_directory':str(orbit_dir),
                 'dem':dems[0]['path'] if args.dem_mode=='combined' and dems and 'path' in dems[0] else None,
                 "invalid_safe_zips": invalid_zips,
