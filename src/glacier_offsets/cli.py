@@ -2,12 +2,18 @@
 import argparse
 import logging
 import subprocess
+import sys
 from .config import load_config
 from .inputs import discover, select_pair
 
 
 def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == 'stack':
+        from .stack_cli import main as stack_main
+        return stack_main(argv[1:])
     parser = argparse.ArgumentParser(prog="glacier-offsets")
+    parser.epilog = 'Stack workflows: glacier-offsets stack --help'
     parser.add_argument("command", choices=["list-bursts", "validate", "coregister", "assemble", "match", "geocode", "diagnostics", "run"])
     parser.add_argument("config")
     parser.add_argument("--backend", choices=["cpu", "gpu", "auto"])

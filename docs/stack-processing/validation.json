@@ -1,0 +1,204 @@
+{
+  "gpu": {
+    "reason": "CPU ISCE3 environment; supported CUDA hardware required",
+    "status": "not_run"
+  },
+  "interior_ownership_fix": {
+    "full_regression": {
+      "elapsed_seconds": 121.845,
+      "errors": 0,
+      "failures": 0,
+      "skipped": 2,
+      "tests_run": 141
+    },
+    "method": "stack-reference-interior-ownership-v3",
+    "policy": {
+      "edge_margin_lines": 8,
+      "method": "reference-overlap-midpoint-v1",
+      "missing_support": "mask; no source substitution",
+      "narrow_overlap": "error"
+    },
+    "production_config": "configs/stack.pig.interior.yaml",
+    "real_validation": "boundary-investigation/interior-validation.json",
+    "real_validation_scope": "Reassembly, native matching and geocoding of full AOI using existing aligned bursts; both real pairs. No fresh COMPASS or velocity-guided validation."
+  },
+  "isolated_zero_support_fix": {
+    "audit": {
+      "changed_ownership_pixels": 10598,
+      "corrected_support_input_valid": 22987,
+      "current_input_valid": 5846,
+      "geometry_identity": "b81aec99387b01b235c5c83556788ffbb039b2bd508d5693f00e86c9dc6a53f2",
+      "lost_input_windows": 0,
+      "match_identity": "9bb41c8c5695b69f46aadde43062cde670f150bf871595a6051e9afc0d205367",
+      "observed_example": {
+        "earlier_original_sample": [
+          174.94607543945312,
+          100.22807312011719
+        ],
+        "later_original_sample": [
+          116.7850570678711,
+          91.96762084960938
+        ],
+        "original_reference_zero_count_in_3x3_neighborhood": 1,
+        "radar_line": 613,
+        "radar_sample": 21987,
+        "reference_date_sample": [
+          0,
+          0
+        ]
+      },
+      "pair": "2020-01-18_2020-01-24",
+      "recovered_input_windows": 17141,
+      "recovered_windows_with_existing_peak_ge_0_2_and_snr_ge_10": 1092,
+      "reference_date": "2020-01-12",
+      "restored_unowned_pixels": 10028,
+      "scope": "Read-only support audit from existing prepared bursts, fixed radar layout, zero gross. Corrected offsets require recomputation; existing raw correlation is not independent accuracy validation.",
+      "window_count": 23607
+    },
+    "boundary_artifacts": "Artifacts at genuine burst joins remain a separate validation task",
+    "focused_tests": {
+      "elapsed_seconds": 43.909,
+      "errors": 0,
+      "failures": 0,
+      "tests_run": 18
+    },
+    "method": "stack-reference-support-connected-zero-fill-v2",
+    "migration": "New output root required because reference ownership changes; use configs/stack.pig.validity.yaml",
+    "real_corrected_matching": "pending recomputation"
+  },
+  "macos_native_mapping_fix": {
+    "focused_tests": {
+      "elapsed_seconds": 43.681,
+      "errors": 0,
+      "failures": 0,
+      "tests_run": 17
+    },
+    "local_reproducer": {
+      "external_mask_memory_map": "success",
+      "gdal_cache_bytes": 2097152,
+      "internal_mask_error": "CPLVirtualMemNew() unsupported on this operating system / configuration",
+      "shape": [
+        1024,
+        2048
+      ]
+    },
+    "migration": "Rebuild merged dates and downstream pairs; reuse pinned reference and aligned burst products",
+    "native_failure_guard": "Python GDAL mapping probe returns a worker exception before native abort",
+    "observed_user_run": {
+      "bursts": [
+        "t065_139122_iw2",
+        "t065_139123_iw2",
+        "t065_139124_iw2"
+      ],
+      "dates": [
+        "2020-01-12",
+        "2020-01-18",
+        "2020-01-24"
+      ],
+      "stage_reached": "native matching after COMPASS preparation; user-provided log"
+    },
+    "real_input_access": "macOS denied app read access to external SLC, also outside execution sandbox",
+    "root_cause": "Native CPU controller ignores useMmap; internal TIFF mask blocks can break contiguous SLC strips and require an unsupported macOS GDAL fallback",
+    "storage": "stripped-complex-tiff-external-mask-v1"
+  },
+  "real_three_date_zero_and_velocity": {
+    "reason": "Three-date preparation observed in user log; matching crashed before fix. Real zero/velocity matching remains unverified.",
+    "status": "pending_rerun"
+  },
+  "real_two_date_pig": {
+    "reason": "External volume connected; real run must be repeated with the native mapping fix",
+    "status": "pending_rerun"
+  },
+  "regression_suite": {
+    "command": "PYTHONPATH=src:.runtime/deps MPLCONFIGDIR=.runtime/matplotlib OMP_NUM_THREADS=2 /Users/briel/miniforge3/envs/isce3/bin/python -m unittest discover -s tests -v",
+    "elapsed_seconds": 112.808,
+    "errors": 0,
+    "failures": 0,
+    "skipped": 2,
+    "tests_run": 134
+  },
+  "synthetic_end_to_end": {
+    "compared_files": 102,
+    "date_burst_alignments": 4,
+    "geometry_reference_date": "2020-01-04",
+    "initial_exit_code": 0,
+    "initial_metrics": {
+      "children_peak_rss_bytes": 205520896,
+      "elapsed_seconds": 14.852529125055298,
+      "output_bytes": 12396929,
+      "parent_peak_rss_bytes": 515014656,
+      "rss_scope": "process lifetime high-water marks; child processes reported separately"
+    },
+    "limits": "COMPASS inputs/outputs and metadata preflight injected from synthetic fixture; native CPU Ampcor, assembly, maps and diagnostics executed",
+    "pairs": {
+      "2020-01-01_2020-01-04": {
+        "map_shape": [
+          56,
+          59
+        ],
+        "map_transform": [
+          -999600.0,
+          50.0,
+          0,
+          -1000200.0,
+          0,
+          -50.0
+        ],
+        "median_azimuth_px": -1.0,
+        "median_range_px": 2.0,
+        "quality_valid": 126,
+        "seam_crossing_valid": 9,
+        "windows": 180
+      },
+      "2020-01-01_2020-01-09": {
+        "map_shape": [
+          56,
+          59
+        ],
+        "map_transform": [
+          -999600.0,
+          50.0,
+          0,
+          -1000200.0,
+          0,
+          -50.0
+        ],
+        "median_azimuth_px": 3.0,
+        "median_range_px": -3.0,
+        "quality_valid": 104,
+        "seam_crossing_valid": 0,
+        "windows": 180
+      },
+      "2020-01-04_2020-01-09": {
+        "map_shape": [
+          56,
+          59
+        ],
+        "map_transform": [
+          -999600.0,
+          50.0,
+          0,
+          -1000200.0,
+          0,
+          -50.0
+        ],
+        "median_azimuth_px": 4.0,
+        "median_range_px": -5.0,
+        "quality_valid": 104,
+        "seam_crossing_valid": 0,
+        "windows": 180
+      }
+    },
+    "reference_preparations": 2,
+    "restart_exit_code": 0,
+    "restart_metrics": {
+      "children_peak_rss_bytes": 205520896,
+      "elapsed_seconds": 0.194487415952608,
+      "output_bytes": 12396938,
+      "parent_peak_rss_bytes": 515506176,
+      "rss_scope": "process lifetime high-water marks; child processes reported separately"
+    },
+    "scientific_files_unchanged_on_restart": true
+  },
+  "validation_date": "2026-10-22"
+}

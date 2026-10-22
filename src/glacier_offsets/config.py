@@ -13,6 +13,9 @@ PATH_FIELDS = (
     ('aoi', 'path'),
     ('gross_offsets', 'velocity', 'vx', 'path'),
     ('gross_offsets', 'velocity', 'vy', 'path'),
+    ('stack', 'safe_directory'),
+    ('stack', 'orbit_directory'),
+    ('stack', 'pairing', 'pairs_file'),
 )
 
 
@@ -122,6 +125,14 @@ def load_config(path: str | Path, discovery: bool = False) -> dict:
         value = inp.get(key)
         if not value or not Path(value).is_absolute() or not Path(value).exists():
             raise ValueError(f"inputs.{key} must be an existing local path (resolved: {value!r})")
+    return validate_common(cfg, discovery=discovery)
+
+
+def validate_common(cfg: dict, discovery: bool = False) -> dict:
+    """Validate settings shared by pair and stack workflows."""
+    inp = cfg.get('inputs', {})
+    if not isinstance(inp, dict):
+        raise ValueError('inputs must be a YAML mapping')
     if not isinstance(inp.get('polarization'),str):raise ValueError('inputs.polarization must be a string')
     inp["polarization"] = inp["polarization"].upper()
     if inp["polarization"] not in {"HH", "HV", "VV", "VH"}:

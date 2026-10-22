@@ -1,0 +1,4 @@
+# Corrected connected-zero support policy requires a fresh pinned ownership frame.
+extends: stack.pig.yaml
+output:
+  directory: ../work/pig/stack-validity

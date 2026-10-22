@@ -1,6 +1,6 @@
 # Sentinel-1 glacier offsets
 
-A small, restartable Python workflow for one local Sentinel-1 TOPS SAFE pair, one polarization and either one geographic burst or every common burst intersecting an AOI. COMPASS performs geometry-only radar coregistration; native ISCE3 Ampcor tracks **amplitudes of complex SLCs**. Offset products retain applied gross, native residual and total separately. Only total motion is converted to displacement/velocity and geocoded. Local georeferenced velocity fields can guide searches. AOI processing coregisters complete bursts sequentially, assembles compatible SLCs on one radar grid, then produces one geocoded raster per field beneath `merged/`. There are no downloads, NESD or custom correlators.
+A small, restartable Python workflow for local Sentinel-1 TOPS SAFE pairs and acquisition stacks, one polarization and either one geographic burst or complete bursts intersecting an AOI. COMPASS performs geometry-only radar coregistration; native ISCE3 Ampcor tracks **amplitudes of complex SLCs**. Offset products retain applied gross, native residual and total separately. Only total motion is converted to displacement/velocity and geocoded. Local georeferenced velocity fields can guide searches. Pair AOI processing assembles compatible SLCs on one radar grid before tracking beneath `merged/`. Stack processing prepares each acquisition once on a pinned reference frame and reuses its SLC across pairs. There are no downloads, NESD or custom correlators.
 
 Git tracks Python source (including audit scripts), the launcher, package/environment files, this README and selected reference configs. Data, processing outputs, images, plans, validation reports and other working documents stay local; links to those records below describe the working installation and may not exist in a fresh clone. New reference configs or non-Python source assets must be added to the explicit allowlist in `.gitignore`.
 
@@ -51,6 +51,130 @@ The inspected native **PyCPUAmpcor 0.25.21 does not parallelize its chunk loop**
 `--force` repeats the requested computation (`run --force` repeats all stages). Run identity includes inputs' SHA256 hashes, software versions, polarization, selected burst, matching parameters and gross mode/values. A change in matching/gross configuration invalidates matching and geocoding, while retaining geometric coregistration. Later stage commands reject stale preceding stages. Input hashes are checked even on restart; this takes time for large SAFE files. A failed stage clears its completion identity. A source SHA256 snapshot is recorded at validation; after editing workflow code, explicitly force the affected stages. Successful unchanged `run` reuses coregistration, matching and geocoding and refreshes diagnostics.
 
 ## Local inputs
+
+### Reference-geometry stacks
+
+Use [stack.example.yaml](configs/stack.example.yaml) or initialize a separate stack
+configuration; no pair-specific SAFE/orbit fields are required:
+
+```bash
+glacier-offsets stack init --safe-dir /path/safes --orbit-dir /path/orbits \
+  --dem /path/dem.tif --polarization HH --aoi /path/glacier.kml --epsg 3031 \
+  --output configs/stack.generated.yaml --output-directory work/my_stack --relative-paths
+glacier-offsets stack plan configs/stack.generated.yaml
+glacier-offsets stack validate configs/stack.generated.yaml
+OMP_NUM_THREADS=4 glacier-offsets stack run configs/stack.generated.yaml --backend cpu
+```
+
+`python tools/init_stack_config.py` accepts the same initialization options.
+
+List processing stages or inspect completion without running them:
+
+```bash
+glacier-offsets stack stages
+glacier-offsets stack status configs/stack.pig.interior.yaml --backend cpu
+```
+
+`status` shows an overall stage checklist and per-acquisition/per-pair checkmarks:
+`✓` complete, `○` pending, `~` stale, `!` incomplete, `−` blocked/no work, and
+`?` unknown. It checks saved completion identities, relevant configuration and
+key output-file presence. Leftover files from invalidated stages do not count
+as completed. Use the same backend override as your processing command when
+comparing matching settings. Add `--json` for a machine-readable report.
+
+Inspection is read-only and works with raw-input volumes disconnected. It uses
+the last saved active plan (or existing output directories if there is no
+catalog); it does not discover newly added SAFE files or rehash inputs/products.
+Use `stack plan` to inspect a changed inventory. Missing stages are displayed
+normally; a successfully read status exits zero even when processing is incomplete.
+
+Choose `--burst-id`, `--bbox` or `--aoi` (including KML); an AOI selects complete
+bursts. `--start-date`, `--end-date` and `--reference-date` use `YYYY-MM-DD`.
+All paths follow the same YAML-relative inheritance rules as pair configurations.
+`plan` reports the inventory, exclusions, reference, partial burst coverage,
+pair graph, omitted links and disconnected dates. `validate` additionally checks
+native metadata, reference-grid placement, DEM coverage and processing settings.
+Both commands are read-only and avoid complete SAFE hashing.
+
+V1 accepts one SAFE per UTC acquisition date, one relative orbit/direction group,
+and one polarization. It scans directories recursively without descending inside
+unpacked SAFEs, and selects local precise orbits with interpolation margins.
+The earliest eligible date is the initial reference unless explicitly selected.
+Automatic pairs connect each date to its next `stack.pairing.neighbors` dates
+(default 1), retaining exact scene-start gaps of at most 12 days. Set
+`max_separation_days: null` to disable the cap. A `pairs_file` CSV with exactly
+`earlier,later` columns and ISO dates replaces automatic pairing and its cap;
+duplicate links are removed, and unknown/reversed/self links are rejected.
+
+Stages can also be run individually:
+
+```bash
+glacier-offsets stack coregister configs/stack.generated.yaml
+glacier-offsets stack assemble configs/stack.generated.yaml
+glacier-offsets stack match configs/stack.generated.yaml --backend cpu
+glacier-offsets stack geocode configs/stack.generated.yaml
+glacier-offsets stack diagnostics configs/stack.generated.yaml
+```
+
+`coregister` prepares each reference burst's SLC/topology once, and aligns every
+available date/burst directly from its original SLC onto that reference grid.
+`assemble` writes one stripped complex SLC and validity mask per date. The GDAL
+mask is stored externally as `slc.tif.msk` to keep SLC strips contiguous for
+native CPU Ampcor on macOS; keep this file beside `slc.tif`. Reference
+annotation and actual SLC support determine fixed overlap ownership. Shared
+regions switch at their azimuth midpoint, at least eight SLC lines inside both
+valid edges; overlaps narrower than 16 lines are rejected. Unshared coverage is
+preserved. The cut and its policy are recorded in the geometry and pair manifests.
+Support uses the same connected-zero-fill
+policy as matching: isolated complex zeros remain valid observations, while
+explicit invalid masks, nonfinite samples and connected zero fill remain nodata.
+Missing date bursts and holes remain nodata
+even where another burst overlaps. Reference bursts must align within 0.001
+pixels; fractional placement is rejected before processing.
+
+Pairs reference the prepared date SLCs without copying them or invoking COMPASS.
+Offsets are later-minus-earlier. Per-burst sensing times determine exact pair
+durations; velocity-prior projection and physical pixel scales always use the
+stack-reference burst geometry/orbit, including pairs between two other dates.
+All pairs share a matching template and a map grid derived from reference
+geometry, the configured EPSG and spacing. Missing coverage cannot change map
+shape or transform. Pairs without shared support produce explicit empty products
+without running native Ampcor.
+
+Products are organized as follows:
+
+```text
+<output>/stack_manifest.json
+<output>/geometry/                  # burst topology, fixed layout/ownership, map grid
+<output>/acquisitions/<YYYY-MM-DD>/  # aligned bursts, slc.tif, slc.tif.msk, valid.tif, manifest.json
+<output>/pairs/<earlier>_<later>/    # manifest.json, radar/, geo/, diagnostics/
+```
+
+Reference preparation pins the reference inputs, burst selection and layout.
+Adding earlier dates preserves that pin. Changing the reference, selection,
+reference geometry inputs or relevant geometry software requires a new output
+root, including with `--force`. New dates and pairing changes reuse unrelated
+SLCs and pair rasters; removed links remain on disk and become inactive catalog
+entries. Matching/gross and geocoding changes invalidate their downstream stages.
+`--force` refreshes the requested stage and invalidates dependents. Input hashes
+are shared within an invocation; prepared SLCs and geometry are verified before reuse. Reports are
+atomic, interrupted/failed stages lose completion, and independent dates/pairs
+continue after individual failures. Exit codes are 0 complete, 1 processing
+failure, 2 invalid preflight, and 130 interrupted. The catalog records coverage,
+stage errors, elapsed time, storage and process memory high-water marks.
+
+Synthetic native and regression validation, plus the outstanding real-data
+gates, are recorded in [stack validation](docs/stack-processing/README.md).
+Stacks built with earlier ownership policies require a new output root.
+[stack.pig.interior.yaml](configs/stack.pig.interior.yaml) inherits the PIG
+configuration and uses `work/pig/stack-interior` for the interior-cut policy:
+
+```bash
+glacier-offsets stack run configs/stack.pig.interior.yaml --backend cpu
+```
+
+Multi-slice assembly, NESD, time-series inversion, raster cubes, parallel stack
+execution and fractional alignment of reference bursts remain outside V1.
 
 ### Initialize a pair YAML
 

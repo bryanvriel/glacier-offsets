@@ -171,18 +171,18 @@ def write_vrt(path, shape, entries, field):
     band = ET.SubElement(tree, 'VRTRasterBand', dataType=dtype, band='1')
     ET.SubElement(band, 'NoDataValue').text = '0' if field in ('reference', 'secondary', 'source') else '255' if field == 'layover_shadow_mask' else 'nan'
     for index, entry in enumerate(entries, 1):
-        y0, y1, x0, x1 = entry['valid_window']
         dy, dx = entry['offset']
         source_path = (entry['coreg']['slcs'][field] if field in ('reference', 'secondary')
                        else entry['coreg']['geometry']['layover_shadow_mask' if field == 'source' else field])
-        source = ET.SubElement(band, 'ComplexSource' if field == 'source' else 'SimpleSource')
-        ET.SubElement(source, 'SourceFilename', relativeToVRT='0').text = str(Path(source_path).resolve())
-        ET.SubElement(source, 'SourceBand').text = '1'
-        ET.SubElement(source, 'SrcRect', xOff=str(x0), yOff=str(y0), xSize=str(x1-x0), ySize=str(y1-y0))
-        ET.SubElement(source, 'DstRect', xOff=str(x0+dx), yOff=str(y0+dy), xSize=str(x1-x0), ySize=str(y1-y0))
-        if field == 'source':
-            ET.SubElement(source, 'ScaleOffset').text = str(index)
-            ET.SubElement(source, 'ScaleRatio').text = '0'
+        for y0, y1, x0, x1 in entry.get('ownership_windows', [entry['valid_window']]):
+            source = ET.SubElement(band, 'ComplexSource' if field == 'source' else 'SimpleSource')
+            ET.SubElement(source, 'SourceFilename', relativeToVRT='0').text = str(Path(source_path).resolve())
+            ET.SubElement(source, 'SourceBand').text = '1'
+            ET.SubElement(source, 'SrcRect', xOff=str(x0), yOff=str(y0), xSize=str(x1-x0), ySize=str(y1-y0))
+            ET.SubElement(source, 'DstRect', xOff=str(x0+dx), yOff=str(y0+dy), xSize=str(x1-x0), ySize=str(y1-y0))
+            if field == 'source':
+                ET.SubElement(source, 'ScaleOffset').text = str(index)
+                ET.SubElement(source, 'ScaleRatio').text = '0'
     ET.indent(tree)
     ET.ElementTree(tree).write(path, encoding='utf-8', xml_declaration=True)
 
@@ -324,6 +324,10 @@ def annotate_result(manifest, result):
     result['interval_seconds'] = intervals
     result['input_valid'] &= owner > 0
     result['valid'] &= owner > 0
+    if 'stack_pair' in manifest:
+        # A burst absent from either date has no exact interval or observation.
+        result['input_valid'] &= np.isfinite(intervals) & (intervals > 0)
+        result['valid'] &= np.isfinite(intervals) & (intervals > 0)
     ds = gdal.Open(coreg['source_index'])
     gross = result['gross']
     known=np.isfinite(gross).all(axis=-1)&(owner>0)

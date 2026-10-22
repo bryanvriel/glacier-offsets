@@ -1,0 +1,32 @@
+{
+  "changed_ownership_pixels": 10598,
+  "corrected_support_input_valid": 22987,
+  "current_input_valid": 5846,
+  "geometry_identity": "b81aec99387b01b235c5c83556788ffbb039b2bd508d5693f00e86c9dc6a53f2",
+  "lost_input_windows": 0,
+  "match_identity": "9bb41c8c5695b69f46aadde43062cde670f150bf871595a6051e9afc0d205367",
+  "observed_example": {
+    "earlier_original_sample": [
+      174.94607543945312,
+      100.22807312011719
+    ],
+    "later_original_sample": [
+      116.7850570678711,
+      91.96762084960938
+    ],
+    "original_reference_zero_count_in_3x3_neighborhood": 1,
+    "radar_line": 613,
+    "radar_sample": 21987,
+    "reference_date_sample": [
+      0,
+      0
+    ]
+  },
+  "pair": "2020-01-18_2020-01-24",
+  "recovered_input_windows": 17141,
+  "recovered_windows_with_existing_peak_ge_0_2_and_snr_ge_10": 1092,
+  "reference_date": "2020-01-12",
+  "restored_unowned_pixels": 10028,
+  "scope": "Read-only support audit from existing prepared bursts, fixed radar layout, zero gross. Corrected offsets require recomputation; existing raw correlation is not independent accuracy validation.",
+  "window_count": 23607
+}

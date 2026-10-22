@@ -1,0 +1,4 @@
+# Interior burst ownership changes the pinned layout; keep the previous stack.
+extends: stack.pig.yaml
+output:
+  directory: ../work/pig/stack-interior

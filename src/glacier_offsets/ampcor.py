@@ -92,6 +92,10 @@ def _native_match(reference, secondary, output, params, gross_cfg, backend='cpu'
     valid_input=valid_windows(ref,sec,grid,gross) if _valid_input is None else _valid_input
     requested_backend=backend
     backend,cls=select_backend(backend)
+    if backend == 'cpu':
+        from .raster_io import require_native_mmap
+        for ds in (ref,sec):
+            require_native_mmap(ds)
     a=cls()
     output=Path(output);output.mkdir(parents=True,exist_ok=True)
     mapping={'offsetImageName':'residual.bip','grossOffsetImageName':'gross.bip','snrImageName':'snr.bin',
@@ -205,6 +209,10 @@ def write_offsets(path,result,metadata):
         h.attrs['metadata_json']=json.dumps(metadata,sort_keys=True)
         h.attrs['axis_order']='azimuth/down, range/across'
         h.attrs['sign']='secondary-minus-reference feature displacement after geometric coregistration'
+        if 'stack_pair' in metadata:
+            h.attrs['sign']='later-minus-earlier on the pinned stack-reference radar grid'
+            h.attrs['geometry_reference_date']=metadata['stack_pair']['geometry_reference_date']
+            h.attrs['matched_acquisition_dates_json']=json.dumps(metadata['stack_pair']['acquisition_dates'])
         h.attrs['units']='full-resolution reference SLC pixels'
         h.attrs['mergeGrossOffset']=0
         h.attrs['total_definition']='gross + native residual, exactly once'
@@ -267,7 +275,8 @@ def matching_specification(cfg,manifest):
             'gross_offsets':cfg.get('gross_offsets',{'mode':'zero'}),'implementation':'native-ampcor-v7-bounded-workers'}
     if cfg['gross_offsets']['mode']=='velocity':
         from .velocity_prior import velocity_provenance
-        spec['velocity_provenance']=velocity_provenance(cfg['gross_offsets']['velocity'])
+        spec['velocity_provenance']=(manifest['velocity_provenance'] if 'velocity_provenance' in manifest
+                                     else velocity_provenance(cfg['gross_offsets']['velocity']))
     return spec
 
 
@@ -285,15 +294,22 @@ def match(cfg,root,manifest,force=False,native_pair=None):
         from .velocity_prior import prepare_prior
         shape=tuple(manifest['coreg']['reference_grid'][key] for key in ('length','width'))
         p=cfg['matching'];grid=build_grid(shape,shape,p['window'],p['search'],p['stride'],first_center=p.get('first_center'))
-        if 'assembly' in manifest:
+        if 'stack_pair' in manifest:
+            from .stack_pairs import prepare_prior as stack_prior
+            prior=stack_prior(cfg,manifest,grid,native_pair)
+        elif 'assembly' in manifest:
             from .assembly import prepare_prior as assembled_prior
             prior=assembled_prior(cfg,manifest,grid,native_pairs=native_pair)
         else:
             prior=prepare_prior(cfg,manifest,grid,native_pair=native_pair)
         prior['grid']=grid
         prior['metadata']['source_provenance']=spec['velocity_provenance']
-    r=native_match(manifest['coreg']['slcs']['reference'],manifest['coreg']['slcs']['secondary'],directory/'native',
-                   cfg['matching'],cfg,cfg['matching']['backend'],prior=prior)
+    if 'stack_pair' in manifest:
+        from .stack_pairs import match_prepared
+        r=match_prepared(cfg,manifest,directory,prior)
+    else:
+        r=native_match(manifest['coreg']['slcs']['reference'],manifest['coreg']['slcs']['secondary'],directory/'native',
+                       cfg['matching'],cfg,cfg['matching']['backend'],prior=prior)
     if 'assembly' in manifest:
         from .assembly import annotate_result
         annotate_result(manifest,r)
@@ -308,6 +324,8 @@ def match(cfg,root,manifest,force=False,native_pair=None):
         metadata.update(assembly_identity=manifest['assembly']['identity'],
                         source_burst_ids=manifest['assembly']['source_burst_ids'],
                         interval_policy=manifest['assembly']['interval_policy'])
+    if 'stack_pair' in manifest:
+        metadata['stack_pair']=manifest['stack_pair']
     tmp=directory/'offsets.tmp.h5';write_offsets(tmp,r,metadata);tmp.replace(path)
     manifest['match_identity']=fingerprint;manifest['matching']=metadata
     manifest['matching_summary']={'windows':int(np.prod(r['grid'].shape)),'input_valid':int(r['input_valid'].sum()),'quality_valid':int(r['valid'].sum())}

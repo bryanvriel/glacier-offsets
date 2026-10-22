@@ -39,43 +39,47 @@ def build_grid(reference_shape, secondary_shape, window, search, stride, gross=(
     return MatchingGrid(*starts,tuple(window),tuple(search),tuple(stride))
 
 
-def valid_windows(reference, secondary, grid, gross):
-    """Reject nonfinite samples and connected zero-fill, allowing isolated quantized zero observations.
+def invalid_samples(ds):
+    """Find actual missing support without treating isolated complex zeros as gaps.
 
     A 3x3 all-zero region or a zero connected to an image boundary seeds
     zero-fill detection. Propagation includes its whole connected component.
     One isolated CInt16 (0+0j) speckle observation is not evidence of missing data.
     """
     from scipy.ndimage import binary_opening, binary_propagation
+    from osgeo import gdal
+    from .raster_io import bounded_raster_cache
+    band=ds.GetRasterBand(1)
+    flags=band.GetMaskFlags()
+    # COMPASS complex nodata=0 masks valid quantized zero real components;
+    # retain the connected-complex-zero policy instead.
+    complex_zero_nodata=(flags==gdal.GMF_NODATA and band.GetNoDataValue()==0 and gdal.DataTypeIsComplex(band.DataType))
+    explicit_mask=flags!=gdal.GMF_ALL_VALID and not complex_zero_nodata
+    zero=np.empty((ds.RasterYSize,ds.RasterXSize),dtype=bool)
+    bad=np.empty_like(zero)
+    with bounded_raster_cache():
+        for row in range(0,ds.RasterYSize,64):
+            height=min(64,ds.RasterYSize-row)
+            data=ds.ReadAsArray(0,row,ds.RasterXSize,height)
+            zero[row:row+height]=(data.real==0)&(data.imag==0)
+            bad[row:row+height]=~np.isfinite(data)
+            if explicit_mask:
+                bad[row:row+height] |= band.GetMaskBand().ReadAsArray(0,row,ds.RasterXSize,height)==0
+        del data
+    # Connectivity spans the entire image, including read-strip boundaries.
+    seeds=binary_opening(zero,structure=np.ones((3,3),bool))
+    seeds[0,:]|=zero[0,:];seeds[-1,:]|=zero[-1,:]
+    seeds[:,0]|=zero[:,0];seeds[:,-1]|=zero[:,-1]
+    bad |= binary_propagation(seeds,mask=zero)
+    return bad
+
+
+def valid_windows(reference, secondary, grid, gross):
+    """Require complete chip/search support using the shared zero-fill policy."""
     result=np.ones(grid.shape,dtype=bool)
     gross=np.broadcast_to(np.asarray(gross),(*grid.shape,2))
     for side,ds in enumerate((reference,secondary)):
-        from osgeo import gdal
-        from .raster_io import bounded_raster_cache
-        band=ds.GetRasterBand(1)
-        flags=band.GetMaskFlags()
-        # COMPASS complex nodata=0 masks valid quantized zero real components;
-        # retain the existing connected-complex-zero policy instead.
-        complex_zero_nodata=(flags==gdal.GMF_NODATA and band.GetNoDataValue()==0 and gdal.DataTypeIsComplex(band.DataType))
-        explicit_mask=flags!=gdal.GMF_ALL_VALID and not complex_zero_nodata
-        zero=np.empty((ds.RasterYSize,ds.RasterXSize),dtype=bool)
-        bad=np.empty_like(zero)
-        with bounded_raster_cache():
-            for row in range(0,ds.RasterYSize,64):
-                height=min(64,ds.RasterYSize-row)
-                data=ds.ReadAsArray(0,row,ds.RasterXSize,height)
-                zero[row:row+height]=(data.real==0)&(data.imag==0)
-                bad[row:row+height]=~np.isfinite(data)
-                if explicit_mask:
-                    bad[row:row+height] |= band.GetMaskBand().ReadAsArray(0,row,ds.RasterXSize,height)==0
-            del data
-        # Connectivity must still span the whole image, including read-strip
-        # boundaries. Only the complex data read and cumulative sums change.
-        seeds=binary_opening(zero,structure=np.ones((3,3),bool))
-        seeds[0,:]|=zero[0,:];seeds[-1,:]|=zero[-1,:]
-        seeds[:,0]|=zero[:,0];seeds[:,-1]|=zero[:,-1]
-        bad |= binary_propagation(seeds,mask=zero)
-        del zero,seeds
+        bad=invalid_samples(ds)
         integral=np.zeros((ds.RasterYSize+1,ds.RasterXSize+1),dtype=np.uint32)
         interior=integral[1:,1:]
         interior[:]=bad

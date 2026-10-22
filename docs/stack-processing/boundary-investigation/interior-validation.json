@@ -1,0 +1,351 @@
+{
+  "geometry_identity": "ad44e6cc7bfce5420ea4c0a20fdadd29f70fd487a83b1dfcc80c6b922ec0a10f",
+  "method": "stack-reference-interior-ownership-v3",
+  "output": "/Users/briel/data/insar/glacier_offsets/work/pig/stack-interior-validation",
+  "ownership": {
+    "cuts": [
+      {
+        "cut_global_line": 1425,
+        "lower_burst_id": "t065_139123_iw2",
+        "overlap_global": [
+          1366,
+          1484,
+          94,
+          23534
+        ],
+        "upper_burst_id": "t065_139122_iw2"
+      },
+      {
+        "cut_global_line": 2766,
+        "lower_burst_id": "t065_139124_iw2",
+        "overlap_global": [
+          2707,
+          2825,
+          94,
+          23534
+        ],
+        "upper_burst_id": "t065_139123_iw2"
+      }
+    ],
+    "edge_margin_lines": 8,
+    "method": "reference-overlap-midpoint-v1",
+    "missing_support": "mask; no source substitution",
+    "narrow_overlap": "error"
+  },
+  "pairs": [
+    {
+      "geocoding": {
+        "azimuth_scale_method": "local reference rdr2geo surface separation at fixed slant range per SLC line",
+        "epsg": 3031,
+        "interval_policy": "per-center source interval; physical velocity calculated before mapping",
+        "method": "nearest original sparse radar sample; mask after selection; no extrapolation",
+        "quality_valid_output_cells": 121778,
+        "quality_valid_source_centers": 22858,
+        "resampling": "nearest",
+        "seam_crossing_source_centers": 1080,
+        "shape": [
+          421,
+          508
+        ],
+        "source_burst_ids": [
+          "t065_139122_iw2",
+          "t065_139123_iw2",
+          "t065_139124_iw2"
+        ],
+        "source_mask": "input",
+        "spacing_m": 200.0,
+        "transform": [
+          -1624200.0,
+          200.0,
+          0,
+          -247200.0,
+          0,
+          -200.0
+        ],
+        "valid_output_cells": 121778,
+        "valid_source_centers": 22858
+      },
+      "joins": [
+        {
+          "fields": {
+            "azimuth": {
+              "new": {
+                "1366": {
+                  "near_zero_outliers": 1,
+                  "neighbor_supported_centers": 142
+                },
+                "1425": {
+                  "near_zero_outliers": 1,
+                  "neighbor_supported_centers": 210
+                }
+              },
+              "old": {
+                "1366": {
+                  "near_zero_outliers": 0,
+                  "neighbor_supported_centers": 142
+                },
+                "1425": {
+                  "near_zero_outliers": 2,
+                  "neighbor_supported_centers": 210
+                }
+              }
+            },
+            "range": {
+              "new": {
+                "1366": {
+                  "near_zero_outliers": 0,
+                  "neighbor_supported_centers": 84
+                },
+                "1425": {
+                  "near_zero_outliers": 0,
+                  "neighbor_supported_centers": 120
+                }
+              },
+              "old": {
+                "1366": {
+                  "near_zero_outliers": 0,
+                  "neighbor_supported_centers": 82
+                },
+                "1425": {
+                  "near_zero_outliers": 0,
+                  "neighbor_supported_centers": 120
+                }
+              }
+            }
+          },
+          "new_cut": 1425,
+          "old_cut": 1366
+        },
+        {
+          "fields": {
+            "azimuth": {
+              "new": {
+                "2707": {
+                  "near_zero_outliers": 1,
+                  "neighbor_supported_centers": 142
+                },
+                "2766": {
+                  "near_zero_outliers": 1,
+                  "neighbor_supported_centers": 216
+                }
+              },
+              "old": {
+                "2707": {
+                  "near_zero_outliers": 0,
+                  "neighbor_supported_centers": 142
+                },
+                "2766": {
+                  "near_zero_outliers": 2,
+                  "neighbor_supported_centers": 216
+                }
+              }
+            },
+            "range": {
+              "new": {
+                "2707": {
+                  "near_zero_outliers": 1,
+                  "neighbor_supported_centers": 228
+                },
+                "2766": {
+                  "near_zero_outliers": 0,
+                  "neighbor_supported_centers": 363
+                }
+              },
+              "old": {
+                "2707": {
+                  "near_zero_outliers": 1,
+                  "neighbor_supported_centers": 228
+                },
+                "2766": {
+                  "near_zero_outliers": 0,
+                  "neighbor_supported_centers": 363
+                }
+              }
+            }
+          },
+          "new_cut": 2766,
+          "old_cut": 2707
+        }
+      ],
+      "map_grid_unchanged": true,
+      "match_identity": "bd5a02884fd87c1b9b51f126f977402bc6dd0d65d9aab5163e3bf11d35d44acb",
+      "matching_summary": {
+        "input_valid": 22860,
+        "quality_valid": 22858,
+        "seam_crossing": 1706,
+        "seam_crossing_valid": 1080,
+        "windows": 23607
+      },
+      "old_match_identity": "90bd33e22f52aa33ecefcbf0e6704b2eb598aea3007774cd6392d5f074d12f3c",
+      "old_matching_summary": {
+        "input_valid": 22860,
+        "quality_valid": 22858,
+        "seam_crossing": 1525,
+        "seam_crossing_valid": 900,
+        "windows": 23607
+      },
+      "pair": "2020-01-12_2020-01-18",
+      "unchanged_source_control_count": 21238,
+      "unchanged_source_max_difference_px": 0.015625
+    },
+    {
+      "geocoding": {
+        "azimuth_scale_method": "local reference rdr2geo surface separation at fixed slant range per SLC line",
+        "epsg": 3031,
+        "interval_policy": "per-center source interval; physical velocity calculated before mapping",
+        "method": "nearest original sparse radar sample; mask after selection; no extrapolation",
+        "quality_valid_output_cells": 122492,
+        "quality_valid_source_centers": 22985,
+        "resampling": "nearest",
+        "seam_crossing_source_centers": 1086,
+        "shape": [
+          421,
+          508
+        ],
+        "source_burst_ids": [
+          "t065_139122_iw2",
+          "t065_139123_iw2",
+          "t065_139124_iw2"
+        ],
+        "source_mask": "input",
+        "spacing_m": 200.0,
+        "transform": [
+          -1624200.0,
+          200.0,
+          0,
+          -247200.0,
+          0,
+          -200.0
+        ],
+        "valid_output_cells": 122492,
+        "valid_source_centers": 22985
+      },
+      "joins": [
+        {
+          "fields": {
+            "azimuth": {
+              "new": {
+                "1366": {
+                  "near_zero_outliers": 3,
+                  "neighbor_supported_centers": 124
+                },
+                "1425": {
+                  "near_zero_outliers": 0,
+                  "neighbor_supported_centers": 183
+                }
+              },
+              "old": {
+                "1366": {
+                  "near_zero_outliers": 50,
+                  "neighbor_supported_centers": 120
+                },
+                "1425": {
+                  "near_zero_outliers": 28,
+                  "neighbor_supported_centers": 183
+                }
+              }
+            },
+            "range": {
+              "new": {
+                "1366": {
+                  "near_zero_outliers": 1,
+                  "neighbor_supported_centers": 56
+                },
+                "1425": {
+                  "near_zero_outliers": 3,
+                  "neighbor_supported_centers": 87
+                }
+              },
+              "old": {
+                "1366": {
+                  "near_zero_outliers": 5,
+                  "neighbor_supported_centers": 66
+                },
+                "1425": {
+                  "near_zero_outliers": 1,
+                  "neighbor_supported_centers": 87
+                }
+              }
+            }
+          },
+          "new_cut": 1425,
+          "old_cut": 1366
+        },
+        {
+          "fields": {
+            "azimuth": {
+              "new": {
+                "2707": {
+                  "near_zero_outliers": 0,
+                  "neighbor_supported_centers": 150
+                },
+                "2766": {
+                  "near_zero_outliers": 1,
+                  "neighbor_supported_centers": 210
+                }
+              },
+              "old": {
+                "2707": {
+                  "near_zero_outliers": 12,
+                  "neighbor_supported_centers": 154
+                },
+                "2766": {
+                  "near_zero_outliers": 4,
+                  "neighbor_supported_centers": 210
+                }
+              }
+            },
+            "range": {
+              "new": {
+                "2707": {
+                  "near_zero_outliers": 2,
+                  "neighbor_supported_centers": 216
+                },
+                "2766": {
+                  "near_zero_outliers": 1,
+                  "neighbor_supported_centers": 318
+                }
+              },
+              "old": {
+                "2707": {
+                  "near_zero_outliers": 0,
+                  "neighbor_supported_centers": 214
+                },
+                "2766": {
+                  "near_zero_outliers": 3,
+                  "neighbor_supported_centers": 318
+                }
+              }
+            }
+          },
+          "new_cut": 2766,
+          "old_cut": 2707
+        }
+      ],
+      "map_grid_unchanged": true,
+      "match_identity": "351e6760b2b808f1977ae1de3f9aee9032025a5e1c54dc52e3f3c0bac900194b",
+      "matching_summary": {
+        "input_valid": 22987,
+        "quality_valid": 22985,
+        "seam_crossing": 1706,
+        "seam_crossing_valid": 1086,
+        "windows": 23607
+      },
+      "old_match_identity": "39db0a19c48eaca33fc5e903937b2d62777360add2b58e6b73ee9a362a187c79",
+      "old_matching_summary": {
+        "input_valid": 22987,
+        "quality_valid": 22985,
+        "seam_crossing": 1525,
+        "seam_crossing_valid": 905,
+        "windows": 23607
+      },
+      "pair": "2020-01-18_2020-01-24",
+      "unchanged_source_control_count": 21356,
+      "unchanged_source_max_difference_px": 0.015625
+    }
+  ],
+  "scope": "Full AOI, existing aligned bursts; no fresh SAFE/COMPASS validation or displacement truth.",
+  "source": "/Users/briel/data/insar/glacier_offsets/work/pig/stack",
+  "source_sizes_mtimes_unchanged": true,
+  "status": "completed"
+}

@@ -1,0 +1,8 @@
+# PIG AOI stack; SAFE/DEM/orbit data must be available on the external volume.
+extends: stack.example.yaml
+inputs:
+  burst_id: null
+aoi:
+  path: ../data/pig/pig_isce3_poly.kml
+output:
+  directory: ../work/pig/stack

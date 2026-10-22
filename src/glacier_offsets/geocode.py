@@ -91,6 +91,22 @@ def formal_uncertainties(covariance, range_spacing, azimuth_scale, interval_seco
     return fields
 
 
+def map_grid(x, y, spacing):
+    """A target grid derived from reference geometry, independent of pair validity."""
+    finite = np.isfinite(x) & np.isfinite(y)
+    if not finite.any():
+        raise ValueError('No finite reference geometry for the common map grid')
+    xmin = np.floor(x[finite].min()/spacing)*spacing
+    xmax = np.ceil(x[finite].max()/spacing)*spacing
+    ymin = np.floor(y[finite].min()/spacing)*spacing
+    ymax = np.ceil(y[finite].max()/spacing)*spacing
+    width = max(1, int(round((xmax-xmin)/spacing)))
+    height = max(1, int(round((ymax-ymin)/spacing)))
+    if width*height > 20_000_000:
+        raise ValueError('Geogrid too large; increase spacing_m')
+    return {'shape': [height, width], 'transform': [float(xmin), float(spacing), 0, float(ymax), 0, -float(spacing)]}
+
+
 class ConservativeMapper:
     """Linear interpolation only inside triangles joining neighboring valid radar centers.
 
@@ -98,7 +114,7 @@ class ConservativeMapper:
     triangles that cross a missing row/column or have ANY invalid vertex.
     This never bridges quality holes by triangulating only good samples.
     """
-    def __init__(self,x,y,valid,spacing,neighbor_only=True):
+    def __init__(self,x,y,valid,spacing,neighbor_only=True,target_grid=None):
         if x.shape!=y.shape or x.shape!=valid.shape or x.ndim!=2:
             raise ValueError('Geometry and validity must share a two-dimensional sparse grid')
         geometry=np.isfinite(x)&np.isfinite(y)
@@ -111,14 +127,12 @@ class ConservativeMapper:
         allowed=np.all(valid.ravel()[self.vertices],axis=1)
         if neighbor_only:
             allowed&=(rows.max(1)-rows.min(1)<=1)&(cols.max(1)-cols.min(1)<=1)
-        xmin=np.floor(points[:,0].min()/spacing)*spacing
-        xmax=np.ceil(points[:,0].max()/spacing)*spacing
-        ymin=np.floor(points[:,1].min()/spacing)*spacing
-        ymax=np.ceil(points[:,1].max()/spacing)*spacing
-        width=max(1,int(round((xmax-xmin)/spacing)));height=max(1,int(round((ymax-ymin)/spacing)))
+        target_grid = map_grid(x,y,spacing) if target_grid is None else target_grid
+        height,width=target_grid['shape']
         if width*height>20_000_000:raise ValueError('Geogrid too large; increase spacing_m')
-        self.shape=(height,width);self.transform=(xmin,spacing,0,ymax,0,-spacing)
-        xx,yy=np.meshgrid(xmin+(np.arange(width)+0.5)*spacing,ymax-(np.arange(height)+0.5)*spacing)
+        self.shape=(height,width);self.transform=tuple(target_grid['transform'])
+        xmin,dx,_,ymax,_,dy=self.transform
+        xx,yy=np.meshgrid(xmin+(np.arange(width)+0.5)*dx,ymax+(np.arange(height)+0.5)*dy)
         target=np.column_stack((xx.ravel(),yy.ravel()))
         simplices=tri.find_simplex(target)
         inside=simplices>=0
@@ -146,12 +160,12 @@ class RadarNearestMapper(ConservativeMapper):
     Invalid samples retain their own regions; never choose the nearest GOOD sample.
     Support remains inside the finite center mesh, without edge extrapolation.
     """
-    def __init__(self,x,y,valid,spacing):
+    def __init__(self,x,y,valid,spacing,target_grid=None):
         # Projected-space Delaunay triangles can span more than one radar column
         # even on a regular sheared grid. Geometry inversion uses the full mesh;
         # motion is copied from the rounded original radar slot, never interpolated
         # across quality holes or selected from a tree of accepted observations.
-        super().__init__(x,y,np.ones_like(valid,dtype=bool),spacing,neighbor_only=False)
+        super().__init__(x,y,np.ones_like(valid,dtype=bool),spacing,neighbor_only=False,target_grid=target_grid)
         vertices=self.vertices[self.simplices]
         rows,cols=np.unravel_index(vertices,x.shape)
         rr=np.floor(np.sum(rows*self.weights,axis=1)+.5).astype(int)
@@ -171,8 +185,8 @@ class RadarNearestMapper(ConservativeMapper):
         return result.reshape(self.shape)
 
 
-def make_mapper(x,y,valid,spacing,resampling):
-    return (RadarNearestMapper if resampling=='nearest' else ConservativeMapper)(x,y,valid,spacing)
+def make_mapper(x,y,valid,spacing,resampling,target_grid=None):
+    return (RadarNearestMapper if resampling=='nearest' else ConservativeMapper)(x,y,valid,spacing,target_grid=target_grid)
 
 
 def write_geotiff(path,data,transform,epsg,metadata):
@@ -206,7 +220,10 @@ def geocoding_specification(cfg: dict,manifest: dict) -> dict:
     # Cache the effective policy, so omitted defaults cannot reuse maps produced
     # under a different default. Explicit and equivalent implicit policies agree.
     settings=merge_config(load_defaults()['geocoding'],cfg.get('geocoding',{}))
-    return {'match':manifest['match_identity'],'settings':settings,'method':'radar-grid-resampling-v5-retention-defaults'}
+    spec = {'match':manifest['match_identity'],'settings':settings,'method':'radar-grid-resampling-v5-retention-defaults'}
+    if 'map_grid' in manifest:
+        spec['target_grid'] = manifest['map_grid']
+    return spec
 
 
 def geocode(cfg: dict,root: Path,manifest: dict,force: bool = False):
@@ -237,8 +254,9 @@ def geocode(cfg: dict,root: Path,manifest: dict,force: bool = False):
         covariance=h['covariance'][:]
         qa={'snr':h['snr'][:],'correlation_peak':h['correlation_peak'][:]}
     x,y=Transformer.from_crs(4326,epsg,always_xy=True).transform(lon,lat)
-    mapper=make_mapper(x,y,valid,spacing,resampling)
-    quality_mapper=make_mapper(x,y,valid&quality,spacing,resampling)
+    target_grid=manifest.get('map_grid')
+    mapper=make_mapper(x,y,valid,spacing,resampling,target_grid=target_grid)
+    quality_mapper=make_mapper(x,y,valid&quality,spacing,resampling,target_grid=target_grid)
     method=('nearest original sparse radar sample; mask after selection; no extrapolation' if resampling=='nearest'
             else 'linear neighboring-center triangles, all selected vertices valid, no extrapolation')
     metadata={'axis_sign':'secondary-minus-reference on geometrically coregistered reference grid',
@@ -254,6 +272,12 @@ def geocode(cfg: dict,root: Path,manifest: dict,force: bool = False):
               'input_provenance_json':json.dumps(manifest['coreg_specification']['inputs'],sort_keys=True),
               'software_versions_json':json.dumps(manifest['software']['packages'],sort_keys=True),
               'provenance_manifest':str(root/'manifest.json')}
+    if 'stack_pair' in manifest:
+        metadata.update(geometry_reference_date=manifest['stack_pair']['geometry_reference_date'],
+                        geometry_reference_burst_times_json=json.dumps(manifest['stack_pair']['geometry_reference_burst_times']),
+                        geometry_reference_inputs_json=json.dumps(manifest['stack_pair']['geometry_reference_inputs'],sort_keys=True),
+                        matched_acquisition_dates=json.dumps(manifest['stack_pair']['acquisition_dates']),
+                        axis_sign='later-minus-earlier on the pinned stack-reference radar grid')
     if assembled is not None:
         metadata.pop('interval_seconds',None)
         metadata.pop('acquisition_times_UTC',None)
@@ -273,7 +297,7 @@ def geocode(cfg: dict,root: Path,manifest: dict,force: bool = False):
     write_geotiff(directory/'quality_valid_mask.tif',quality_mapper.valid.astype('float32'),mapper.transform,epsg,
                   metadata|{'units':'0 not quality accepted, 1 quality accepted','quantity':'matching_quality_coverage'})
     uncertainty_valid=valid&np.all(np.isfinite(covariance[...,:2])&(covariance[...,:2]>=0)&(covariance[...,:2]<99),axis=-1)
-    umapper=make_mapper(x,y,uncertainty_valid,spacing,resampling)
+    umapper=make_mapper(x,y,uncertainty_valid,spacing,resampling,target_grid=target_grid)
     uncertainty_fields = formal_uncertainties(covariance, manifest['coreg']['reference_grid']['range_pixel_spacing'],
                                             azscale, interval, umapper)
     for name, array in uncertainty_fields.items():

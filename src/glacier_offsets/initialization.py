@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import logging
 import math
+import os
 from pathlib import Path
 import xml.etree.ElementTree as ET
 from zipfile import BadZipFile, ZipFile
@@ -115,15 +116,18 @@ class OrbitCatalog:
         if not directory.is_dir():
             raise ValueError('Orbit directory must be a directory')
         self.orbits = []
-        for path in sorted(directory.rglob('*')):
-            if not path.is_file() or path.suffix.lower() not in {'.eof', '.xml'}:
-                continue
-            try:
-                orbit = read_precise_orbit(path)
-                if orbit is not None:
-                    self.orbits.append(orbit)
-            except (ET.ParseError, OSError, AttributeError, TypeError, ValueError) as exc:
-                logging.warning('Ignoring invalid orbit candidate %s: %s', path, exc)
+        for root, directories, files in os.walk(directory):
+            directories[:] = sorted(name for name in directories if not name.startswith('.'))
+            for name in sorted(files):
+                path = Path(root) / name
+                if name.startswith('.') or not path.is_file() or path.suffix.lower() not in {'.eof', '.xml'}:
+                    continue
+                try:
+                    orbit = read_precise_orbit(path)
+                    if orbit is not None:
+                        self.orbits.append(orbit)
+                except (ET.ParseError, OSError, AttributeError, TypeError, ValueError) as exc:
+                    logging.warning('Ignoring invalid orbit candidate %s: %s', path, exc)
         if not self.orbits:
             raise ValueError(f'No valid precise AUX_POEORB files in {directory}')
 

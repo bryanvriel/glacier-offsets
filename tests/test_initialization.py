@@ -104,6 +104,21 @@ class InitializationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'relative orbit'):
                 order_pair([a, wrong])
 
+    def test_orbit_catalog_ignores_hidden_files_and_directories(self):
+        from glacier_offsets.initialization import read_precise_orbit
+        with tempfile.TemporaryDirectory() as d:
+            d=Path(d)
+            s=read_scene(scene(d/'scene.zip',self.time))
+            visible=orbit(d/'visible.EOF',self.time-timedelta(hours=8))
+            (d/'._visible.EOF').write_bytes(b'macOS metadata, not orbit XML')
+            orbit(d/'.hidden.xml',self.time-timedelta(hours=8),created='2025-01-01T00:00:00')
+            hidden=d/'.metadata'; hidden.mkdir()
+            orbit(hidden/'newer.EOF',self.time-timedelta(hours=8),created='2025-01-01T00:00:00')
+            with patch('glacier_offsets.initialization.read_precise_orbit',wraps=read_precise_orbit) as read:
+                catalog=OrbitCatalog(d)
+            read.assert_called_once_with(visible.resolve())
+            self.assertEqual(catalog.resolve(s).path,visible.resolve())
+
     def fixture(self, d, polarizations=('HH',), epsg=3031):
         a = scene(d/'ref.zip', self.time, polarizations=polarizations)
         b = scene(d/'sec.zip', self.time+timedelta(days=12), polarizations=polarizations)

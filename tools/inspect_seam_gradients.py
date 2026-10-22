@@ -80,7 +80,9 @@ def main():
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     from matplotlib.colors import TwoSlopeNorm
-    cuts = [s['offset'][0]+s['valid_window'][0] for s in manifest['assembly']['sources'][1:]]
+    ownership = manifest['assembly'].get('ownership')
+    cuts = ([c['cut_global_line'] for c in ownership['cuts']] if ownership else
+            [s['offset'][0]+s['valid_window'][0] for s in manifest['assembly']['sources'][1:]])
     midline = (line[:-1]+line[1:])/2
     dx, dy = np.median(np.diff(sample)), np.median(np.diff(line))
     fig, axes = plt.subplots(2, 2, figsize=(13, 9), layout='constrained')

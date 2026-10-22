@@ -21,6 +21,18 @@
 !/configs/pair.pig.yaml
 !/configs/pair.pig.velocity.yaml
 !/configs/pair.pig.aoi.yaml
+!/configs/stack.example.yaml
+!/configs/stack.pig.yaml
+!/configs/stack.pig.validity.yaml
+!/configs/stack.pig.interior.yaml
+!/docs/stack-processing/README.md
+!/docs/stack-processing/validation.json
+!/docs/stack-processing/validity-audit.json
+!/docs/stack-processing/boundary-investigation/README.md
+!/docs/stack-processing/boundary-investigation/native-comparison/report.json
+!/docs/stack-processing/boundary-investigation/native-comparison/join-1-range-20000.png
+!/docs/stack-processing/boundary-investigation/interior-validation.json
+!/docs/stack-processing/boundary-investigation/interior-2020-01-18_2020-01-24.png
 
 # Exclude entire data/output/document/runtime trees, including the data symlink.
 /data

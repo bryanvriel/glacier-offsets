@@ -40,7 +40,7 @@ def make_runconfig(cfg, pair, side, root, ref_directory=None):
     return document
 
 
-def inspect_pair(reference, secondary, reference_directory):
+def inspect_pair(reference, secondary, reference_directory, allow_empty=False):
     """Verify complex dtype, shared reference dimensions and finite valid coverage."""
     from osgeo import gdal
     from compass.utils.radar_grid import file_to_rdr_grid
@@ -58,7 +58,7 @@ def inspect_pair(reference, secondary, reference_directory):
             a = ds.ReadAsArray(0, line, ds.RasterXSize, min(256, ds.RasterYSize-line))
             valid += np.count_nonzero(np.isfinite(a) & (np.abs(a) > 0))
         coverages[label] = valid / (grid.length * grid.width)
-        if not valid:
+        if not valid and not allow_empty:
             raise ValueError(f'{label} contains no valid complex samples')
     geometry = {}
     for name in ('x', 'y', 'z', 'layover_shadow_mask'):
@@ -77,6 +77,40 @@ def inspect_pair(reference, secondary, reference_directory):
             'reference_directory': str(reference_directory), 'reference_grid': grid_metadata,
             'coverage': coverages, 'geometry': geometry, 'geometry_crs': crs.ExportToWkt(), 'geometry_epsg': geometry_epsg,
             'alignment_validation': 'pending stationary-terrain inspection; dimensions alone do not establish accuracy'}
+
+
+def run_compass(cfg, pair, side, root, reference_directory=None):
+    """Run one isolated COMPASS stage; also used by reusable stack preparation."""
+    root.mkdir(parents=True, exist_ok=True)
+    document = make_runconfig(cfg, pair, side, root, reference_directory)
+    yaml_path = root / f'compass_{side}.yaml'
+    yaml_path.write_text(yaml.safe_dump(document, sort_keys=False))
+    command = [sys.executable, '-m', 'glacier_offsets.compass_worker', str(yaml_path)]
+    logging.info('Running %s', ' '.join(command))
+    with (root / f'compass_{side}.log').open('w') as log:
+        subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True)
+
+
+def prepare_reference(cfg, burst, root):
+    """Generate topology and reference SLC exactly once for a stack burst."""
+    run_compass(cfg, (burst, burst), 'reference', root)
+    directory = root / 'coreg/reference' / burst.id / burst.start.strftime('%Y%m%d')
+    slc = directory / f'{burst.id}_{burst.start:%Y%m%d}_{cfg["inputs"]["polarization"]}.slc.tif'
+    return inspect_pair(slc, slc, directory)
+
+
+def align_acquisition(cfg, reference_burst, burst, root, reference_coreg):
+    """Resample an original acquisition directly onto the pinned reference grid.
+
+    Sensing order is intentionally unrestricted: dates preceding an explicitly
+    chosen geometry reference use this same geometry-only COMPASS operation.
+    """
+    run_compass(cfg, (reference_burst, burst), 'secondary', root,
+                Path(reference_coreg['reference_directory']))
+    slc = root / 'coreg/secondary' / burst.id / burst.start.strftime('%Y%m%d') / f'{burst.id}_{burst.start:%Y%m%d}.slc.tif'
+    product = inspect_pair(reference_coreg['slcs']['reference'], slc,
+                           reference_coreg['reference_directory'], allow_empty=True)
+    return product['slcs']['secondary']
 
 
 def coregister(cfg: dict, force: bool = False, context=None) -> tuple[Path, dict]:
@@ -101,13 +135,7 @@ def coregister(cfg: dict, force: bool = False, context=None) -> tuple[Path, dict
                 'interval_seconds': (pair[1].start - pair[0].start).total_seconds(), 'stages': {}}
     write_json(manifest_path, manifest)  # invalidate downstream stages before mutation
     for side in ('reference', 'secondary'):
-        document = make_runconfig(cfg, pair, side, root, ref_directory if side == 'secondary' else None)
-        yaml_path = root / f'compass_{side}.yaml'
-        yaml_path.write_text(yaml.safe_dump(document, sort_keys=False))
-        command = [sys.executable, '-m', 'glacier_offsets.compass_worker', str(yaml_path)]
-        logging.info('Running %s', ' '.join(command))
-        with (root / f'compass_{side}.log').open('w') as log:
-            subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True)
+        run_compass(cfg, pair, side, root, ref_directory if side == 'secondary' else None)
     ref = ref_directory / f'{pair[0].id}_{pair[0].start:%Y%m%d}_{cfg["inputs"]["polarization"]}.slc.tif'
     sec = root / 'coreg/secondary' / pair[1].id / pair[1].start.strftime('%Y%m%d') / f'{pair[1].id}_{pair[1].start:%Y%m%d}.slc.tif'
     manifest['coreg'] = inspect_pair(ref, sec, ref_directory)

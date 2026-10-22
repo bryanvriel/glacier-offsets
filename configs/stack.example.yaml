@@ -1,0 +1,20 @@
+# One SAFE per UTC date; one orbit/direction/polarization group.
+extends: defaults
+stack:
+  safe_directory: ../data/pig/safe
+  orbit_directory: ../data/pig/orbits
+  start_date: null
+  end_date: null
+  reference_date: null  # Earliest eligible acquisition; pinned after preparation.
+  pairing:
+    neighbors: 1
+    max_separation_days: 12  # Exact scene-start separation; null disables the cap.
+    pairs_file: null  # CSV columns earlier,later replace automatic pairing.
+inputs:
+  dem: ../data/pig/dem/elevation_REMA_7913bbb002ed.tif
+  polarization: HH
+  burst_id: t065_139122_iw2  # Or clear to null and supply an AOI (including KML).
+output:
+  directory: ../work/pig/stack-example
+geocoding:
+  epsg: 3031

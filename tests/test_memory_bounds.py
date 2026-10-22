@@ -2,6 +2,7 @@
 from collections import Counter
 from pathlib import Path
 import tempfile
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -141,3 +142,14 @@ class MemoryBoundsTests(unittest.TestCase):
             ds=gdal.GetDriverByName('GTiff').Create(str(p),64,64,1,gdal.GDT_Float32);ds=None
             with self.assertRaisesRegex(ValueError,'complex inputs'):
                 native_match(p,p,d/'native',DEFAULT_MATCHING,{'gross_offsets':{'mode':'zero'}},'cpu')
+
+    @unittest.skipUnless(sys.platform=='darwin','macOS lacks the GDAL fallback virtual memory implementation')
+    def test_unmappable_slc_reports_worker_error_instead_of_native_abort(self):
+        with tempfile.TemporaryDirectory() as d:
+            d=Path(d); path=d/'compressed.tif'
+            ds=gdal.GetDriverByName('GTiff').Create(str(path),128,128,1,gdal.GDT_CFloat32,
+                                                   options=['COMPRESS=DEFLATE'])
+            ds.GetRasterBand(1).WriteArray(np.ones((128,128),'complex64')); ds=None
+            params=DEFAULT_MATCHING|{'window':[32,32],'search':[8,8],'stride':[32,32],'zoom':8}
+            with self.assertRaisesRegex(RuntimeError,'cannot memory-map'):
+                native_match(path,path,d/'native',params,{'gross_offsets':{'mode':'zero'}},'cpu')
