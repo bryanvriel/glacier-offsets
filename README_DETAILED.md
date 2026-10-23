@@ -307,10 +307,19 @@ radar grid; neither the matching template nor the source SLCs are cropped or
 shifted. Full chip/search support, exact burst intervals and seam flags retain
 their existing definitions. At most one native call per burst is in flight, and
 workers recycle after four native calls to bound unreleased Ampcor allocations.
+For full-grid zero/constant matching, raw results in unowned or unavailable
+regions are retained. These regions use a shared queue instead of one burst's
+lane, with tasks bounded to at most half the average worker window count. Idle
+workers can process them concurrently while each real burst still has at most
+one native call in flight. Scientific source ownership and masks are unchanged.
 The parent combines results and publishes the pair product only after all work
 succeeds. Worker limits, PIDs, thread limits, native timings and wall time are
 recorded in the matching metadata. Extra workers increase RAM and concurrent SLC
 reads; the limit is a CPU budget, not an automatic memory or storage tuner.
+Shared tasks record `work_kind: unowned_or_inactive` and a null
+`scheduling_burst_id`; each segment includes its native elapsed time. Scheduling
+strategy v2 preserves completed matching products. Restart a running process to
+use the new scheduler for remaining pairs; no `--force` is needed.
 
 GPU matching remains sequential on the selected GPU. `auto` uses the CPU worker
 policy when it selects CPU; a runtime GPU-to-CPU fallback remains sequential for

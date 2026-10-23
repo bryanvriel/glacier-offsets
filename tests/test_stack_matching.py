@@ -5,6 +5,7 @@ from copy import deepcopy
 import multiprocessing
 import os
 from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -14,9 +15,10 @@ from osgeo import gdal
 
 from glacier_offsets import stack_matching
 from glacier_offsets.ampcor import (NATIVE_CALLS_PER_WORKER, _native_executor, match,
-                                    matching_specification, native_match, varying_match)
+                                    _empty_match, matching_specification, native_match, varying_match)
 from glacier_offsets.assembly import annotate_result
 from glacier_offsets.matching_grid import valid_windows
+from glacier_offsets.matching_grid import MatchingGrid
 from glacier_offsets.products import checksum
 from glacier_offsets.stack_pairs import common_map_grid, match_prepared, matching_template, prepared_pair
 import test_stack_science
@@ -47,6 +49,94 @@ class SchedulingTests(unittest.TestCase):
             self.assertTrue((owner[y0:y1, x0:x1] == index).all())
         np.testing.assert_array_equal(counts, selected)
         self.assertEqual(stack_matching.burst_rectangles(owner, np.zeros(owner.shape, bool)), [])
+
+    def test_shared_rectangles_are_bounded_without_reassigning_burst_ownership(self):
+        owner = np.zeros((21, 29), 'uint16')
+        owner[2:8, 3:15] = 1
+        owner[8:14, 3:15] = 2
+        owner[14:20, 3:15] = 3  # Burst absent from one matched date.
+        for workers in (1, 2, 40):
+            selected = np.ones(owner.shape, bool)
+            selected[3:5, 5:7] = False
+            tasks = stack_matching.matching_rectangles(owner, selected, [1, 2], workers)
+            count = np.zeros(owner.shape, int)
+            target = max(1, (int(selected.sum())+2*workers-1)//(2*workers))
+            for lane, a, b, c, d in tasks:
+                count[a:b,c:d] += 1
+                if lane is None:
+                    self.assertFalse(np.isin(owner[a:b,c:d], [1, 2]).any())
+                    self.assertLessEqual((b-a)*(d-c), target)
+                else:
+                    self.assertTrue((owner[a:b,c:d] == lane).all())
+            np.testing.assert_array_equal(count, selected)
+        tasks = stack_matching.matching_rectangles(owner, np.isin(owner, [1, 2]), [1, 2], 2)
+        self.assertTrue(all(t[0] is not None for t in tasks))
+        self.assertEqual(stack_matching.matching_rectangles(owner, selected, [], 0), [])
+
+    def test_idle_workers_share_padding_and_avoid_the_serial_lane_tail(self):
+        # A deterministic event-based pool models cost as window count. This
+        # verifies actual submission/completion logic without timing assertions
+        # depending on machine load, FFT plans or process startup overhead.
+        owner = np.zeros((100, 80), int)
+        for index in (1, 2, 3):
+            owner[(index-1)*10:index*10] = index
+        grid = MatchingGrid(np.arange(100), np.arange(80), (1,1), (0,0), (1,1))
+        prior = {'grid':grid, 'valid':owner>0, 'integer_px':np.zeros((100,80,2), 'int32')}
+        manifest = {'coreg':{'slcs':{'reference':'ref','secondary':'sec'}},
+                    'assembly':{'sources':[{'burst_id':f'b{i}', 'interval_seconds':1} for i in (1,2,3)]}}
+
+        class Pending:
+            def __init__(self, pool, args, kwargs):
+                self.pool, self.kwargs = pool, kwargs
+                self.start = pool.now
+                self.duration = int(np.prod(kwargs['_grid'].shape))
+                self.end = self.start+self.duration
+                self.delivered = False
+                self.name = Path(args[2]).name
+            def ready(self):
+                return self.pool.now >= self.end
+            def get(self, timeout=None):
+                if not self.ready():
+                    self.pool.now = min(t.end for t in self.pool.tasks if not t.delivered)
+                    if not self.ready():
+                        raise multiprocessing.TimeoutError
+                self.delivered = True
+                result = _empty_match(self.kwargs['_grid'], self.kwargs['_valid_input'], 'cpu')
+                result.update(elapsed_seconds=self.duration, effective_parameters={})
+                return result
+        class Pool:
+            now = 0
+            def __init__(self):
+                self.tasks = []
+            def apply_async(self, function, arguments):
+                args, kwargs = arguments[0]
+                task = Pending(self, args, kwargs)
+                running = [t for t in self.tasks if t.end > self.now]
+                self.assertions.assertLess(len(running), 3)
+                if task.name.startswith('burst-'):
+                    lane = task.name.split('-part-')[0]
+                    self.assertions.assertFalse(any(t.name.startswith(lane+'-part-') for t in running))
+                self.tasks.append(task)
+                return task
+        pool = Pool(); pool.assertions = self
+        @contextmanager
+        def executor(workers, **kwargs):
+            self.assertEqual(workers, 3)
+            yield pool
+        with patch.dict(os.environ, OMP_NUM_THREADS='3'), \
+                patch.object(stack_matching, 'source_indices', return_value=owner), \
+                patch.object(stack_matching, '_native_executor', executor), \
+                patch.object(stack_matching, '_write_native_layout'):
+            result = stack_matching.match_bursts({'gross_offsets':{'mode':'zero'},'matching':{}},
+                                                 manifest, self.enterContext(tempfile.TemporaryDirectory()),
+                                                 prior, full_grid=True)
+        shared = [t for t in pool.tasks if t.name.startswith('shared-')]
+        self.assertGreater(len(shared), 3)
+        self.assertTrue(any(a.start <= b.start < a.end for a in shared for b in shared if a is not b))
+        old_tail = np.count_nonzero((owner == 0) | (owner == 1))
+        self.assertLess(pool.now, .65*old_tail)
+        self.assertEqual(sum(t.duration for t in pool.tasks), owner.size)
+        self.assertEqual(result['effective_parameters']['workers'], 3)
 
 
 class NativeBurstMatchingTests(unittest.TestCase):
@@ -128,6 +218,39 @@ class NativeBurstMatchingTests(unittest.TestCase):
         parallel = self.run_workers(2, 'parallel-edges')
         self.assert_science_equal(legacy, parallel)
         self.assertNotIn('prior', parallel)
+
+    def test_missing_regions_share_workers_and_preserve_all_raw_and_masked_results(self):
+        self.cfg['matching']['first_center'] = [31.5, 55.5]
+        slcs = self.manifest['coreg']['slcs']
+        original = gdal.Open(slcs['secondary']).ReadAsArray()
+        original[:, 200:] = 0
+        from test_synthetic_offsets import write_slc
+        missing = self.f.root/'partial-secondary.tif'
+        write_slc(missing, original)
+        slcs['secondary'] = str(missing)
+        source = gdal.Open(self.manifest['coreg']['source_index']).ReadAsArray()
+        source[:, 200:] = 3
+        index_path = self.f.root/'partial-source.tif'
+        ds = gdal.GetDriverByName('GTiff').Create(str(index_path), source.shape[1], source.shape[0], 1, gdal.GDT_UInt16)
+        ds.GetRasterBand(1).WriteArray(source); ds = None
+        self.manifest['coreg']['source_index'] = str(index_path)
+        self.manifest['assembly']['sources'].append(self.manifest['assembly']['sources'][0] |
+                                                   {'burst_id':'missing', 'interval_seconds':None})
+        grid = matching_template(self.cfg, self.frame)
+        valid = valid_windows(gdal.Open(slcs['reference']), gdal.Open(slcs['secondary']), grid, (0,0))
+        legacy = native_match(slcs['reference'], slcs['secondary'], self.directory/'legacy-partial',
+                              self.cfg['matching'], self.cfg, 'cpu', _grid=grid, _valid_input=valid)
+        annotate_result(self.manifest, legacy)
+        serial = self.run_workers(1, 'serial-partial')
+        parallel = self.run_workers(2, 'parallel-partial')
+        self.assert_science_equal(legacy, serial)
+        self.assert_science_equal(serial, parallel)
+        self.assertEqual(parallel['effective_parameters']['workers'], 2)
+        shared = [s for s in parallel['effective_parameters']['segments']
+                  if s['work_kind'] == 'unowned_or_inactive']
+        self.assertTrue(shared)
+        self.assertTrue(all(s['scheduling_burst_id'] is None for s in shared))
+        self.assertFalse(parallel['input_valid'][parallel['source_burst_index'] == 3].any())
 
     def test_fragmented_varying_priors_equal_legacy_and_recycle_workers(self):
         self.cfg['gross_offsets']['mode'] = 'velocity'

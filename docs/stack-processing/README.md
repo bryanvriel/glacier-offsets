@@ -131,6 +131,14 @@ is no nested process pool. Stages, dates and pairs stay sequential, and GPU
 matching retains its existing single-worker path. FFTW cache publication uses
 unique temporary files and atomic replacement across concurrent workers.
 
+Full-grid zero/constant matching retains raw invalid-window results. Unowned
+or unavailable regions use a shared queue of tasks, each with at most half the
+average worker window count. Idle workers consume this queue without assigning
+its workload to the first burst. Real bursts retain their individual lanes and
+one-call-at-a-time limit. Segment metadata identifies shared work separately and
+records native elapsed time. This scheduling-only change keeps completed offsets
+reusable and leaves scientific ownership, chip coordinates and masks unchanged.
+
 [Native scheduling tests](../../tests/test_stack_matching.py) compare zero and
 constant gross offsets, edge-bounded constant offsets, and fragmented varying
 priors against the prior direct/row-segment matcher on the same synthetic
