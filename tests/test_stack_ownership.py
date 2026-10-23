@@ -1,5 +1,6 @@
 """Interior cut margins, coverage partitions and non-overlap preservation."""
 import unittest
+from itertools import permutations
 
 import numpy as np
 
@@ -63,6 +64,45 @@ class InteriorOwnershipTests(unittest.TestCase):
         self.assertTrue((actual[:140, :50] == 1).all())
         self.assertTrue((actual[140:220, :50] == 2).all())
         self.assertTrue((actual[220:360, :50] == 3).all())
+
+    def test_interleaved_swaths_have_order_independent_complete_ownership(self):
+        # Inventory is swath-major, so the first IW2 burst is earlier than
+        # the second IW1 burst despite appearing later in the source list.
+        original = [source('a_iw1', [0, 0], [4, 188, 4, 50]),
+                    source('b_iw1', [128, 0], [4, 188, 4, 50]),
+                    source('a_iw2', [48, 20], [4, 188, 4, 50]),
+                    source('b_iw2', [160, 20], [4, 188, 4, 50])]
+        chronological = sorted(original, key=lambda entry: entry['offset'][0])
+        expected_sources, expected_policy = interior_ownership(chronological)
+        expected, _ = owners(expected_sources)
+        names = [entry['burst_id'] for entry in chronological]
+        union = np.zeros_like(expected, dtype=bool)
+        for entry in original:
+            dy, dx = entry['offset']
+            a, b, c, d = entry['valid_window']
+            union[a+dy:b+dy, c+dx:d+dx] = True
+        for order in permutations(original):
+            with self.subTest(order=[e['burst_id'] for e in order]):
+                selected, policy = interior_ownership(order)
+                self.assertEqual([s['burst_id'] for s in selected], [s['burst_id'] for s in order])
+                actual, count = owners(selected)
+                # Remap categorical codes to the same geographic source IDs.
+                codes = np.array([0] + [names.index(s['burst_id'])+1 for s in selected])
+                np.testing.assert_array_equal(codes[actual], expected)
+                np.testing.assert_array_equal(count, union.astype(count.dtype))
+                cuts = lambda p: sorted((c['upper_burst_id'], c['lower_burst_id'], c['cut_global_line'])
+                                         for c in p['cuts'])
+                self.assertEqual(cuts(policy), cuts(expected_policy))
+        self.assertTrue(all('ownership_windows' not in s for s in original))
+
+    def test_true_nested_or_equal_time_overlaps_still_fail_with_burst_ids(self):
+        for first, second in [(source('a_iw1', [0, 0], [0, 200, 0, 50]),
+                               source('a_iw2', [20, 20], [0, 100, 0, 50])),
+                              (source('a_iw1', [0, 0], [0, 200, 0, 50]),
+                               source('a_iw2', [0, 20], [0, 200, 0, 50]))]:
+            for items in ([first, second], [second, first]):
+                with self.assertRaisesRegex(ValueError, 'iw[12].*iw[12].*non-nested'):
+                    interior_ownership(items)
 
 
 if __name__ == '__main__':

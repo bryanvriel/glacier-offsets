@@ -21,7 +21,8 @@ from glacier_offsets.products import checksum, identity, write_json
 from glacier_offsets.stack import Acquisition, StackPlan
 from glacier_offsets.stack_pairs import common_map_grid, prepared_pair
 from glacier_offsets.stack_storage import (SourceHashes, assemble_date, date_specification, prepare_date,
-                                           prepare_geometry, read_manifest, reference_specification)
+                                           prepare_geometry, read_manifest, reference_specification,
+                                           write_reference_layout)
 from glacier_offsets.stack_workflow import execute_stack
 
 
@@ -91,6 +92,42 @@ class StackScienceTests(unittest.TestCase):
     def effective(self):
         cfg = deepcopy(self.cfg); cfg.pop('aoi',None); cfg['inputs']['burst_id']='stack'
         return cfg
+
+    def test_swath_major_reference_layout_keeps_slc_and_geometry_source_indices(self):
+        sources = []
+        for key, dy, dx, original in [('a_iw1', 0, 0, 0), ('b_iw1', 128, 0, 1),
+                                       ('a_iw2', 64, 32, 0), ('b_iw2', 192, 32, 1)]:
+            coreg = deepcopy(self.sources[original][1]['coreg'])
+            grid = coreg['reference_grid']
+            grid['sensing_start'] = dy/grid['prf']
+            grid['starting_range'] += dx*grid['range_pixel_spacing']
+            sources.append({'burst_id': key, 'coreg': coreg, 'valid_window': [4, 188, 4, 380]})
+        layout = write_reference_layout(self.root/'swath-layout', sources)
+        self.assertEqual([s['burst_id'] for s in layout['sources']], [s['burst_id'] for s in sources])
+        owner = gdal.Open(layout['coreg']['source_index']).ReadAsArray()
+        count = np.zeros(owner.shape, 'uint8')
+        union = np.zeros(owner.shape, bool)
+        geometry = gdal.Open(layout['coreg']['geometry']['x']).ReadAsArray()
+        for index, entry in enumerate(layout['sources'], 1):
+            dy, dx = entry['offset']
+            a,b,c,d = entry['valid_window']
+            union[a+dy:b+dy,c+dx:d+dx] = True
+            original_geometry = gdal.Open(entry['coreg']['geometry']['x']).ReadAsArray()
+            for a,b,c,d in entry['ownership_windows']:
+                section = (slice(a+dy,b+dy), slice(c+dx,d+dx))
+                count[section] += 1
+                np.testing.assert_array_equal(owner[section], index)
+                np.testing.assert_array_equal(geometry[section], original_geometry[a:b,c:d])
+        np.testing.assert_array_equal(count, union.astype('uint8'))
+
+    def test_failed_ownership_layout_reuses_completed_compass_bursts_on_retry(self):
+        with patch('glacier_offsets.stack_storage.interior_ownership',
+                   side_effect=ValueError('ownership failure')):
+            with self.assertRaisesRegex(ValueError, 'ownership failure'):
+                self.geometry()
+        self.assertEqual(self.reference_call.call_count, 2)
+        self.assertEqual(self.geometry()['status'], 'complete')
+        self.assertEqual(self.reference_call.call_count, 2)
 
     def test_reference_prepared_once_dates_before_reference_and_no_pair_duplication(self):
         frame = self.geometry(); dates = self.dates(frame)

@@ -31,15 +31,21 @@ def interior_ownership(sources):
         bounds.append([y0+dy, y1+dy, x0+dx, x1+dx])
     regions = [[w] for w in bounds]
     cuts = []
-    for i, upper in enumerate(bounds):
-        for j in range(i+1, len(bounds)):
-            lower = bounds[j]
+    for first in range(len(bounds)):
+        for second in range(first+1, len(bounds)):
+            # Inventory groups sources by swath; IW2 starts can precede later
+            # IW1 bursts. Orient each overlap by radar time without reordering
+            # sources, whose indices also identify SLC and geometry ownership.
+            i, j = sorted((first, second), key=lambda index: sources[index]['offset'][0])
+            upper, lower = bounds[i], bounds[j]
             y0, y1 = max(upper[0], lower[0]), min(upper[1], lower[1])
             x0, x1 = max(upper[2], lower[2]), min(upper[3], lower[3])
             if y0 >= y1 or x0 >= x1:
                 continue
             if sources[j]['offset'][0] <= sources[i]['offset'][0] or lower[1] <= upper[1]:
-                raise ValueError('Interior ownership requires time-ordered, non-nested reference bursts')
+                raise ValueError(f"{sources[i]['burst_id']} / {sources[j]['burst_id']}: "
+                                 'Interior ownership requires distinct radar start times and '
+                                 'non-nested reference bursts')
             if y1-y0 < 2*POLICY['edge_margin_lines']:
                 raise ValueError(f"{sources[i]['burst_id']} / {sources[j]['burst_id']}: "
                                  f'overlap has {y1-y0} lines; interior ownership requires at least '
