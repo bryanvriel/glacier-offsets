@@ -5,8 +5,9 @@ import json
 import logging
 from pathlib import Path
 
-from .assembly import assemble, invalidate
+from .assembly import assemble, invalidate, release_merged
 from .products import identity, write_json
+from .storage import keep_merged_slcs
 
 
 def execute_assembled_batch(cfg, command, force=False):
@@ -73,14 +74,21 @@ def execute_assembled_batch(cfg, command, force=False):
     try:
         report['merged']['status']='assembling';save()
         merged,manifest=assemble(cfg,sources,native_pairs={p[0].id:p for p in pairs},
-                                 force=force and command in {'assemble','run'})
+                                 force=force and command in {'assemble','run'}, allow_released=command!='assemble')
         effective=deepcopy(cfg);effective.pop('aoi',None);effective['inputs']['burst_id']='merged'
         if command in {'match','run'}:
             report['merged']['status']='matching';save()
+            current = (not force and manifest.get('match_identity') == identity(matching_specification(effective,manifest))
+                       and (merged/'radar/offsets.h5').is_file())
+            if (not current or keep_merged_slcs(cfg)) and any(not Path(p).is_file() for p in manifest['coreg']['slcs'].values()):
+                merged, manifest = assemble(cfg, sources, native_pairs={p[0].id:p for p in pairs})
             match(effective,merged,manifest,force=force,native_pair={p[0].id:p for p in pairs})
         elif command in {'geocode','diagnostics'}:
             if manifest.get('match_identity')!=identity(matching_specification(effective,manifest)):
                 raise ValueError('Merged matching missing or changed; run match with the AOI config first')
+        if (command != 'assemble' and manifest.get('match_identity') == identity(matching_specification(effective,manifest))
+                and (merged/'radar/offsets.h5').is_file()):
+            release_merged(cfg, merged, manifest)
         if command in {'geocode','run'}:
             report['merged']['status']='geocoding';save()
             geocode(effective,merged,manifest,force=force)

@@ -1,5 +1,8 @@
 # Sentinel-1 glacier offsets
 
+**Start here: [Getting started — pair and stack workflows](GETTING_STARTED.md).**
+This README contains the detailed reference and validation notes.
+
 A small, restartable Python workflow for local Sentinel-1 TOPS SAFE pairs and acquisition stacks, one polarization and either one geographic burst or complete bursts intersecting an AOI. COMPASS performs geometry-only radar coregistration; native ISCE3 Ampcor tracks **amplitudes of complex SLCs**. Offset products retain applied gross, native residual and total separately. Only total motion is converted to displacement/velocity and geocoded. Local georeferenced velocity fields can guide searches. Pair AOI processing assembles compatible SLCs on one radar grid before tracking beneath `merged/`. Stack processing prepares each acquisition once on a pinned reference frame and reuses its SLC across pairs. Optional input preparation downloads precise orbits and a cropped DEM; processing stages use those local files. There is no NESD or custom correlator.
 
 Git tracks Python source (including audit scripts), the launcher, package/environment files, this README and selected reference configs. Data, processing outputs, images, plans, validation reports and other working documents stay local; links to those records below describe the working installation and may not exist in a fresh clone. New reference configs or non-Python source assets must be added to the explicit allowlist in `.gitignore`.
@@ -46,7 +49,7 @@ CPU geometry/coregistration uses OpenMP where implemented by ISCE3. Set its thre
 OMP_NUM_THREADS=4 glacier-offsets run configs/pair.pig.yaml --backend cpu
 ```
 
-The inspected native **PyCPUAmpcor 0.25.21 does not parallelize its chunk loop** and exposes no CPU thread-count setting. Its Ampcor FFTW code does not initialize threaded FFT plans. Setting `OMP_NUM_THREADS` therefore does not make this CPU matcher use four cores. `matching.batch` changes the number of windows processed together and memory use, not worker count; CPU `nStreams` is also not a CPU thread pool. OpenMP/FFTW capabilities elsewhere in the linked ISCE3 library do not imply parallel Ampcor. CUDA Ampcor is a separate backend. See [configuration and threading audit](docs/configuration/README.md) for the installed-library/source checks and the executed synthetic check. No process pool or parallel matching extension was added.
+The inspected native **PyCPUAmpcor 0.25.21 does not parallelize its chunk loop** and exposes no CPU thread-count setting. Its Ampcor FFTW code does not initialize threaded FFT plans. Setting `OMP_NUM_THREADS` therefore does not make an individual CPU matcher use four cores. `matching.batch` changes the number of windows processed together and memory use, not worker count; CPU `nStreams` is also not a CPU thread pool. OpenMP/FFTW capabilities elsewhere in the linked ISCE3 library do not imply parallel Ampcor. CUDA Ampcor is a separate backend. See [configuration and threading audit](docs/configuration/README.md) for the installed-library/source checks and the executed synthetic check. The stack workflow uses `OMP_NUM_THREADS` to run separate CPU burst-matching processes as described below; standalone pair/AOI matching retains its sequential native worker.
 
 `--force` repeats the requested computation (`run --force` repeats all stages). Run identity includes inputs' SHA256 hashes, software versions, polarization, selected burst, matching parameters and gross mode/values. A change in matching/gross configuration invalidates matching and geocoding, while retaining geometric coregistration. Later stage commands reject stale preceding stages. Input hashes are checked even on restart; this takes time for large SAFE files. A failed stage clears its completion identity. A source SHA256 snapshot is recorded at validation; after editing workflow code, explicitly force the affected stages. Successful unchanged `run` reuses coregistration, matching and geocoding and refreshes diagnostics.
 
@@ -72,33 +75,75 @@ glacier-offsets download-bursts --aoi data/larsen/LAR2_small.kml \
   --start-date 2018-01-08 --end-date 2018-01-20 \
   --relative-orbit 38 --polarization HH --subswaths 2 \
   -o data/larsen/burst-downloads --dry-run
+  
 # Remove --dry-run to download the planned acquisition groups.
 glacier-offsets download-bursts --aoi data/larsen/LAR2_small.kml \
   --start-date 2018-01-08 --end-date 2018-01-20 \
   --relative-orbit 38 --polarization HH --subswaths 2 \
   -o data/larsen/burst-downloads
+  
 glacier-offsets prepare-inputs data/larsen/burst-downloads \
   -o data/larsen/prepared-bursts \
   --dem-source /Volumes/TU200Pro/glaciers/antarctica/rema/Gapless-REMA100.tif
+  
 glacier-offsets stack init \
   --prepared-inputs data/larsen/prepared-bursts/manifest.json \
   --aoi data/larsen/LAR2_small.kml --polarization HH --epsg 3031 \
   --neighbors 2 --max-separation-days 12 \
   --output configs/stack.lar.bursts.yaml \
   --output-directory work/larsen/stack-bursts --relative-paths
+  
 glacier-offsets stack validate configs/stack.lar.bursts.yaml
+
 glacier-offsets stack run configs/stack.lar.bursts.yaml --backend cpu
 ```
 
 AOI files use the same polygon validation, CRS and antimeridian handling as
 processing. `--aoi-layer` selects a vector layer; `--bbox W S E N` replaces
 `--aoi`. Start/end dates include the entire specified UTC days. Omit
-`--subswaths` to consider IW1–IW3. Dry runs print requested bursts, intervening
-context bursts and acquisition incompatibilities, and create no files.
+`--subswaths` to consider IW1–IW3. The default output summarizes acquisition and
+burst-product counts, unique geographic bursts, date coverage, spacecraft, swaths,
+added context bursts, and up to five acquisitions with issues. Burst-product
+counts include each date's product; geographic counts identify distinct burst
+locations across dates. This summary stays compact for long date ranges.
+Add `--json` for the full plan with every acquisition, burst and footprint;
+`--dry-run --json > plan.json` saves it explicitly. Dry runs create no files
+unless you redirect the output yourself.
 Positive-area intersection preserves AOI holes. Intervening bursts are included
-within each swath even when they fall outside the AOI. Missing interior bursts,
+within each swath even when they fall outside the AOI. By default, missing interior bursts,
 ambiguous duplicate products, incompatible swath combinations, and multiple
 groups on a UTC date are explicit errors.
+
+Add `--allow-partial` to accept a valid contiguous subset when an acquisition
+has interior gaps or incompatible swath extents. Review it first with
+`--allow-partial --dry-run`. The planner retains AOI imagery in **every observed
+swath**, prioritizes the number of retained IW1 AOI bursts, then maximizes total
+AOI bursts, then total retained products including context. Ties favor the lowest
+start/end burst IDs in swath order. Adjacent included swaths must satisfy
+burst2safe's compatibility checks. If no such subset exists, or products are
+ambiguous or metadata inconsistent, the acquisition still fails. Imagery is never
+fabricated to fill a gap. Only available bursts within the original AOI-selected
+along-track span are considered; this mode does not extend swath endpoints.
+
+The summary distinguishes full, accepted partial, and failed acquisitions, and
+shows omission counts and up to five partial dates with their retained ranges.
+`--json` and the manifest retain each unavailable burst ID, every available-but-
+discarded granule/parent/footprint, and the policy/version used. Trimming one
+swath can require discarding valid bursts in another swath. Accepted partial
+acquisitions complete normally and pass through `prepare-inputs`; genuine failures
+continue to block it. Preparation preserves the omission provenance. The stack's
+existing masks leave missing coverage as nodata for affected pairs, preserving
+unaffected dates/bursts and the common map grid. A location missing on consecutive
+dates may still have an 18-day or longer gap despite retaining those dates elsewhere.
+Choose a full-coverage reference date with `stack init --reference-date` so that
+the pinned reference burst selection includes all desired locations.
+
+You may enable this policy on an existing strict collection with the same AOI,
+track, polarization, swaths and date range (or an extension). Unchanged completed
+acquisitions are verified and reused; only groups whose retained granules change
+are rebuilt. Keep `--allow-partial` on subsequent downloader invocations for that
+collection. Switching it back to strict requires a separate collection. Rerun
+preparation after the collection changes before initializing a stack.
 
 Collections contain `download_manifest.json`, visible completed SAFEs beneath
 `safe/<spacecraft>_<absolute-orbit>/`, and hidden `.staging/` work. Downloads
@@ -107,7 +152,10 @@ before publishing a complete acquisition directory. The manifest records
 granules/parents, coverage, context, checksums, package versions and group status.
 Rerunning the same request verifies checksums and reuses unchanged files;
 incomplete/corrupt groups are retried and independent groups continue after a
-failure. Concurrent writers to one collection are rejected. Keep AOI, track,
+failure. Resume checkpoints preserve completed acquisition records even when
+interrupted again before reaching those acquisitions or during checksum
+verification; each resumed reuse still checks file integrity. Concurrent writers
+to one collection are rejected. Keep AOI, track,
 polarization and swaths fixed; date ranges may expand, but narrowing dates or
 changing selection requires a new collection.
 
@@ -120,6 +168,16 @@ separate preparation/configuration/stack output roots when comparing reconstruct
 and full SAFEs, since stack reference geometry is pinned. Exit codes are 0 for
 success, 1 for acquisition failures, 2 for invalid preflight/empty dry runs, and
 130 for interruption.
+
+Reconstructed SAFEs can contain overlapping geolocation records at internal
+burst joins. During inventory, KML export and COMPASS processing, these records
+are interpreted in memory: for a repeated line/pixel, use the record nearest
+the following burst's annotated start. Normalization requires an assembled
+product, a regular burst-boundary grid, timestamps within 1.1 azimuth samples,
+and coordinates within two ground azimuth pixels. Conflicting records and
+invalid resulting footprints still fail validation. Downloaded XML and imagery
+remain unchanged; existing collections do not need downloading or preparation
+again for this correction. Regenerate saved stack plans to update coverage.
 
 ### Reference-geometry stacks
 
@@ -167,6 +225,25 @@ pair graph, omitted links and disconnected dates. `validate` additionally checks
 native metadata, reference-grid placement, DEM coverage and processing settings.
 Both commands are read-only and avoid complete SAFE hashing.
 
+#### Visualize a stack plan
+
+```bash
+glacier-offsets stack plan configs/stack.generated.yaml > plan.json
+python tools/plot_stack_plan.py plan.json --formats png pdf
+```
+
+The standalone tool reads only the saved JSON and writes to `plan_plots/`:
+an overview of network components, acquisition gaps, pair separations and pair
+counts per date; per-geographic-burst networks showing partial coverage and
+disconnections; and `summary.json` with exact gaps, component memberships and
+metadata errors. A connected date graph does not guarantee connected coverage
+at every burst location. Missing/nonpositive burst intervals and pairs with no
+usable shared bursts are distinguished from viable links; this is a metadata
+check, not evidence of matching quality. Use `--gap-days 9` to change the gap
+highlight threshold, `--burst ID` (repeatable) to focus on particular bursts,
+`-o DIRECTORY` to choose an output folder, or `--show` for Matplotlib windows.
+No native processing libraries or mounted input volumes are needed to plot.
+
 V1 accepts one SAFE per UTC acquisition date, one relative orbit/direction group,
 and one polarization. It scans directories recursively without descending inside
 unpacked SAFEs, and selects local precise orbits with interpolation margins.
@@ -212,6 +289,61 @@ geometry, the configured EPSG and spacing. Missing coverage cannot change map
 shape or transform. Pairs without shared support produce explicit empty products
 without running native Ampcor.
 
+Stack stages, acquisition preparation and date pairs execute sequentially. Within
+each pair, CPU matching runs up to `OMP_NUM_THREADS` spawned workers, capped by
+the number of bursts with shared valid support. With the variable unset, it uses
+one worker. An OpenMP list such as `4,1` uses its first value as the worker budget.
+Each matching child is limited to one OpenMP/BLAS thread, while other stages
+retain the original environment and native threading. For example:
+
+```bash
+OMP_NUM_THREADS=4 glacier-offsets stack run configs/stack.generated.yaml --backend cpu
+```
+
+Matching windows are grouped by their original burst ownership on the assembled
+radar grid; neither the matching template nor the source SLCs are cropped or
+shifted. Full chip/search support, exact burst intervals and seam flags retain
+their existing definitions. At most one native call per burst is in flight, and
+workers recycle after four native calls to bound unreleased Ampcor allocations.
+The parent combines results and publishes the pair product only after all work
+succeeds. Worker limits, PIDs, thread limits, native timings and wall time are
+recorded in the matching metadata. Extra workers increase RAM and concurrent SLC
+reads; the limit is a CPU budget, not an automatic memory or storage tuner.
+
+GPU matching remains sequential on the selected GPU. `auto` uses the CPU worker
+policy when it selects CPU; a runtime GPU-to-CPU fallback remains sequential for
+that pair. Changing only `OMP_NUM_THREADS` reuses completed matching products.
+The v8 stack matching identity refreshes older matching/downstream products once,
+while retaining prepared geometry and acquisition SLCs; no new output root or
+`--force` is needed.
+
+The default storage policy retains per-burst **coreg products** (aligned SLCs,
+reference geometry/topography and COMPASS metadata), offsets, maps, masks and
+provenance. Merged SLCs are disposable: AOI pair processing releases its merged
+reference/secondary TIFFs after offsets commit; stacks assemble merged dates on
+demand during `run` and release each date's TIFF and external mask after its last
+active matching consumer completes. Failed matching consumers retain their
+required SLCs. The planned pair graph determines first and last use: each merged
+date is assembled once and kept through all its planned matching consumers.
+Geometry and per-burst sources remain available for geocoding,
+reassembly, new pairs and stack extension without repeating COMPASS.
+
+Cleanup is journaled in the manifests so `stack status`, restart and downstream
+commands recognize intentional release. Small amplitude previews preserve
+diagnostic plots after cleanup. Matching changes or new pairs automatically
+rebuild needed merged SLCs; completed offset fields remain reusable. Explicit
+`assemble` commands materialize SLCs and keep them until a later matching command.
+To retain merged SLCs throughout processing, add this override to your YAML:
+
+```yaml
+storage:
+  keep_merged_slcs: true
+```
+
+The policy applies on the next processing invocation, including existing output
+roots. Raw SAFE files, input DEM/orbits and per-burst `coreg` products are never
+removed by merged-SLC cleanup. Single-burst pair processing retains its coreg SLCs.
+
 Products are organized as follows:
 
 ```text
@@ -244,8 +376,8 @@ configuration and uses `work/pig/stack-interior` for the interior-cut policy:
 glacier-offsets stack run configs/stack.pig.interior.yaml --backend cpu
 ```
 
-Multi-slice assembly, NESD, time-series inversion, raster cubes, parallel stack
-execution and fractional alignment of reference bursts remain outside V1.
+Multi-slice assembly, NESD, time-series inversion, raster cubes, concurrent date
+preparation/pairs and fractional alignment of reference bursts remain outside V1.
 
 ### Prepare orbits and a DEM
 

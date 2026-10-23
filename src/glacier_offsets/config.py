@@ -151,6 +151,8 @@ def validate_common(cfg: dict, discovery: bool = False) -> dict:
         return cfg
     from .assembly import settings as assembly_settings
     assembly_settings(cfg)
+    from .storage import keep_merged_slcs
+    keep_merged_slcs(cfg)
     for key in ("dem",):
         if not inp.get(key) or not Path(inp[key]).is_absolute() or not Path(inp[key]).is_file():
             raise ValueError(f"inputs.{key} must be an existing local file (resolved: {inp.get(key)!r})")

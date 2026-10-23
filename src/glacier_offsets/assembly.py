@@ -197,7 +197,7 @@ def invalidate(root, reason):
         write_json(path, m)
 
 
-def assemble(cfg, sources, native_pairs=None, force=False):
+def assemble(cfg, sources, native_pairs=None, force=False, *, allow_released=False):
     """Create/cache a dedicated merged product without changing source bursts."""
     gdal.UseExceptions()
     root = Path(cfg['output']['directory'])/'merged'
@@ -221,9 +221,11 @@ def assemble(cfg, sources, native_pairs=None, force=False):
     fingerprint = identity(spec)
     path = root/'manifest.json'
     previous = json.loads(path.read_text()) if path.is_file() else {}
+    from .storage import products_valid
+    products = previous.get('assembly', {}).get('products', {})
+    logical = products_valid(products, previous, 'coreg_identity', fingerprint, allow_released=True)
     if not force and previous.get('coreg_identity') == fingerprint:
-        products = previous.get('assembly', {}).get('products', {})
-        if products and all(Path(p).is_file() and checksum(p) == digest for p, digest in products.items()):
+        if products_valid(products, previous, 'coreg_identity', fingerprint, allow_released=allow_released):
             logging.info('Reusing verified merged SLC assembly')
             return root, previous
     invalidate(root, 'rebuilding')
@@ -262,9 +264,28 @@ def assemble(cfg, sources, native_pairs=None, force=False):
                              'sources': entries, 'products': products,
                              'source_burst_ids': [e['burst_id'] for e in entries],
                              'interval_policy': 'per matching center, from its source burst; seam crossings flagged'}}
+    if logical and not force:
+        # Reconstituting a deliberately released cache does not change science.
+        stages = previous.get('stages', {}) | manifest['stages']
+        manifest = previous | manifest
+        manifest['stages'] = stages
+        manifest.pop('slc_cleanup', None)
+        manifest.pop('slc_previews', None)
     write_json(path, manifest)
     write_json(root/'assembly.json', manifest['assembly'])
     return root, manifest
+
+
+def release_merged(cfg, root, manifest):
+    from .storage import cache_preview, keep_merged_slcs, release_slcs
+    if keep_merged_slcs(cfg):
+        return
+    saved = manifest.setdefault('slc_previews', {})
+    for side, source in manifest['coreg']['slcs'].items():
+        if Path(source).is_file():
+            saved[side] = cache_preview(Path(root)/'previews'/side, source, manifest['coreg_identity'])
+    release_slcs(root, manifest, 'coreg_identity', manifest['coreg']['slcs'].values(),
+                 manifest['assembly']['products'])
 
 
 def source_indices(coreg, line, sample):

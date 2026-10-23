@@ -121,3 +121,49 @@ glacier-offsets stack run configs/stack.pig.validity.yaml --backend cpu
 ```
 
 It writes to `work/pig/stack-validity` and preserves the old stack for comparison.
+
+## CPU burst matching workers
+
+Stack CPU matching now uses `OMP_NUM_THREADS` as its maximum spawned process
+count within a date pair, capped by bursts with shared eligible support. Each
+child has one OpenMP/BLAS thread and is replaced after four native calls. There
+is no nested process pool. Stages, dates and pairs stay sequential, and GPU
+matching retains its existing single-worker path. FFTW cache publication uses
+unique temporary files and atomic replacement across concurrent workers.
+
+[Native scheduling tests](../../tests/test_stack_matching.py) compare zero and
+constant gross offsets, edge-bounded constant offsets, and fragmented varying
+priors against the prior direct/row-segment matcher on the same synthetic
+three-date SLCs. One- and two-worker outputs agree in sparse coordinates, raw
+gross/residual/total, SNR, correlation, covariance, masks, seam flags and exact
+intervals (floating arrays within `rtol=atol=1e-5`). The known non-reference
+translation remains (+3, -3) pixels. Tests exercise distinct worker PIDs,
+single-thread limits, worker recycling, partial/empty coverage, GPU routing,
+child exceptions, interruption cleanup, retry, and unchanged cache reuse when
+only the process budget changes. These tests establish numerical agreement on
+the synthetic fixture, not full-size speedup, aggregate RAM bounds or GPU
+numerical equivalence.
+
+Stack matching uses the v8 implementation identity, refreshing older matching
+and downstream products while reusing valid reference geometry and acquisition
+SLCs. Completed products do not depend on the requested worker count.
+
+## Disposable merged SLCs
+
+The default `storage.keep_merged_slcs: false` retains per-burst aligned SLCs,
+COMPASS reference products/geometry and provenance. `stack run` materializes a
+merged date at its first needed match and releases its TIFF/external mask after
+all planned matching consumers have committed offsets. Each date is assembled
+once within the current run; failures keep SLCs needed by unsuccessful consumers.
+Later matching requests can restore released caches from retained aligned bursts.
+Small nearest-sample previews support diagnostics after cleanup. Cleanup journals
+distinguish intentional release from missing/corrupt products, including partial
+unlink operations interrupted before the final checkpoint. Read-only status
+continues to report completed scientific stages after cache release.
+
+[Storage tests](../../tests/test_storage.py) cover native pair and stack matching,
+geocoding and diagnostic plots after release; lazy first use and final-consumer
+release; unchanged retries without assembly/matching; failed consumers; new pairs;
+retention overrides; safe file boundaries; and interruption during cleanup without
+invalidating committed offsets. `storage.keep_merged_slcs: true` retains merged
+SLCs. Explicit `assemble` commands still materialize them for inspection.

@@ -11,6 +11,8 @@ gross_offsets:
 burst_merge:
   enabled: true  # AOI workflows assemble coregistered SLCs before matching.
   alignment_tolerance_px: 0.001
+storage:
+  keep_merged_slcs: false  # Release assembled SLCs after their last matching use; keep per-burst coreg.
 matching:
   backend: auto
   window: [64, 256]

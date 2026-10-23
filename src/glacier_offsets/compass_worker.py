@@ -1,5 +1,6 @@
 """Invoke unmodified COMPASS public radar stages with its 0.5.6 path adapter."""
 from pathlib import Path
+from dataclasses import replace
 import sys
 from compass.utils.runconfig import RunConfig
 from compass import s1_rdr2geo, s1_geo2rdr, s1_resample
@@ -9,6 +10,11 @@ def run(path):
     cfg = RunConfig.load_from_yaml(str(path), 's1_cslc_radar')
     if len(cfg.bursts) != 1:
         raise ValueError(f'Exactly one burst/polarization required; COMPASS loaded {len(cfg.bursts)}')
+    from .annotation_geometry import normalize_burst_geometry
+    burst = cfg.bursts[0]
+    cfg = replace(cfg, bursts=normalize_burst_geometry(
+        cfg.groups.input_file_group.safe_file_path[0], int(burst.burst_id.subswath[-1]),
+        burst.polarization, cfg.bursts))
     if cfg.is_reference:
         s1_rdr2geo.run(cfg)
     else:

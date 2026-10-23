@@ -8,6 +8,7 @@ import ctypes
 import os
 from pathlib import Path
 import sys
+import tempfile
 
 
 def library():
@@ -33,7 +34,15 @@ def restore(path):
 
 def save(lib, path):
     if lib is not None:
-        temporary = str(path) + '.tmp'
-        if not lib.fftwf_export_wisdom_to_filename(temporary.encode()):
-            raise RuntimeError('Cannot save native FFTW plan cache')
-        os.replace(temporary, path)
+        # Workers have separate FFTW state; last writer wins only for warm-up
+        # efficiency. Unique temporary files and atomic publication ensure that
+        # every reader sees a complete cache, including during worker recycling.
+        with tempfile.NamedTemporaryFile(prefix=Path(path).name + '.', suffix='.tmp',
+                                         dir=Path(path).parent, delete=False) as stream:
+            temporary = stream.name
+        try:
+            if not lib.fftwf_export_wisdom_to_filename(temporary.encode()):
+                raise RuntimeError('Cannot save native FFTW plan cache')
+            os.replace(temporary, path)
+        finally:
+            Path(temporary).unlink(missing_ok=True)

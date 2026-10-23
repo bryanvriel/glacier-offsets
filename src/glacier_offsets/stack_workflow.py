@@ -1,5 +1,6 @@
 """Sequential, resumable stack stages with independent acquisition/pair failures."""
 from copy import deepcopy
+from collections import Counter
 import gc
 import json
 import logging
@@ -18,7 +19,8 @@ from .stack import plan_stack, read_catalog, validate_stack
 from .stack_pairs import common_map_grid, matching_template, prepared_pair
 from .stack_stages import STAGES
 from .stack_storage import (SourceHashes, alignment_verified, assemble_date, assembly_specification, date_specification, prepare_date,
-                            prepare_geometry, read_manifest, reference_specification, verified)
+                            prepare_geometry, read_manifest, reference_specification, release_date, verified)
+from .storage import keep_merged_slcs, released_files
 
 def invalidate_pair(root, stage='coregister'):
     manifest = read_manifest(root)
@@ -50,6 +52,7 @@ def execute_stack(cfg, command, force=False):
     if command not in (*STAGES, 'run'):
         raise ValueError(f'Unknown stack stage {command}')
     root = Path(cfg['output']['directory'])
+    retain_slcs = keep_merged_slcs(cfg)
     old = read_catalog(root)
     plan = plan_stack(cfg, previous=old)
     # Native reference placement/DEM checks happen before any scientific mutation.
@@ -165,7 +168,7 @@ def execute_stack(cfg, command, force=False):
             if not alignment_verified(previous, identity(specification)):
                 invalidate_pairs(acquisition.date)
                 save()
-            elif previous.get('assembly_identity') and not verified(previous, 'assembly_identity', previous['assembly_identity']):
+            elif previous.get('assembly_identity') and not verified(previous, 'assembly_identity', previous['assembly_identity'], allow_released=True):
                 invalidate_pairs(acquisition.date)
                 invalidate_date(root/'acquisitions'/acquisition.date)
                 save()
@@ -174,14 +177,27 @@ def execute_stack(cfg, command, force=False):
                                    process=command in ('coregister', 'run'))
             if command != 'coregister':
                 assembly_identity = identity(assembly_specification(frame, aligned))
-                if not verified(aligned, 'assembly_identity', assembly_identity):
+                logical = verified(aligned, 'assembly_identity', assembly_identity, allow_released=True)
+                if not logical:
                     invalidate_pairs(acquisition.date)
                     save()
-                dates[acquisition.date] = assemble_date(cfg, acquisition, frame, aligned,
-                    force=force and command in ('assemble', 'run'), process=command in ('assemble', 'run'))
+                need_slc = command == 'assemble' or (retain_slcs and command in ('match', 'run'))
+                if logical and not (force and command in ('assemble', 'run')) and not need_slc:
+                    dates[acquisition.date] = aligned
+                elif command == 'run' and not retain_slcs:
+                    # Only materialize a new/rebuilt merged date when a pair
+                    # actually needs matching. This bounds the working set by
+                    # the active pair graph instead of all acquisitions.
+                    dates[acquisition.date] = deepcopy(aligned) | {
+                        'assembly_identity': assembly_identity, 'assembly_pending': True, 'products': {},
+                        'slc': str((root/'acquisitions'/acquisition.date/'slc.tif').resolve())}
+                else:
+                    dates[acquisition.date] = assemble_date(cfg, acquisition, frame, aligned,
+                        force=force and command in ('assemble', 'run'),
+                        process=command in ('assemble', 'run') or (logical and need_slc))
                 entry.update(assembly_identity=dates[acquisition.date]['assembly_identity'],
-                             valid_samples=dates[acquisition.date]['valid_samples'],
-                             coverage_fraction=dates[acquisition.date]['coverage_fraction'])
+                             valid_samples=dates[acquisition.date].get('valid_samples'),
+                             coverage_fraction=dates[acquisition.date].get('coverage_fraction'))
             entry.update(status='complete', alignment_identity=aligned['alignment_identity'],
                          completed_stage='coregister' if command == 'coregister' else 'assemble')
         except KeyboardInterrupt:
@@ -256,6 +272,7 @@ def execute_stack(cfg, command, force=False):
         return 1
 
     by_date = {a.date: a for a in plan.acquisitions}
+    remaining = Counter(day for pair in plan.pairs for day in pair)
     for earlier, later in plan.pairs:
         started = time.perf_counter()
         key = f'{earlier}_{later}'
@@ -279,10 +296,34 @@ def execute_stack(cfg, command, force=False):
             effective['inputs']['burst_id'] = 'stack'
             active_stage = 'match'
             if command in ('match', 'run'):
+                current = (not force and manifest.get('match_identity') == identity(matching_specification(effective, manifest))
+                           and (directory/'radar/offsets.h5').is_file())
+                if not current:
+                    for day in (earlier, later):
+                        product = dates[day]
+                        if (product.get('assembly_pending') or
+                                released_files(product, 'assembly_identity', product['assembly_identity'])):
+                            dates[day] = assemble_date(cfg, by_date[day], frame, product)
+                            dates[day].pop('assembly_pending', None)
+                            report['acquisitions'][day].update(completed_stage='assemble',
+                                valid_samples=dates[day]['valid_samples'], coverage_fraction=dates[day]['coverage_fraction'])
                 match(effective, directory, manifest, force=force, native_pair=reference_bursts)
             elif manifest.get('match_identity') != identity(matching_specification(effective, manifest)):
                 invalidate_pair(directory, 'match')
                 raise ValueError('Pair matching missing or changed; run stack match first')
+            if (manifest.get('match_identity') == identity(matching_specification(effective, manifest)) and
+                    (directory/'radar/offsets.h5').is_file()):
+                # Cleanup is downstream of committed offsets. A disk error or
+                # interruption here must not invalidate successful matching.
+                active_stage = 'geocode'
+                for day in (earlier, later):
+                    remaining[day] -= 1
+                    if remaining[day] == 0:
+                        release_date(cfg, by_date[day], dates[day])
+                manifest['slc_previews'] = {side: dates[day]['slc_preview']
+                                           for side, day in zip(('reference', 'secondary'), (earlier, later))
+                                           if 'slc_preview' in dates[day]}
+                write_json(directory/'manifest.json', manifest)
             if manifest.get('geocode_identity') and manifest['geocode_identity'] != identity(geocoding_specification(effective, manifest)):
                 manifest.pop('geocode_identity', None)
                 manifest.pop('diagnostics_identity', None)

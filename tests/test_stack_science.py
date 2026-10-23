@@ -399,6 +399,7 @@ class StackScienceTests(unittest.TestCase):
             self.assertTrue(np.isnan(h['interval_seconds'][:][owner==2]).all())
 
     def test_append_partial_and_insert_dates_preserve_unrelated_scientific_files(self):
+        self.cfg['storage'] = {'keep_merged_slcs': True}
         self.plan=self.make_plan(self.acquisitions[1:])
         with patch('glacier_offsets.stack_workflow.plan_stack',side_effect=lambda cfg,previous:self.plan), \
              patch('glacier_offsets.stack_workflow.validate_stack',return_value='cpu'), \

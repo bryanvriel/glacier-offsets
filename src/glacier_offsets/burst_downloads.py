@@ -15,6 +15,7 @@ import json
 import logging
 from pathlib import Path
 import re
+import sys
 import tempfile
 import time as clock
 import xml.etree.ElementTree as ET
@@ -24,6 +25,7 @@ from shapely.geometry import shape, mapping
 from .aoi import load_aoi, polygon, project_footprint, wgs84_parts
 from .initialization import read_scene, utc_time
 from .products import checksum, identity, write_json
+from .burst_download_selection import coverage_report, select_contiguous_subsets, validate_coverage
 
 METHOD = 's1-burst-download-v1'
 MANIFEST = 'download_manifest.json'
@@ -60,6 +62,8 @@ def request_from_args(args):
     request = {'aoi': aoi.report, 'relative_orbit': args.relative_orbit,
                'polarization': args.polarization, 'subswaths': sorted(set(args.subswaths or (1, 2, 3))),
                'start_date': start.isoformat(), 'end_date': end.isoformat()}
+    if getattr(args, 'allow_partial', False):
+        request['allow_partial'] = True
     return request, aoi
 
 
@@ -73,6 +77,8 @@ def check_extension(old, request):
     if (old.get('method') != METHOD or selection_identity(previous) != selection_identity(request) or
             request['start_date'] > previous['start_date'] or request['end_date'] < previous['end_date']):
         raise ValueError('Changed selection or narrowed dates require a new output collection')
+    if previous.get('allow_partial', False) and not request.get('allow_partial', False):
+        raise ValueError('Collection uses partial coverage; repeat --allow-partial or use a new output collection')
 
 
 def record(product, request):
@@ -159,6 +165,7 @@ def plan_downloads(request, aoi, asf, safe_class, create_info):
         acquisitions.append(group)
         chosen = set(requested)
         try:
+            available_by_swath, missing_bursts = {}, []
             for swath in sorted({rows[n]['swath'] for n in requested}):
                 subset = [rows[n] for n in requested if rows[n]['swath'] == swath]
                 lo, hi = min(r['burst_id'] for r in subset), max(r['burst_id'] for r in subset)
@@ -170,9 +177,21 @@ def plan_downloads(request, aoi, asf, safe_class, create_info):
                 available = [n for n, r in rows.items() if r['mission'] == mission and
                              r['absolute_orbit'] == orbit and r['swath'] == swath and lo <= r['burst_id'] <= hi]
                 counts = Counter(rows[n]['burst_id'] for n in available)
-                if any(counts[i] != 1 for i in range(lo, hi + 1)):
+                if any(count > 1 for count in counts.values()):
+                    raise ValueError(f'{swath}: ambiguous duplicate burst products: {dict(counts)}')
+                missing = [i for i in range(lo, hi + 1) if counts[i] == 0]
+                if missing and not request.get('allow_partial', False):
                     raise ValueError(f'{swath}: missing interior or ambiguous duplicate burst products: {dict(counts)}')
+                available_by_swath[swath] = [rows[n] for n in sorted(available)]
+                missing_bursts.extend({'swath': swath, 'burst_id': i, 'reason': 'unavailable_after_search'}
+                                      for i in missing)
                 chosen.update(available)
+            if len({rows[n]['direction'] for n in chosen}) != 1:
+                raise ValueError('Incompatible orbit directions')
+            if request.get('allow_partial', False):
+                chosen, ranges = select_contiguous_subsets(available_by_swath, requested)
+                group['coverage'] = coverage_report(available_by_swath, chosen, set(requested),
+                                                    missing_bursts, ranges)
             group['context'] = sorted(chosen - set(requested))
             group['bursts'] = [rows[n] for n in sorted(chosen)]
             group['date'] = min(r['start'] for r in group['bursts'])[:10]
@@ -180,6 +199,7 @@ def plan_downloads(request, aoi, asf, safe_class, create_info):
                 raise ValueError('Incompatible orbit directions')
             # create_burst_info does not create directories or transfer imagery.
             safe_class.check_group_validity([create_info(products[n], Path('.')) for n in sorted(chosen)])
+            validate_coverage(group, request)
         except Exception as exc:
             group['errors'].append(str(exc))
             group['bursts'] = [rows[n] for n in sorted(chosen)]
@@ -189,6 +209,73 @@ def plan_downloads(request, aoi, asf, safe_class, create_info):
         if dates[group['date']] > 1:
             group['errors'].append('Multiple acquisition groups on one UTC date violate stack constraints')
     return acquisitions
+
+
+def format_plan(request, groups):
+    """Summarize even long searches without listing each product or footprint."""
+    dates = sorted({g['date'] for g in groups})
+    spacecraft = Counter(g['mission'] for g in groups)
+    swaths = Counter()
+    geographic = set()
+    requested = context = 0
+    for group in groups:
+        aoi_granules = set(group['requested'])
+        for burst in group['bursts']:
+            swaths[burst['swath']] += 1
+            geographic.add((burst['swath'], burst['burst_id']))
+            if burst['granule'] in aoi_granules:
+                requested += 1
+            else:
+                context += 1
+    issues = [g for g in groups if g['errors']]
+    partial = [g for g in groups if not g['errors'] and g.get('coverage', {}).get('partial')]
+    counts = [len(g['bursts']) for g in groups]
+    per_acquisition = ('0' if not counts else str(min(counts)) if min(counts) == max(counts)
+                       else f'{min(counts)}-{max(counts)}')
+    coverage = f'{dates[0]} to {dates[-1]} ({len(dates)} dates)' if dates else 'none'
+    lines = [
+        'Sentinel-1 burst download plan',
+        f'Requested UTC dates: {request["start_date"]} to {request["end_date"]}',
+        f'Track: {request["relative_orbit"]} | Polarization: {request["polarization"]} | '
+        f'Swaths: {", ".join(f"IW{s}" for s in request["subswaths"])}',
+        f'Acquisitions: {len(groups)} ({len(groups)-len(issues)} ready, {len(issues)} with issues)',
+        f'Available UTC dates: {coverage}',
+        'Spacecraft: ' + (', '.join(f'{name}: {count}' for name, count in sorted(spacecraft.items())) or 'none'),
+        f'Burst products: {requested + context} ({requested} AOI, {context} added for contiguity)',
+        f'Unique geographic bursts: {len(geographic)}',
+        f'Burst products per acquisition: {per_acquisition}',
+        'By swath: ' + (', '.join(f'{name}: {count}' for name, count in sorted(swaths.items())) or 'none'),
+    ]
+    if request.get('allow_partial', False):
+        lines[3] = (f'Acquisitions: {len(groups)} ({len(groups)-len(issues)-len(partial)} full, '
+                    f'{len(partial)} partial, {len(issues)} with issues)')
+        lines.append('Coverage policy: partial allowed; retain every observed swath, prioritize IW1')
+        lines.append(f'Omitted coverage: {sum(len(g.get("coverage", {}).get("missing_bursts", [])) for g in groups)} '
+                     f'unavailable bursts, {sum(len(g.get("coverage", {}).get("discarded_bursts", [])) for g in groups)} '
+                     'available products discarded')
+        if partial:
+            lines.append('Partial acquisitions (first 5):')
+            for group in partial[:5]:
+                coverage = group['coverage']
+                ranges = ', '.join(f'{swath} {lo}-{hi}' for swath, (lo, hi)
+                                   in sorted(coverage['retained_ranges'].items()))
+                lines.append(f'  {group["date"]} {group["id"]}: retained {ranges}; '
+                             f'{len(coverage["missing_bursts"])} unavailable, '
+                             f'{len(coverage["discarded_bursts"])} discarded')
+            if len(partial) > 5:
+                lines.append(f'  ... {len(partial)-5} more partial acquisitions')
+    if issues:
+        lines.append('Acquisition issues (first 5):')
+        for group in issues[:5]:
+            detail = ' '.join(str(group['errors'][0]).split())
+            if len(detail) > 200:
+                detail = detail[:197] + '...'
+            extra = f' (+{len(group["errors"])-1} more issues)' if len(group['errors']) > 1 else ''
+            lines.append(f'  {group["date"]} {group["id"]}: {detail}{extra}')
+        if len(issues) > 5:
+            lines.append(f'  ... {len(issues)-5} more acquisitions with issues')
+    lines.append('Use --json for the full plan, including every acquisition and burst.')
+    return '\n'.join(lines)
 
 
 def _xml(path):
@@ -311,7 +398,8 @@ def collection_identity(manifest):
     """Stable handoff identity; verification timings/reuse flags do not matter."""
     try:
         return identity({'request': manifest['request'], 'acquisitions': [
-            {key: group[key] for key in ('id', 'bursts', 'safe', 'validation')}
+            {key: group[key] for key in ('id', 'bursts', 'safe', 'validation')} |
+            ({'coverage': group['coverage']} if 'coverage' in group else {})
             for group in manifest['acquisitions']]})
     except (KeyError, TypeError) as exc:
         raise ValueError('Inconsistent burst download manifest') from exc
@@ -334,6 +422,7 @@ def managed_collection(path):
         raise ValueError('Burst collection is running, failed or incomplete; rerun download-bursts')
     safes = []
     for group in groups:
+        validate_coverage(group, m['request'])
         safe = (root / group['safe']).resolve()
         if not safe.is_relative_to((root / 'safe').resolve()) or not safe.is_dir():
             raise ValueError('Invalid managed SAFE path')
@@ -386,6 +475,17 @@ def _download(request, groups, root, converter):
                 'acquisitions': groups}
     for group in groups:
         group['status'] = 'pending'
+        prior = previous.get(group['id'])
+        if (prior and prior.get('status') == 'complete' and not group['errors'] and
+                prior.get('bursts') == group['bursts']):
+            # Keep durable completion evidence for groups this invocation has
+            # not checked yet. The running collection status blocks preparation;
+            # each product still passes checksum verification before reuse.
+            for key in ('status', 'safe', 'validation', 'downloaded_bytes',
+                        'download_elapsed_seconds'):
+                if key in prior:
+                    group[key] = prior[key]
+            group['versions'] = prior.get('versions', old.get('versions'))
     write_json(manifest_path, manifest)
     for group in groups:
         if group['errors']:
@@ -395,6 +495,7 @@ def _download(request, groups, root, converter):
             continue
         began = clock.monotonic()
         try:
+            validate_coverage(group, request)
             prior = previous.get(group['id'])
             if prior and prior.get('status') == 'complete' and prior.get('bursts') == group['bursts']:
                 safe = root / prior['safe']
@@ -447,7 +548,11 @@ def _download(request, groups, root, converter):
                              download_elapsed_seconds=clock.monotonic() - began)
                 logging.info('Published %s (%d bytes)', group['id'], validation['bytes'])
         except KeyboardInterrupt:
-            group.update(status='interrupted', error='Interrupted')
+            # Interrupted verification does not invalidate an earlier completed
+            # product. Failed verification changes status to running before any
+            # new transfer, so an interrupted retry remains incomplete.
+            if group['status'] != 'complete':
+                group.update(status='interrupted', error='Interrupted')
             manifest['status'] = 'interrupted'
             write_json(manifest_path, manifest)
             raise
@@ -482,6 +587,10 @@ def main(argv=None):
     parser.add_argument('--subswaths', nargs='+', type=int, choices=(1, 2, 3))
     parser.add_argument('-o', '--output', required=True, type=Path)
     parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--allow-partial', action='store_true',
+                        help='Accept compatible contiguous subsets, prioritizing IW1; record all omitted coverage')
+    parser.add_argument('--json', action='store_true',
+                        help='Print the full JSON plan instead of the compact summary')
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
     try:
@@ -491,11 +600,15 @@ def main(argv=None):
             check_extension(json.loads(manifest_path.read_text()), request)
         asf, converter, safe_class, create_info = dependencies()
         groups = plan_downloads(request, aoi, asf, safe_class, create_info)
-        print(json.dumps({'request': request, 'acquisitions': groups}, indent=2, sort_keys=True))
+        if args.json:
+            print(json.dumps({'request': request, 'acquisitions': groups}, indent=2, sort_keys=True))
+        else:
+            print(format_plan(request, groups))
         if args.dry_run:
             return 0 if groups and all(not g['errors'] for g in groups) else 2
         result = download(request, groups, args.output, converter)
-        print(f'Download manifest: {args.output.expanduser().resolve() / MANIFEST}')
+        print(f'Download manifest: {args.output.expanduser().resolve() / MANIFEST}',
+              file=sys.stderr if args.json else sys.stdout)
         return result
     except KeyboardInterrupt:
         return 130

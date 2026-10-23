@@ -20,7 +20,7 @@ from .matching_grid import MatchingGrid, build_grid, valid_windows
 from .products import identity, write_json
 
 # The native CPU chunk destructor does not release its working allocations.
-# Recycle a sequential worker after four calls, bounding accumulation across
+# Recycle each worker after four calls, bounding accumulation across
 # fragmented velocity priors as well as across bursts/standalone validations.
 NATIVE_CALLS_PER_WORKER = 4
 _plan_cache_directory = None
@@ -38,17 +38,31 @@ def _initialize_native_worker(plan_cache):
 
 
 @contextmanager
-def _native_executor():
+def _native_executor(processes=1, *, single_threaded=False):
     global _plan_cache_directory
     if _plan_cache_directory is None:
         _plan_cache_directory = tempfile.TemporaryDirectory(prefix='glacier-offsets-fftw-')
     plan_cache = str(Path(_plan_cache_directory.name) / 'wisdom')
-    # Spawn rather than fork: GDAL, FFTW and CUDA can own native thread state.
-    with multiprocessing.get_context('spawn').Pool(
-            processes=1, initializer=_initialize_native_worker,
-            initargs=(plan_cache,),
-            maxtasksperchild=NATIVE_CALLS_PER_WORKER) as worker:
-        yield worker
+    # Set limits before spawning/importing NumPy/ISCE3, and retain them while
+    # replacement workers start. Restore the parent's environment afterwards.
+    limits = ('OMP_NUM_THREADS', 'OMP_THREAD_LIMIT', 'OPENBLAS_NUM_THREADS',
+              'MKL_NUM_THREADS', 'VECLIB_MAXIMUM_THREADS', 'BLIS_NUM_THREADS',
+              'NUMEXPR_NUM_THREADS') if single_threaded else ()
+    previous = {name: os.environ.get(name) for name in limits}
+    try:
+        os.environ.update(dict.fromkeys(limits, '1'))
+        # Spawn rather than fork: GDAL, FFTW and CUDA can own native thread state.
+        with multiprocessing.get_context('spawn').Pool(
+                processes=processes, initializer=_initialize_native_worker,
+                initargs=(plan_cache,),
+                maxtasksperchild=NATIVE_CALLS_PER_WORKER) as worker:
+            yield worker
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 def _native_worker(arguments):
@@ -63,6 +77,8 @@ def _native_worker(arguments):
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     result['effective_parameters'].update(worker_pid=os.getpid(),
         fftw_plan_cache=_worker_fftw is not None,
+        worker_omp_threads=os.environ.get('OMP_NUM_THREADS'),
+        worker_blas_threads=os.environ.get('OPENBLAS_NUM_THREADS'),
         worker_peak_rss_bytes=int(peak if sys.platform == 'darwin' else peak * 1024))
     return result
 
@@ -149,6 +165,23 @@ def _native_match(reference, secondary, output, params, gross_cfg, backend='cpu'
                 input_valid=valid_input,finite=finite,search_boundary=boundary,valid=valid,backend=backend,elapsed_seconds=elapsed,effective_parameters=effective_parameters)
 
 
+def _empty_match(grid, valid_input, backend):
+    result = {name: np.full((*grid.shape, n), np.nan, dtype='float32') if n > 1
+              else np.full(grid.shape, np.nan, dtype='float32')
+              for name, n in [('gross', 2), ('residual', 2), ('total', 2), ('snr', 1),
+                              ('correlation_peak', 1), ('covariance', 3)]}
+    result.update({key: np.zeros(grid.shape, bool) for key in ('finite', 'search_boundary', 'valid')})
+    result.update(grid=grid, input_valid=valid_input, elapsed_seconds=0., backend=backend)
+    return result
+
+
+def _write_native_layout(output, result):
+    # Combined native-layout files retain missing windows as NaN, not zero priors.
+    for name, file in [('gross', 'gross.bip'), ('residual', 'residual.bip'), ('snr', 'snr.bin'),
+                       ('correlation_peak', 'correlation.bin'), ('covariance', 'covariance.bip')]:
+        result[name].tofile(Path(output) / file)
+
+
 def varying_match(reference,secondary,output,params,cfg,backend,prior,ref,sec):
     """Run native Ampcor only on valid, bounded priors, in contiguous row segments.
 
@@ -168,11 +201,8 @@ def varying_match(reference,secondary,output,params,cfg,backend,prior,ref,sec):
     valid_input=valid_windows(ref,sec,grid,gross)&eligible
     selected_backend=select_backend(backend)[0]
     segment_backend='auto' if backend=='auto' and selected_backend=='gpu' else selected_backend
-    result={name:np.full((*grid.shape,n),np.nan,dtype='float32') if n>1 else np.full(grid.shape,np.nan,dtype='float32')
-            for name,n in [('gross',2),('residual',2),('total',2),('snr',1),('correlation_peak',1),('covariance',3)]}
-    result.update({key:np.zeros(grid.shape,bool) for key in ('finite','search_boundary','valid')})
-    result.update(grid=grid,input_valid=valid_input,elapsed_seconds=0.,backend=selected_backend,
-                  effective_parameters={'mergeGrossOffset':0,'gross_method':'setVaryingGrossOffset','segments':[]},prior=prior)
+    result = _empty_match(grid, valid_input, selected_backend)
+    result.update(effective_parameters={'mergeGrossOffset':0,'gross_method':'setVaryingGrossOffset','segments':[]},prior=prior)
     output=Path(output);output.mkdir(parents=True,exist_ok=True)
     fallback=False
     if eligible.any():
@@ -198,9 +228,7 @@ def varying_match(reference,secondary,output,params,cfg,backend,prior,ref,sec):
                     break
     if fallback:
         return varying_match(reference,secondary,output,params,cfg,'cpu',prior,ref,sec)
-    # Combined native-layout files retain missing windows as NaN, not zero priors.
-    for name,file in [('gross','gross.bip'),('residual','residual.bip'),('snr','snr.bin'),('correlation_peak','correlation.bin'),('covariance','covariance.bip')]:
-        result[name].tofile(output/file)
+    _write_native_layout(output, result)
     return result
 
 
@@ -273,6 +301,8 @@ def write_offsets(path,result,metadata):
 def matching_specification(cfg,manifest):
     spec={'coreg_identity':manifest['coreg_identity'],'matching':cfg['matching'],
             'gross_offsets':cfg.get('gross_offsets',{'mode':'zero'}),'implementation':'native-ampcor-v7-bounded-workers'}
+    if 'stack_pair' in manifest:
+        spec['implementation'] = 'native-ampcor-v8-stack-burst-workers'
     if cfg['gross_offsets']['mode']=='velocity':
         from .velocity_prior import velocity_provenance
         spec['velocity_provenance']=(manifest['velocity_provenance'] if 'velocity_provenance' in manifest

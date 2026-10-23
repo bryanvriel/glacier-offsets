@@ -14,6 +14,7 @@ from .matching_grid import invalid_samples
 from .products import checksum, identity, write_json
 from .raster_io import bounded_raster_cache
 from .stack_ownership import POLICY, interior_ownership
+from .storage import cache_preview, keep_merged_slcs, products_valid, release_slcs
 
 METHOD = 'stack-reference-interior-ownership-v3'
 SLC_STORAGE = 'stripped-complex-tiff-external-mask-v1'
@@ -36,10 +37,9 @@ def read_manifest(root):
     return json.loads(path.read_text()) if path.is_file() else {}
 
 
-def verified(manifest, key, fingerprint):
+def verified(manifest, key, fingerprint, *, allow_released=False):
     products = manifest.get('products', {})
-    return (manifest.get(key) == fingerprint and bool(products) and
-            all(Path(p).is_file() and checksum(p) == digest for p, digest in products.items()))
+    return products_valid(products, manifest, key, fingerprint, allow_released=allow_released)
 
 
 def alignment_verified(manifest, fingerprint):
@@ -233,6 +233,9 @@ def assemble_date(cfg, acquisition, frame, aligned, force=False, process=True):
     if not process:
         raise ValueError(f'{acquisition.date}: merged SLC missing or stale; run stack assemble first')
     result = deepcopy(aligned)
+    result.pop('assembly_pending', None)
+    result.pop('slc_cleanup', None)
+    result.pop('slc_preview', None)
     result.pop('assembly_identity', None)
     result['status'] = 'assembling'
     write_json(root / 'manifest.json', result)
@@ -291,3 +294,14 @@ def assemble_date(cfg, acquisition, frame, aligned, force=False, process=True):
                   coverage_fraction=count/int(np.prod(shape)), products=product_hashes(files))
     write_json(root / 'manifest.json', result)
     return result
+
+
+def release_date(cfg, acquisition, manifest):
+    """Release only the shared assembled TIFF/mask, retaining aligned bursts."""
+    if keep_merged_slcs(cfg) or not manifest.get('assembly_identity'):
+        return
+    root = Path(cfg['output']['directory'])/'acquisitions'/acquisition.date
+    source = Path(manifest['slc'])
+    if source.is_file():
+        manifest['slc_preview'] = cache_preview(root, source, manifest['assembly_identity'])
+    release_slcs(root, manifest, 'assembly_identity', [source], manifest['products'])

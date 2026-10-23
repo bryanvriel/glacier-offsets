@@ -111,6 +111,25 @@ class StackStatusTests(unittest.TestCase):
         self.assertTrue(all(e['status']=='pending' for e in report['stages'].values()))
         self.assertFalse(self.output.exists())
 
+    def test_intentionally_released_slcs_do_not_block_completed_pairs(self):
+        from glacier_offsets.storage import METHOD as cleanup_method
+        self.prepare()
+        root = self.output/'acquisitions'/self.day1
+        m = json.loads((root/'manifest.json').read_text())
+        paths = [root/'slc.tif', root/'slc.tif.msk']
+        m['slc_cleanup'] = {'method':cleanup_method, 'identity_key':'assembly_identity',
+                            'identity':m['assembly_identity'], 'status':'released',
+                            'files':{str(p):m['products'][str(p)] for p in paths}}
+        for p in paths:p.unlink()
+        write_json(root/'manifest.json', m)
+        report = inspect_stack(self.cfg)
+        self.assertTrue(all(e['status']=='complete' for e in report['stages'].values()))
+        self.assertTrue(any('intentionally released' in note for note in report['notes']))
+        # Cleanup evidence never excuses missing original alignment products.
+        (root/'burst.tif').unlink()
+        report = inspect_stack(self.cfg)
+        self.assertEqual(report['pairs'][self.pair]['match']['status'], 'blocked')
+
     def test_matching_config_change_blocks_maps_and_diagnostics(self):
         self.prepare(); cfg=deepcopy(self.cfg);cfg['matching']['window']=[96,256]
         report=inspect_stack(cfg)

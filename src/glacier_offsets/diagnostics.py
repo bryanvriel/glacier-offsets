@@ -6,6 +6,7 @@ import h5py
 import numpy as np
 from osgeo import gdal
 from .products import write_json, checksum
+from .storage import preview_array
 
 
 def diagnostics(cfg,root,manifest):
@@ -39,15 +40,13 @@ def diagnostics(cfg,root,manifest):
     fig,axes=plt.subplots(2,2,figsize=(13,7),layout='constrained')
     grid=manifest['coreg']['reference_grid'];extent=[0,grid['width'],grid['length'],0]
     for j,side in enumerate(['reference','secondary']):
-        ds=gdal.Open(manifest['coreg']['slcs'][side])
-        a=ds.ReadAsArray(buf_xsize=1200,buf_ysize=300)
+        a=preview_array(manifest, side)
         image(axes[0,j],np.log1p(np.abs(a)),f'{side} log amplitude (radar grid)',extent=extent)
         image(axes[1,j],(np.isfinite(a)&(np.abs(a)>0)).astype(float),f'{side} finite nonzero sample mask (preview)',extent=extent,limits=(0,1))
         for ax in axes[:,j]:ax.set_xlabel('reference range sample');ax.set_ylabel('reference azimuth line')
     fig.savefig(directory/'overview.png',dpi=140,bbox_inches='tight');plt.close(fig)
     fig,ax=plt.subplots(figsize=(13,5),layout='constrained')
-    ds=gdal.Open(manifest['coreg']['slcs']['reference'])
-    preview=ds.ReadAsArray(buf_xsize=1200,buf_ysize=300)
+    preview=preview_array(manifest, 'reference')
     ax.imshow(np.log1p(np.abs(preview)),aspect='auto',extent=extent,cmap='gray')
     for mask,label,color in [(~arrays['input_valid'],'Invalid input windows','gray'),
                               (arrays['input_valid']&~arrays['valid'],'Quality rejected','orange'),

@@ -69,6 +69,9 @@ def prepared_pair(cfg, plan, frame, earlier, later, dates, target_grid, velocity
                                  'interval_policy': 'exact earlier/later sensing times for each geographic burst; missing times invalid'},
                     'stages': {'coregister': 'reused aligned acquisitions; no pair coregistration'}}
     manifest['map_grid'] = target_grid
+    manifest['slc_previews'] = {side: product['slc_preview']
+                               for side, product in zip(('reference', 'secondary'), products)
+                               if 'slc_preview' in product}
     if velocity_provenance is not None:
         manifest['velocity_provenance'] = velocity_provenance
     else:
@@ -114,6 +117,7 @@ def prepare_prior(cfg, manifest, grid, reference_bursts):
 def match_prepared(cfg, manifest, directory, prior):
     """Match valid prepared windows, producing an empty field without native calls when needed."""
     from .ampcor import native_match, varying_match
+    from .environment import select_backend
     slcs = manifest['coreg']['slcs']
     ref, sec = (gdal.Open(slcs[side]) for side in ('reference', 'secondary'))
     if prior is None:
@@ -126,15 +130,19 @@ def match_prepared(cfg, manifest, directory, prior):
         grid = prior['grid']
         velocity = True
     prior['valid'] &= valid_windows(ref, sec, grid, prior['integer_px'])
+    bounds = False
     if not velocity and prior['valid'].any():
         gross = gross_values(cfg)
         bounds = (grid.starts_line[0]+gross[0]-grid.search[0] >= 0 and
                   grid.starts_line[-1]+gross[0]+grid.window[0]+grid.search[0] <= sec.RasterYSize and
                   grid.starts_sample[0]+gross[1]-grid.search[1] >= 0 and
                   grid.starts_sample[-1]+gross[1]+grid.window[1]+grid.search[1] <= sec.RasterXSize)
-        if bounds:
-            return native_match(slcs['reference'], slcs['secondary'], directory/'native', cfg['matching'],
-                                cfg, cfg['matching']['backend'], _grid=grid, _valid_input=prior['valid'])
+    if select_backend(cfg['matching']['backend'])[0] == 'cpu':
+        from .stack_matching import match_bursts
+        return match_bursts(cfg, manifest, directory, prior, full_grid=bounds)
+    if bounds:
+        return native_match(slcs['reference'], slcs['secondary'], directory/'native', cfg['matching'],
+                            cfg, cfg['matching']['backend'], _grid=grid, _valid_input=prior['valid'])
     result = varying_match(slcs['reference'], slcs['secondary'], directory/'native', cfg['matching'],
                            cfg, cfg['matching']['backend'], prior, ref, sec)
     if not velocity:

@@ -111,10 +111,12 @@ def read_kml_bursts(safe, polarization=None, subswaths=(1, 2, 3), orbit_path=Non
     elif orbit_path:
         orbit_path = Path(orbit_path).expanduser().resolve(strict=True)
     from s1reader.s1_reader import load_bursts
+    from .annotation_geometry import normalize_burst_geometry
     bursts = []
     for swath in sorted(subswaths):
         native = load_bursts(str(scene.path), str(orbit_path) if orbit_path else '', swath,
                              polarization.lower(), flag_apply_eap=False)
+        native = normalize_burst_geometry(scene.path, swath, polarization, native)
         bursts.extend(Burst(str(b.burst_id), swath, b.sensing_start, b) for b in native)
     if orbit_path:
         validate_orbit(orbit_path, bursts)

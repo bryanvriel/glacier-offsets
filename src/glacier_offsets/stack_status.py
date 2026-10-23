@@ -26,17 +26,18 @@ def read_json(path):
         return {}, str(exc)
 
 
-def recorded(manifest, key, paths, expected=None):
+def recorded(manifest, key, paths, expected=None, released=None):
     if not manifest.get(key):
         return state('pending', 'No completion identity recorded')
     if expected is not None and manifest[key] != expected:
         return state('stale', 'Saved identity differs from current settings or dependencies')
     if not paths:
         return state('incomplete', 'No output products recorded')
-    missing = next((str(p) for p in paths if not Path(p).is_file()), None)
+    missing = next((str(p) for p in paths if not Path(p).is_file() and str(p) not in (released or {})), None)
     if missing:
         return state('incomplete', f'Missing output: {missing}')
-    return state('complete', 'Completion identity and key output files present')
+    return state('complete', 'Completion identity and key output files present' if not released else
+                 'Assembly complete; merged SLC cache intentionally released')
 
 
 def dependent(upstream, check):
@@ -113,6 +114,7 @@ def pair_status(cfg, manifest, root, upstream):
 
 def inspect_stack(cfg):
     from .stack_storage import METHOD, assembly_specification
+    from .storage import released_files
     root = Path(cfg['output']['directory'])
     catalog, catalog_error = read_json(root/'stack_manifest.json')
     frame, error = read_json(root/'geometry/manifest.json')
@@ -145,9 +147,13 @@ def inspect_stack(cfg):
                 return state('stale', 'Alignment dependencies differ from the saved reference')
             return result
         aligned = dependent(reference, alignment)
+        released = {p: digest for p, digest in released_files(m, 'assembly_identity', m.get('assembly_identity')).items()
+                    if m.get('products', {}).get(p) == digest}
         assembled = dependent(aligned, lambda: recorded(m, 'assembly_identity',
             [*m.get('products', {}), path/'slc.tif', path/'valid.tif', path/'slc.tif.msk'],
-            identity(assembly_specification(frame, m))))
+            identity(assembly_specification(frame, m)), released=released))
+        if released:
+            report['notes'].append(f'{day}: merged SLC cache intentionally released; aligned coreg products retained.')
         report['acquisitions'][day] = {'coregister': aligned, 'assemble': assembled}
     for key, entry in sorted(pairs.items()):
         if not entry.get('active', True):
