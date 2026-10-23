@@ -58,7 +58,7 @@ def reference_status(cfg, frame, error):
     if identity(spec) != frame['geometry_identity']:
         return state('incomplete', 'Reference specification does not match its completion identity')
     if spec.get('method') != METHOD or spec.get('ownership_policy') != POLICY:
-        return state('stale', 'Reference ownership policy changed; use a new output root')
+        return state('stale', 'Reference ownership policy changed; use a new output root or stack rebuild-layout for the supported policy update')
     anchor = spec.get('anchor', {})
     requested = cfg['stack'].get('reference_date')
     if requested is not None and str(requested) != anchor.get('reference_date'):

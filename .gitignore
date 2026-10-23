@@ -35,6 +35,12 @@
 !/docs/stack-processing/boundary-investigation/native-comparison/join-1-range-20000.png
 !/docs/stack-processing/boundary-investigation/interior-validation.json
 !/docs/stack-processing/boundary-investigation/interior-2020-01-18_2020-01-24.png
+!/docs/stack-processing/boundary-investigation/swath-validation.json
+!/docs/stack-processing/boundary-investigation/swath-support-comparison.png
+!/docs/stack-processing/boundary-investigation/larsen-march2017-comparison.json
+!/docs/stack-processing/boundary-investigation/larsen-march2017-azimuth-comparison.png
+!/docs/stack-processing/boundary-investigation/larsen-march2017-range-comparison.png
+!/docs/stack-processing/boundary-investigation/larsen-march2017-isce2-merge-audit.json
 
 # Exclude entire data/output/document/runtime trees, including the data symlink.
 /data

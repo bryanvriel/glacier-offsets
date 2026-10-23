@@ -90,19 +90,61 @@ class InteriorOwnershipTests(unittest.TestCase):
                 codes = np.array([0] + [names.index(s['burst_id'])+1 for s in selected])
                 np.testing.assert_array_equal(codes[actual], expected)
                 np.testing.assert_array_equal(count, union.astype(count.dtype))
-                cuts = lambda p: sorted((c['upper_burst_id'], c['lower_burst_id'], c['cut_global_line'])
-                                         for c in p['cuts'])
+                cuts = lambda p: sorted(str(sorted(c.items())) for c in p['cuts'])
                 self.assertEqual(cuts(policy), cuts(expected_policy))
         self.assertTrue(all('ownership_windows' not in s for s in original))
+        # Across swaths the switch runs in range, regardless of radar time.
+        self.assertEqual(expected[80, 36], names.index('a_iw1')+1)
+        self.assertEqual(expected[80, 37], names.index('a_iw2')+1)
 
     def test_true_nested_or_equal_time_overlaps_still_fail_with_burst_ids(self):
         for first, second in [(source('a_iw1', [0, 0], [0, 200, 0, 50]),
-                               source('a_iw2', [20, 20], [0, 100, 0, 50])),
+                               source('b_iw1', [20, 20], [0, 100, 0, 50])),
                               (source('a_iw1', [0, 0], [0, 200, 0, 50]),
-                               source('a_iw2', [0, 20], [0, 200, 0, 50]))]:
+                               source('b_iw1', [0, 20], [0, 200, 0, 50]))]:
             for items in ([first, second], [second, first]):
                 with self.assertRaisesRegex(ValueError, 'iw[12].*iw[12].*non-nested'):
                     interior_ownership(items)
+
+    def test_range_cuts_allow_equal_or_nested_times_on_different_swaths(self):
+        for offset, stop in [(0, 200), (20, 100)]:
+            selected, policy = interior_ownership([
+                source('a_iw1', [0, 0], [0, 200, 0, 50]),
+                source('a_iw2', [offset, 20], [0, stop, 0, 50])])
+            actual, count = owners(selected)
+            self.assertEqual(policy['cuts'][0]['cut_global_sample'], 35)
+            self.assertEqual(actual[offset+1, 34], 1)
+            self.assertEqual(actual[offset+1, 35], 2)
+            self.assertEqual(count[offset+1, :70].min(), 1)
+
+    def test_range_margin_and_nested_range_are_checked(self):
+        for dx in [35, 40]:
+            with self.subTest(dx=dx), self.assertRaisesRegex(ValueError, 'samples.*edge margin'):
+                interior_ownership([source('a_iw1', [0, 0], [0, 100, 0, 50]),
+                                    source('a_iw2', [0, dx], [0, 100, 0, 50])])
+        _, policy = interior_ownership([source('a_iw1', [0, 0], [0, 100, 0, 50]),
+                                        source('a_iw2', [0, 34], [0, 100, 0, 50])])
+        self.assertEqual(policy['cuts'][0]['cut_global_sample'], 42)
+        for dx in [0, 10]:
+            with self.subTest(dx=dx), self.assertRaisesRegex(ValueError, 'non-nested swath support'):
+                interior_ownership([source('a_iw1', [0, 0], [0, 100, 0, 70]),
+                                    source('a_iw2', [0, dx], [0, 100, 0, 50])])
+
+    def test_staggered_range_fringe_is_partitioned_as_a_swath_union(self):
+        # A one-sample fringe from the upper IW1 burst must not be treated as
+        # a separate narrow cross-swath overlap at the four-burst junction.
+        original = [source('a_iw1', [0, 0], [0, 188, 0, 50]),
+                    source('b_iw1', [128, 1], [0, 188, 0, 50]),
+                    source('a_iw2', [48, 20], [0, 188, 0, 50]),
+                    source('b_iw2', [160, 21], [0, 188, 0, 50]),
+                    source('a_iw3', [64, 40], [0, 188, 0, 40])]
+        selected, _ = interior_ownership(original)
+        _, count = owners(selected)
+        union = np.zeros_like(count)
+        for e in original:
+            dy, dx = e['offset']; a,b,c,d = e['valid_window']
+            union[a+dy:b+dy,c+dx:d+dx] = 1
+        np.testing.assert_array_equal(count, union)
 
 
 if __name__ == '__main__':

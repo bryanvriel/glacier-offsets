@@ -281,9 +281,13 @@ available date/burst directly from its original SLC onto that reference grid.
 mask is stored externally as `slc.tif.msk` to keep SLC strips contiguous for
 native CPU Ampcor on macOS; keep this file beside `slc.tif`. Reference
 annotation and actual SLC support determine fixed overlap ownership. Shared
-regions switch at their azimuth midpoint, at least eight SLC lines inside both
-valid edges; overlaps narrower than 16 lines are rejected. Unshared coverage is
-preserved. The cut and its policy are recorded in the geometry and pair manifests.
+regions within a swath switch at their azimuth midpoint, at least eight SLC lines
+inside both valid edges; overlaps narrower than 16 lines are rejected. Between
+swaths, the switch lies at the range midpoint of their shared support, at least
+eight samples inside both valid edges; overlaps narrower than 16 samples are
+rejected. Along-track cuts are resolved first, then swath support is partitioned
+in range, preserving coverage at staggered burst junctions. Unshared coverage is
+preserved. Cuts and their policy are recorded in the geometry and pair manifests.
 Support uses the same connected-zero-fill
 policy as matching: isolated complex zeros remain valid observations, while
 explicit invalid masks, nonfinite samples and connected zero fill remain nodata.
@@ -388,7 +392,45 @@ stage errors, elapsed time, storage and process memory high-water marks.
 
 Synthetic native and regression validation, plus the outstanding real-data
 gates, are recorded in [stack validation](docs/stack-processing/README.md).
-Stacks built with earlier ownership policies require a new output root.
+Stacks using `reference-overlap-midpoint-v1` can update ownership **in the same
+output directory**, retaining their verified COMPASS reference and aligned burst
+products. Stop any running stack process first, then use the same configuration:
+
+```bash
+glacier-offsets stack rebuild-layout configs/stack.generated.yaml --dry-run
+glacier-offsets stack rebuild-layout configs/stack.generated.yaml
+OMP_NUM_THREADS=4 glacier-offsets stack run configs/stack.generated.yaml --backend cpu
+```
+
+The dry run verifies retained-product checksums and reports reuse counts without
+writing files; verification can take time on a large stack. The rebuild permits
+only this ownership-policy update with unchanged reference inputs, selection and
+software. It replaces the ownership raster and geometry mosaic, removes date
+assemblies/previews and all registered pair directories (matching, geocoding and
+diagnostics), and updates cache identities for every saved date, including dates
+outside the current filters. The next `run` regenerates merged SLCs on demand and
+recomputes pair outputs. Completed COMPASS products are reused; missing or
+unfinished bursts are prepared normally. Use `run` without `--force`.
+
+Metadata backups and a resumable journal are stored under `.layout-rebuild/`.
+After an interrupted rebuild, rerun the same rebuild command; normal processing
+is blocked until it finishes. Writer locking prevents concurrent processing or
+rebuilds in the same root. Stop processes launched with older software too,
+because those processes do not acquire the lock. Other reference, software or
+support-policy changes still require a new output root.
+
+Retained aligned bursts can also be checked in isolation without rerunning
+COMPASS or modifying a production stack:
+
+```bash
+python tools/validate_swath_ownership.py /path/to/old-stack \
+  --pair 2017-01-01_2017-01-07 --output /path/to/new-validation \
+  --native-samples 19700 21100
+```
+
+The tool assembles both dates in the new directory, reports full chip/search
+support and optional native matching controls around the requested range strip.
+Its output is a validation artifact, not a resumable production stack.
 [stack.pig.interior.yaml](configs/stack.pig.interior.yaml) inherits the PIG
 configuration and uses `work/pig/stack-interior` for the interior-cut policy:
 

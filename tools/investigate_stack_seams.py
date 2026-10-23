@@ -127,7 +127,7 @@ def main():
             first_valid = lower['offset'][0]+lower['valid_window'][0]
             cuts = (frame.get('ownership') or {}).get('cuts', [])
             cut = next((c['cut_global_line'] for c in cuts
-                        if c['upper_burst_id']==upper['burst_id'] and c['lower_burst_id']==lower['burst_id']),
+                        if c.get('upper_burst_id')==upper['burst_id'] and c.get('lower_burst_id')==lower['burst_id']),
                        first_valid)
             top = upper['offset'][0]+upper['valid_window'][1]
             midpoint = (first_valid+top)//2

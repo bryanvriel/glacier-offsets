@@ -18,6 +18,7 @@ from .products import ChecksumCache, identity, write_json
 from .stack import plan_stack, read_catalog, validate_stack
 from .stack_pairs import common_map_grid, matching_template, prepared_pair
 from .stack_stages import STAGES
+from .stack_lock import stack_lock
 from .stack_storage import (SourceHashes, alignment_verified, assemble_date, assembly_specification, date_specification, prepare_date,
                             prepare_geometry, read_manifest, reference_specification, release_date, verified)
 from .storage import keep_merged_slcs, released_files
@@ -48,6 +49,11 @@ def invalidate_date(root, alignment=False):
 
 
 def execute_stack(cfg, command, force=False):
+    with stack_lock(cfg['output']['directory'], create=True):
+        return _execute_stack(cfg, command, force=force)
+
+
+def _execute_stack(cfg, command, force=False):
     invocation_started = time.perf_counter()
     if command not in (*STAGES, 'run'):
         raise ValueError(f'Unknown stack stage {command}')
@@ -63,7 +69,8 @@ def execute_stack(cfg, command, force=False):
     specification = reference_specification(cfg, plan, hashes, software)
     fingerprint = identity(specification)
     if old.get('reference_specification_identity') not in (None, fingerprint):
-        raise ValueError('Pinned reference geometry inputs/software/support policy changed; use a new output root')
+        raise ValueError('Pinned reference geometry inputs/software/support policy changed; use a new output root '
+                         '(for the ownership-only update, use stack rebuild-layout)')
     report = deepcopy(plan.report)
     report['acquisitions'] = {a.date: dict(old.get('acquisitions', {}).get(a.date, {})) | {'active': True}
                               for a in plan.acquisitions}
