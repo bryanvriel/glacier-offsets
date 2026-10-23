@@ -14,7 +14,7 @@ from .diagnostics import diagnostics
 from .environment import inspect_environment
 from .geocode import geocode, geocoding_specification
 from .inputs import select_pair
-from .products import identity, write_json
+from .products import ChecksumCache, identity, write_json
 from .stack import plan_stack, read_catalog, validate_stack
 from .stack_pairs import common_map_grid, matching_template, prepared_pair
 from .stack_stages import STAGES
@@ -58,6 +58,7 @@ def execute_stack(cfg, command, force=False):
     # Native reference placement/DEM checks happen before any scientific mutation.
     validate_stack(cfg, plan, check_dates=False)
     hashes = SourceHashes()
+    checksums = ChecksumCache()
     software = inspect_environment()
     specification = reference_specification(cfg, plan, hashes, software)
     fingerprint = identity(specification)
@@ -88,6 +89,9 @@ def execute_stack(cfg, command, force=False):
     def finish():
         scale = 1 if sys.platform == 'darwin' else 1024
         report['metrics'] = {'elapsed_seconds': time.perf_counter()-invocation_started,
+            'product_checksum_files_hashed': checksums.files_hashed,
+            'product_checksum_bytes_hashed': checksums.bytes_hashed,
+            'product_checksum_cache_hits': checksums.hits,
             'parent_peak_rss_bytes': int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss*scale),
             'children_peak_rss_bytes': int(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss*scale),
             'rss_scope': 'process lifetime high-water marks; child processes reported separately',
@@ -118,13 +122,15 @@ def execute_stack(cfg, command, force=False):
     save()
     failed = False
     try:
+        logging.info('Verifying stack reference products')
         reference_previous = read_manifest(root/'geometry')
-        if not verified(reference_previous, 'geometry_identity', fingerprint):
+        if not verified(reference_previous, 'geometry_identity', fingerprint, checksums=checksums):
             invalidate_pairs()
             save()
         frame = prepare_geometry(cfg, plan, specification, software,
                                  force=force and command in ('coregister', 'run'),
-                                 process=command in ('coregister', 'run'), expected_layout=old.get('layout_identity'))
+                                 process=command in ('coregister', 'run'), expected_layout=old.get('layout_identity'),
+                                 checksums=checksums)
         report.update(anchor=plan.anchor, reference_specification_identity=fingerprint,
                       geometry_identity=frame['geometry_identity'], reference_status='complete')
         report['layout_identity'] = frame['layout_identity']
@@ -150,13 +156,15 @@ def execute_stack(cfg, command, force=False):
 
     dates = {}
     reference_bursts = {b.id: b for b in plan.bursts}
-    for acquisition in plan.acquisitions:
+    for acquisition_number, acquisition in enumerate(plan.acquisitions, 1):
         started = time.perf_counter()
         entry = report['acquisitions'][acquisition.date]
         entry.update(status='running', directory=str(root/'acquisitions'/acquisition.date))
         entry.pop('error', None)
         save()
         try:
+            logging.info('Checking stack acquisition %s (%d/%d)', acquisition.date,
+                         acquisition_number, len(plan.acquisitions))
             if acquisition.error:
                 raise ValueError(acquisition.error)
             for key in reference_bursts.keys() & acquisition.bursts.keys():
@@ -165,19 +173,20 @@ def execute_stack(cfg, command, force=False):
                 select_pair(effective, [(reference_bursts[key], acquisition.bursts[key])])
             specification = date_specification(acquisition, frame, hashes)
             previous = read_manifest(root/'acquisitions'/acquisition.date)
-            if not alignment_verified(previous, identity(specification)):
+            if not alignment_verified(previous, identity(specification), checksums=checksums):
                 invalidate_pairs(acquisition.date)
                 save()
-            elif previous.get('assembly_identity') and not verified(previous, 'assembly_identity', previous['assembly_identity'], allow_released=True):
+            elif previous.get('assembly_identity') and not verified(previous, 'assembly_identity', previous['assembly_identity'],
+                                                                   allow_released=True, checksums=checksums):
                 invalidate_pairs(acquisition.date)
                 invalidate_date(root/'acquisitions'/acquisition.date)
                 save()
             aligned = prepare_date(cfg, plan, acquisition, frame, specification,
                                    force=force and command in ('coregister', 'run'),
-                                   process=command in ('coregister', 'run'))
+                                   process=command in ('coregister', 'run'), checksums=checksums)
             if command != 'coregister':
                 assembly_identity = identity(assembly_specification(frame, aligned))
-                logical = verified(aligned, 'assembly_identity', assembly_identity, allow_released=True)
+                logical = verified(aligned, 'assembly_identity', assembly_identity, allow_released=True, checksums=checksums)
                 if not logical:
                     invalidate_pairs(acquisition.date)
                     save()
@@ -194,7 +203,7 @@ def execute_stack(cfg, command, force=False):
                 else:
                     dates[acquisition.date] = assemble_date(cfg, acquisition, frame, aligned,
                         force=force and command in ('assemble', 'run'),
-                        process=command in ('assemble', 'run') or (logical and need_slc))
+                        process=command in ('assemble', 'run') or (logical and need_slc), checksums=checksums)
                 entry.update(assembly_identity=dates[acquisition.date]['assembly_identity'],
                              valid_samples=dates[acquisition.date].get('valid_samples'),
                              coverage_fraction=dates[acquisition.date].get('coverage_fraction'))
@@ -303,7 +312,7 @@ def execute_stack(cfg, command, force=False):
                         product = dates[day]
                         if (product.get('assembly_pending') or
                                 released_files(product, 'assembly_identity', product['assembly_identity'])):
-                            dates[day] = assemble_date(cfg, by_date[day], frame, product)
+                            dates[day] = assemble_date(cfg, by_date[day], frame, product, checksums=checksums)
                             dates[day].pop('assembly_pending', None)
                             report['acquisitions'][day].update(completed_stage='assemble',
                                 valid_samples=dates[day]['valid_samples'], coverage_fraction=dates[day]['coverage_fraction'])

@@ -122,6 +122,18 @@ glacier-offsets stack run configs/stack.pig.validity.yaml --backend cpu
 
 It writes to `work/pig/stack-validity` and preserves the old stack for comparison.
 
+## Restart verification
+
+Stack product verification shares an invocation-local checksum cache across
+reference, alignment and assembly checks. An unchanged file is hashed once even
+when it belongs to multiple manifests or is checked by both the workflow and
+its preparation functions. Every lookup checks device/inode, file type, size,
+mtime and ctime; changed files are rehashed and changes during hashing are
+rejected. Missing files still require a matching cleanup journal. The cache
+does not persist between commands, and directory hashes are not cached by parent
+timestamps. Raw input verification retains its existing behavior. Logs report
+acquisition progress; catalog metrics record product hash counts, bytes and hits.
+
 ## CPU burst matching workers
 
 Stack CPU matching now uses `OMP_NUM_THREADS` as its maximum spawned process

@@ -55,6 +55,15 @@ The inspected native **PyCPUAmpcor 0.25.21 does not parallelize its chunk loop**
 
 `--force` repeats the requested computation (`run --force` repeats all stages). Run identity includes inputs' SHA256 hashes, software versions, polarization, selected burst, matching parameters and gross mode/values. A change in matching/gross configuration invalidates matching and geocoding, while retaining geometric coregistration. Later stage commands reject stale preceding stages. Input hashes are checked even on restart; this takes time for large SAFE files. A failed stage clears its completion identity. A source SHA256 snapshot is recorded at validation; after editing workflow code, explicitly force the affected stages. Successful unchanged `run` reuses coregistration, matching and geocoding and refreshes diagnostics.
 
+Within a stack invocation, reference, alignment and assembly verification
+reuse SHA-256 digests for unchanged product files. Each lookup still checks file identity, size and
+modification/change timestamps; changed or replaced files are hashed again, and
+files changing during hashing are rejected. The cache is discarded between
+invocations, so restart still verifies existing products and raw inputs afresh.
+Verification logs identify the current acquisition, and the catalog's `metrics`
+record product files/bytes hashed and checksum-cache hits. This optimization
+does not invalidate existing products or require `--force`.
+
 ## Local inputs
 
 ### Download bursts for an AOI

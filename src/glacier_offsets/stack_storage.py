@@ -37,18 +37,19 @@ def read_manifest(root):
     return json.loads(path.read_text()) if path.is_file() else {}
 
 
-def verified(manifest, key, fingerprint, *, allow_released=False):
+def verified(manifest, key, fingerprint, *, allow_released=False, checksums=None):
     products = manifest.get('products', {})
-    return products_valid(products, manifest, key, fingerprint, allow_released=allow_released)
+    return products_valid(products, manifest, key, fingerprint, allow_released=allow_released, checksums=checksums)
 
 
-def alignment_verified(manifest, fingerprint):
+def alignment_verified(manifest, fingerprint, *, checksums=None):
     products = manifest.get('alignment_products', manifest.get('products', {}))
-    return verified(manifest | {'products': products}, 'alignment_identity', fingerprint)
+    return verified(manifest | {'products': products}, 'alignment_identity', fingerprint, checksums=checksums)
 
 
-def product_hashes(paths):
-    return {str(Path(p).resolve()): checksum(p) for p in dict.fromkeys(map(str, paths))}
+def product_hashes(paths, *, checksums=None):
+    digest = checksum if checksums is None else checksums
+    return {str(Path(p).resolve()): digest(p) for p in dict.fromkeys(map(str, paths))}
 
 
 def burst_config(cfg, reference, acquisition):
@@ -66,11 +67,11 @@ def reference_specification(cfg, plan, hashes, software):
             'software': software['packages'], 'flatten': False, 'backend': 'cpu'}
 
 
-def prepare_geometry(cfg, plan, specification, software, force=False, process=True, expected_layout=None):
+def prepare_geometry(cfg, plan, specification, software, force=False, process=True, expected_layout=None, checksums=None):
     root = Path(cfg['output']['directory']) / 'geometry'
     fingerprint = identity(specification)
     previous = read_manifest(root)
-    if not force and verified(previous, 'geometry_identity', fingerprint):
+    if not force and verified(previous, 'geometry_identity', fingerprint, checksums=checksums):
         return previous
     if not process:
         raise ValueError('Reference preparation missing, incomplete or damaged; run stack coregister first')
@@ -83,7 +84,7 @@ def prepare_geometry(cfg, plan, specification, software, force=False, process=Tr
         directory = root / 'bursts' / burst.id
         spec = {'reference': fingerprint, 'burst_id': burst.id}
         old = read_manifest(directory)
-        if not force and verified(old, 'identity', identity(spec)):
+        if not force and verified(old, 'identity', identity(spec), checksums=checksums):
             coreg = old['coreg']
         else:
             write_json(directory / 'manifest.json', {'specification': spec, 'status': 'running'})
@@ -92,7 +93,7 @@ def prepare_geometry(cfg, plan, specification, software, force=False, process=Tr
             if 'reference_directory' in coreg:
                 files.extend(p for p in Path(coreg['reference_directory']).iterdir() if p.is_file())
             write_json(directory / 'manifest.json', {'identity': identity(spec), 'coreg': coreg,
-                       'products': product_hashes(files), 'status': 'complete'})
+                       'products': product_hashes(files, checksums=checksums), 'status': 'complete'})
         window = _coverage_bounds(coreg['slcs']['reference'])
         annotation = _annotation_window((burst, burst))
         if annotation:
@@ -105,7 +106,7 @@ def prepare_geometry(cfg, plan, specification, software, force=False, process=Tr
                         'manifest': str(directory / 'manifest.json')})
     if len({CRS.from_user_input(e['coreg']['geometry_crs']).to_wkt() for e in sources}) != 1:
         raise ValueError('Reference burst geometry CRSs differ')
-    layout = write_reference_layout(root, sources)
+    layout = write_reference_layout(root, sources, checksums=checksums)
     layout_identity = layout['layout_identity']
     pinned_layout = expected_layout or previous.get('layout_identity')
     if pinned_layout is not None and layout_identity != pinned_layout:
@@ -114,12 +115,12 @@ def prepare_geometry(cfg, plan, specification, software, force=False, process=Tr
     for entry in sources:
         files.extend(read_manifest(Path(entry['manifest']).parent)['products'])
     frame = dict(layout, geometry_identity=fingerprint, specification=specification,
-                 software=software, status='complete', products=product_hashes(files))
+                 software=software, status='complete', products=product_hashes(files, checksums=checksums))
     write_json(root / 'manifest.json', frame)
     return frame
 
 
-def write_reference_layout(root, sources):
+def write_reference_layout(root, sources, *, checksums=None):
     """Write the interior ownership and matching geometry from prepared sources."""
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
@@ -151,7 +152,8 @@ def write_reference_layout(root, sources):
                     band.WriteArray(block, x0+dx, row+dy)
             del unsupported
     owner = None
-    layout_identity = identity({'reference_grid': grid, 'source_index_sha256': checksum(owner_path),
+    digest = checksum if checksums is None else checksums
+    layout_identity = identity({'reference_grid': grid, 'source_index_sha256': digest(owner_path),
                                'ownership': ownership,
                                'placements': [{k: e[k] for k in ('burst_id', 'offset', 'valid_window', 'ownership_windows')}
                                               for e in sources]})
@@ -176,12 +178,12 @@ def date_specification(acquisition, frame, hashes):
                             for e in frame['sources'] if e['burst_id'] in acquisition.bursts}}
 
 
-def prepare_date(cfg, plan, acquisition, frame, specification, force=False, process=True):
+def prepare_date(cfg, plan, acquisition, frame, specification, force=False, process=True, checksums=None):
     """Align available bursts once; cache each burst independently of pair count."""
     root = Path(cfg['output']['directory']) / 'acquisitions' / acquisition.date
     fingerprint = identity(specification)
     old = read_manifest(root)
-    if not force and alignment_verified(old, fingerprint):
+    if not force and alignment_verified(old, fingerprint, checksums=checksums):
         return old
     if not process:
         raise ValueError(f'{acquisition.date}: alignment missing or stale; run stack coregister first')
@@ -199,20 +201,20 @@ def prepare_date(cfg, plan, acquisition, frame, specification, force=False, proc
         directory = root / 'bursts' / key
         spec = {'date': fingerprint, 'burst_id': key}
         previous = read_manifest(directory)
-        if not force and verified(previous, 'identity', identity(spec)):
+        if not force and verified(previous, 'identity', identity(spec), checksums=checksums):
             slcs[key] = previous['slc']
         else:
             write_json(directory / 'manifest.json', {'specification': spec, 'status': 'aligning'})
             slc = align_acquisition(effective, reference_bursts[key], acquisition.bursts[key], directory, entry['coreg'])
             slcs[key] = slc
             write_json(directory / 'manifest.json', {'identity': identity(spec), 'slc': slc,
-                       'products': product_hashes([slc]), 'status': 'complete'})
+                       'products': product_hashes([slc], checksums=checksums), 'status': 'complete'})
     result = {'alignment_identity': fingerprint, 'specification': specification, 'slcs': slcs,
-              'products': product_hashes(slcs.values()), 'status': 'aligned', 'date': acquisition.date,
+              'products': product_hashes(slcs.values(), checksums=checksums), 'status': 'aligned', 'date': acquisition.date,
               'burst_times': specification['burst_times']}
     # An acquisition with no selected bursts is an explicitly empty aligned date.
     if not slcs:
-        result['products'] = product_hashes([Path(cfg['output']['directory']) / 'geometry/source.tif'])
+        result['products'] = product_hashes([Path(cfg['output']['directory']) / 'geometry/source.tif'], checksums=checksums)
     result['alignment_products'] = result['products']
     write_json(root / 'manifest.json', result)
     return result
@@ -224,11 +226,11 @@ def assembly_specification(frame, aligned):
             'geometry': frame['geometry_identity'], 'slc_storage': SLC_STORAGE}
 
 
-def assemble_date(cfg, acquisition, frame, aligned, force=False, process=True):
+def assemble_date(cfg, acquisition, frame, aligned, force=False, process=True, checksums=None):
     """Apply identical reference ownership; never fill gaps from another source."""
     root = Path(cfg['output']['directory']) / 'acquisitions' / acquisition.date
     fingerprint = identity(assembly_specification(frame, aligned))
-    if not force and verified(aligned, 'assembly_identity', fingerprint):
+    if not force and verified(aligned, 'assembly_identity', fingerprint, checksums=checksums):
         return aligned
     if not process:
         raise ValueError(f'{acquisition.date}: merged SLC missing or stale; run stack assemble first')
@@ -291,7 +293,7 @@ def assemble_date(cfg, acquisition, frame, aligned, force=False, process=True):
     result.update(assembly_identity=fingerprint, slc_storage=SLC_STORAGE,
                   status='complete', slc=str((root/'slc.tif').resolve()),
                   validity_mask=str((root/'valid.tif').resolve()), valid_samples=count,
-                  coverage_fraction=count/int(np.prod(shape)), products=product_hashes(files))
+                  coverage_fraction=count/int(np.prod(shape)), products=product_hashes(files, checksums=checksums))
     write_json(root / 'manifest.json', result)
     return result
 

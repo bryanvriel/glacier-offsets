@@ -1,5 +1,6 @@
 """Merged SLC lifecycle: last consumers, restart, recovery and retained coreg."""
 from contextlib import ExitStack
+from collections import Counter
 from copy import deepcopy
 import json
 from pathlib import Path
@@ -165,6 +166,25 @@ class StackStorageTests(unittest.TestCase):
             self.assertEqual(execute_stack(self.cfg, 'geocode'), 0)
             self.assertEqual(execute_stack(self.cfg, 'diagnostics'), 0)
         self.assertEqual(before, {p:(checksum(p), p.stat().st_mtime_ns) for p in before})
+        self.assertEqual(len(self.calls), 3)
+
+    def test_stack_restart_hashes_each_unchanged_product_once_per_invocation(self):
+        with self.mocked_science():
+            self.assertEqual(execute_stack(self.cfg, 'run'), 0)
+        expected = set(read_manifest(self.root/'geometry')['products'])
+        for acquisition in self.f.acquisitions:
+            manifest = read_manifest(self.root/'acquisitions'/acquisition.date)
+            expected.update(name for name in manifest['products'] if Path(name).is_file())
+        for _ in range(2):
+            with self.mocked_science(), patch('glacier_offsets.products.checksum', wraps=checksum) as reads:
+                self.assertEqual(execute_stack(self.cfg, 'run'), 0)
+            counts = Counter(str(Path(c.args[0]).resolve()) for c in reads.call_args_list)
+            self.assertEqual(set(counts), expected)
+            self.assertTrue(all(count == 1 for count in counts.values()), counts)
+            report = json.loads((self.root/'stack_manifest.json').read_text())['metrics']
+            self.assertEqual(report['product_checksum_files_hashed'], len(expected))
+            self.assertEqual(report['product_checksum_bytes_hashed'], sum(Path(p).stat().st_size for p in expected))
+            self.assertGreater(report['product_checksum_cache_hits'], 0)
         self.assertEqual(len(self.calls), 3)
 
     def test_failed_pair_keeps_required_slcs_and_retry_reuses_other_offsets(self):
