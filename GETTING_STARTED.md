@@ -34,8 +34,8 @@ DEM=/path/to/dem.tif
 AOI=/path/to/glacier.kml
 ```
 
-Need data first? Follow [burst downloads](README.md#download-bursts-for-an-aoi)
-and [orbit/DEM preparation](README.md#prepare-orbits-and-a-dem). Use
+Need data first? Follow [burst downloads](README_DETAILED.md#download-bursts-for-an-aoi)
+and [orbit/DEM preparation](README_DETAILED.md#prepare-orbits-and-a-dem). Use
 `--allow-partial` to accept compatible partial burst acquisitions; review their
 omissions with `--dry-run`. Finish downloading before preparing inputs.
 
@@ -85,7 +85,7 @@ coverage. Keep the reference fixed when extending an existing stack.
 
 To inspect time gaps and connected components visually, save `stack plan` output
 to `plan.json`, then run `python tools/plot_stack_plan.py plan.json`.
-See [network plots](README.md#visualize-a-stack-plan) for options.
+See [network plots](README_DETAILED.md#visualize-a-stack-plan) for options.
 
 Pair maps are in **`work/stack/pairs/<earlier>_<later>/geo/`**. Per-burst aligned
 SLCs are retained under `work/stack/acquisitions/`; merged date SLCs are temporary
@@ -105,4 +105,4 @@ glacier-offsets stack status configs/stack.generated.yaml --backend cpu
 ```
 
 For matching settings, individual stages, GPU support and output definitions,
-see the [full README](README.md).
+see the [detailed reference](README_DETAILED.md).
