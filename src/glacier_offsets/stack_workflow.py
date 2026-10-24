@@ -12,6 +12,7 @@ import time
 from .ampcor import match, matching_specification
 from .diagnostics import diagnostics
 from .environment import inspect_environment
+from .fftw_cache import pinned
 from .geocode import geocode, geocoding_specification
 from .inputs import select_pair
 from .products import ChecksumCache, identity, write_json
@@ -54,7 +55,7 @@ def execute_stack(cfg, command, force=False):
 
 
 def _execute_stack(cfg, command, force=False):
-    from .stack_isce2 import enabled, prepare_common_layout
+    from .stack_mosaic import enabled, prepare_common_layout
     isce2 = enabled(cfg)
     invocation_started = time.perf_counter()
     if command not in (*STAGES, 'run'):
@@ -250,7 +251,7 @@ def _execute_stack(cfg, command, force=False):
             return 1
         try:
             previous_layout = frame['layout_identity']
-            logging.info('Preparing ISCE2 stack-common valid rectangles and overwrite layout')
+            logging.info('Preparing stack-common valid rectangles and merge-first layout')
             frame = prepare_common_layout(cfg, plan, frame, dates, checksums)
             if frame['layout_identity'] != previous_layout:
                 invalidate_pairs()
@@ -289,7 +290,7 @@ def _execute_stack(cfg, command, force=False):
             raise
         except Exception as exc:
             invalidate_pairs()
-            report.update(outcome='failed', error=f'ISCE2 common validity/assembly: {type(exc).__name__}: {exc}')
+            report.update(outcome='failed', error=f'Merge-first common validity/assembly: {type(exc).__name__}: {exc}')
             logging.error('%s', report['error'])
             finish()
             return 1
@@ -390,7 +391,9 @@ def _execute_stack(cfg, command, force=False):
                                 valid_samples=dates[day]['valid_samples'], coverage_fraction=dates[day]['coverage_fraction'])
                     logging.info('Matching stack pair %s with %s Ampcor on merged SLCs',
                                  key, effective['matching'].get('engine', 'isce3').upper())
-                match(effective, directory, manifest, force=force, native_pair=reference_bursts)
+                # Pinned FFTW wisdom makes repeated CPU matching bit-identical on this host/build.
+                with pinned(root/'.cache'/'fftw'):
+                    match(effective, directory, manifest, force=force, native_pair=reference_bursts)
             elif manifest.get('match_identity') != identity(matching_specification(effective, manifest)):
                 invalidate_pair(directory, 'match')
                 raise ValueError('Pair matching missing or changed; run stack match first')

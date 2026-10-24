@@ -19,7 +19,7 @@ from glacier_offsets.ampcor import match
 from glacier_offsets.diagnostics import diagnostics
 from glacier_offsets.geocode import geocode
 from glacier_offsets.products import ChecksumCache, write_json
-from glacier_offsets.stack_config import load_stack_config
+from glacier_offsets.stack_config import MERGE_FIRST, load_stack_config
 from glacier_offsets.stack_storage import assemble_date, read_manifest, release_date
 
 
@@ -87,8 +87,8 @@ def main():
     original = read_manifest(pair)
     if original['matching']['matching'].get('engine') != 'isce2':
         raise ValueError('Expected an ISCE2 baseline pair')
-    if cfg['stack']['processing'] != 'isce2_merge_first':
-        raise ValueError('Keep stack.processing=isce2_merge_first')
+    if cfg['stack']['processing'] not in MERGE_FIRST:
+        raise ValueError('Keep a merge-first stack.processing selector')
     # Matching chip, search and stride must remain identical to the saved run.
     for key in ('window', 'search', 'stride', 'first_center', 'raw_oversampling', 'oversampling'):
         if cfg['matching'].get(key) != original['matching']['matching'].get(key):

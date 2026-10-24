@@ -1,0 +1,507 @@
+{
+  "assemblies": {
+    "midpoint": {
+      "2017-01-01": {
+        "identical": true,
+        "isce3_cost": {
+          "block_reads": 0,
+          "block_writes": 0,
+          "peak_rss_bytes": 1325285376,
+          "wall_seconds": 87.1
+        },
+        "production_slc_sha256_matches": {
+          "isce3": true,
+          "reference": true
+        },
+        "reference_cost": {
+          "block_reads": 0,
+          "block_writes": 0,
+          "peak_rss_bytes": 1076183040,
+          "wall_seconds": 110.4
+        },
+        "valid_samples": 290860643
+      },
+      "2017-01-07": {
+        "identical": true,
+        "isce3_cost": {
+          "block_reads": 0,
+          "block_writes": 0,
+          "peak_rss_bytes": 1209237504,
+          "wall_seconds": 197.6
+        },
+        "production_slc_sha256_matches": {
+          "isce3": true,
+          "reference": true
+        },
+        "reference_cost": {
+          "block_reads": 0,
+          "block_writes": 0,
+          "peak_rss_bytes": 1112276992,
+          "wall_seconds": 26.8
+        },
+        "valid_samples": 290860643
+      },
+      "2017-01-13": {
+        "identical": true,
+        "isce3_cost": {
+          "block_reads": 0,
+          "block_writes": 0,
+          "peak_rss_bytes": 1277591552,
+          "wall_seconds": 21.9
+        },
+        "production_slc_sha256_matches": {
+          "isce3": true,
+          "reference": true
+        },
+        "reference_cost": {
+          "block_reads": 0,
+          "block_writes": 0,
+          "peak_rss_bytes": 1190592512,
+          "wall_seconds": 26.3
+        },
+        "valid_samples": 290860643
+      },
+      "2017-01-19": {
+        "identical": true,
+        "isce3_cost": {
+          "block_reads": 0,
+          "block_writes": 0,
+          "peak_rss_bytes": 1308000256,
+          "wall_seconds": 23.8
+        },
+        "production_slc_sha256_matches": {
+          "isce3": true,
+          "reference": true
+        },
+        "reference_cost": {
+          "block_reads": 0,
+          "block_writes": 0,
+          "peak_rss_bytes": 1264418816,
+          "wall_seconds": 23.3
+        },
+        "valid_samples": 290860643
+      },
+      "2017-01-25": {
+        "identical": true,
+        "isce3_cost": {
+          "block_reads": 0,
+          "block_writes": 0,
+          "peak_rss_bytes": 1344552960,
+          "wall_seconds": 93.0
+        },
+        "production_slc_sha256_matches": {
+          "isce3": true,
+          "reference": true
+        },
+        "reference_cost": {
+          "block_reads": 0,
+          "block_writes": 0,
+          "peak_rss_bytes": 1134804992,
+          "wall_seconds": 115.3
+        },
+        "valid_samples": 290860643
+      },
+      "2017-01-31": {
+        "identical": true,
+        "isce3_cost": {
+          "block_reads": 0,
+          "block_writes": 0,
+          "peak_rss_bytes": 1293729792,
+          "wall_seconds": 40.8
+        },
+        "production_slc_sha256_matches": {
+          "isce3": true,
+          "reference": true
+        },
+        "reference_cost": {
+          "block_reads": 0,
+          "block_writes": 0,
+          "peak_rss_bytes": 1185792000,
+          "wall_seconds": 25.7
+        },
+        "valid_samples": 290860643
+      }
+    },
+    "overwrite": {
+      "2017-01-01": {
+        "identical": true,
+        "isce3_cost": {
+          "block_reads": 0,
+          "block_writes": 0,
+          "peak_rss_bytes": 1306574848,
+          "wall_seconds": 20.1
+        },
+        "production_slc_sha256_matches": null,
+        "reference_cost": {
+          "block_reads": 0,
+          "block_writes": 0,
+          "peak_rss_bytes": 1094565888,
+          "wall_seconds": 407.5
+        },
+        "valid_samples": 290860643
+      },
+      "2017-01-07": {
+        "identical": true,
+        "isce3_cost": {
+          "block_reads": 0,
+          "block_writes": 0,
+          "peak_rss_bytes": 1248854016,
+          "wall_seconds": 21.7
+        },
+        "production_slc_sha256_matches": null,
+        "reference_cost": {
+          "block_reads": 0,
+          "block_writes": 0,
+          "peak_rss_bytes": 1112424448,
+          "wall_seconds": 21.7
+        },
+        "valid_samples": 290860643
+      },
+      "2017-01-13": {
+        "identical": true,
+        "isce3_cost": {
+          "block_reads": 0,
+          "block_writes": 0,
+          "peak_rss_bytes": 1283719168,
+          "wall_seconds": 20.4
+        },
+        "production_slc_sha256_matches": null,
+        "reference_cost": {
+          "block_reads": 0,
+          "block_writes": 0,
+          "peak_rss_bytes": 1170292736,
+          "wall_seconds": 24.2
+        },
+        "valid_samples": 290860643
+      },
+      "2017-01-19": {
+        "identical": true,
+        "isce3_cost": {
+          "block_reads": 0,
+          "block_writes": 0,
+          "peak_rss_bytes": 1261109248,
+          "wall_seconds": 35.2
+        },
+        "production_slc_sha256_matches": null,
+        "reference_cost": {
+          "block_reads": 0,
+          "block_writes": 0,
+          "peak_rss_bytes": 1216151552,
+          "wall_seconds": 22.0
+        },
+        "valid_samples": 290860643
+      },
+      "2017-01-25": {
+        "identical": true,
+        "isce3_cost": {
+          "block_reads": 0,
+          "block_writes": 0,
+          "peak_rss_bytes": 1281277952,
+          "wall_seconds": 23.8
+        },
+        "production_slc_sha256_matches": null,
+        "reference_cost": {
+          "block_reads": 0,
+          "block_writes": 0,
+          "peak_rss_bytes": 1356005376,
+          "wall_seconds": 33.9
+        },
+        "valid_samples": 290860643
+      },
+      "2017-01-31": {
+        "identical": true,
+        "isce3_cost": {
+          "block_reads": 0,
+          "block_writes": 0,
+          "peak_rss_bytes": 1274494976,
+          "wall_seconds": 28.7
+        },
+        "production_slc_sha256_matches": null,
+        "reference_cost": {
+          "block_reads": 0,
+          "block_writes": 0,
+          "peak_rss_bytes": 1139556352,
+          "wall_seconds": 25.8
+        },
+        "valid_samples": 290860643
+      }
+    }
+  },
+  "commit_under_test": "claude/isce3-merge-first (stack_mosaic v1, sequential external-mask pass)",
+  "controlled_timing": {
+    "date": "2017-01-07",
+    "isce3": {
+      "peak_rss_mib": [
+        1295,
+        1283,
+        1275
+      ],
+      "wall_seconds": [
+        15.3,
+        13.9,
+        12.9
+      ]
+    },
+    "layout": "production midpoint",
+    "median_wall_seconds": {
+      "isce3": 13.9,
+      "reference": 13.3
+    },
+    "note": "The first reference run read cold inputs. Gate-run timings on exFAT include write-back of retained outputs; block I/O counters were reported as zero by macOS and are not used.",
+    "order": "alternating, three repeats each, fresh spawned process per run",
+    "output": "internal SSD scratch, sync before and after each run",
+    "reference": {
+      "peak_rss_mib": [
+        1129,
+        1225,
+        1163
+      ],
+      "wall_seconds": [
+        39.2,
+        13.3,
+        13.3
+      ]
+    }
+  },
+  "date": "2026-10-24",
+  "gates": {
+    "assemblies_identical": true,
+    "layouts_identical": true,
+    "matching_within_bounds": true,
+    "production_layout_reproduced": true,
+    "production_unchanged": true
+  },
+  "layouts": {
+    "midpoint": {
+      "identical": true,
+      "isce3_cost": {
+        "block_reads": 0,
+        "block_writes": 0,
+        "peak_rss_bytes": 227721216,
+        "wall_seconds": 4.3
+      },
+      "reference_cost": {
+        "block_reads": 0,
+        "block_writes": 0,
+        "peak_rss_bytes": 912015360,
+        "wall_seconds": 6.1
+      },
+      "reproduces_production": true,
+      "source_index_bytes_identical": false
+    },
+    "overwrite": {
+      "identical": true,
+      "isce3_cost": {
+        "block_reads": 0,
+        "block_writes": 0,
+        "peak_rss_bytes": 244056064,
+        "wall_seconds": 3.0
+      },
+      "reference_cost": {
+        "block_reads": 0,
+        "block_writes": 0,
+        "peak_rss_bytes": 910524416,
+        "wall_seconds": 5.0
+      },
+      "reproduces_production": null,
+      "source_index_bytes_identical": false
+    }
+  },
+  "match_policy": "midpoint",
+  "matching": {
+    "2017-01-01_2017-01-07": {
+      "differences": {
+        "isce3_vs_reference": {
+          "correlation_peak": {
+            "different_samples": 50497,
+            "max_abs_difference": 4.76837158203125e-06,
+            "nan_transitions": 0
+          },
+          "input_valid_identical": true,
+          "snr": {
+            "different_samples": 17177,
+            "max_abs_difference": 0.00042724609375,
+            "nan_transitions": 0
+          },
+          "total/azimuth_px": {
+            "different_samples": 28,
+            "max_abs_difference": 0.015625,
+            "nan_transitions": 0
+          },
+          "total/range_px": {
+            "different_samples": 47,
+            "max_abs_difference": 0.015625,
+            "nan_transitions": 0
+          },
+          "valid_identical": true
+        },
+        "production_vs_reference": {
+          "correlation_peak": {
+            "different_samples": 56476,
+            "max_abs_difference": 0.19933092594146729,
+            "nan_transitions": 0
+          },
+          "input_valid_identical": true,
+          "snr": {
+            "different_samples": 22564,
+            "max_abs_difference": 3.876239776611328,
+            "nan_transitions": 0
+          },
+          "total/azimuth_px": {
+            "different_samples": 45,
+            "max_abs_difference": 4.0625,
+            "nan_transitions": 0
+          },
+          "total/range_px": {
+            "different_samples": 64,
+            "max_abs_difference": 29.203125,
+            "nan_transitions": 0
+          },
+          "valid_identical": true
+        },
+        "replay_vs_reference": {
+          "correlation_peak": {
+            "different_samples": 50497,
+            "max_abs_difference": 4.76837158203125e-06,
+            "nan_transitions": 0
+          },
+          "input_valid_identical": true,
+          "snr": {
+            "different_samples": 17177,
+            "max_abs_difference": 0.00042724609375,
+            "nan_transitions": 0
+          },
+          "total/azimuth_px": {
+            "different_samples": 28,
+            "max_abs_difference": 0.015625,
+            "nan_transitions": 0
+          },
+          "total/range_px": {
+            "different_samples": 47,
+            "max_abs_difference": 0.015625,
+            "nan_transitions": 0
+          },
+          "valid_identical": true
+        }
+      },
+      "gate": {
+        "bound_px": 0.015625001,
+        "masks_identical": true,
+        "max_offset_difference_px": 0.015625,
+        "passed": true,
+        "replay_max_offset_difference_px": 0.015625
+      },
+      "native_wall_seconds": {
+        "isce3": 96.4,
+        "reference": 65.6,
+        "replay": 73.2
+      },
+      "windows": 77634
+    },
+    "2017-01-19_2017-01-25": {
+      "differences": {
+        "isce3_vs_reference": {
+          "correlation_peak": {
+            "different_samples": 0,
+            "max_abs_difference": 0.0,
+            "nan_transitions": 0
+          },
+          "input_valid_identical": true,
+          "snr": {
+            "different_samples": 0,
+            "max_abs_difference": 0.0,
+            "nan_transitions": 0
+          },
+          "total/azimuth_px": {
+            "different_samples": 0,
+            "max_abs_difference": 0.0,
+            "nan_transitions": 0
+          },
+          "total/range_px": {
+            "different_samples": 0,
+            "max_abs_difference": 0.0,
+            "nan_transitions": 0
+          },
+          "valid_identical": true
+        },
+        "production_vs_reference": {
+          "correlation_peak": {
+            "different_samples": 42455,
+            "max_abs_difference": 0.3348229229450226,
+            "nan_transitions": 0
+          },
+          "input_valid_identical": true,
+          "snr": {
+            "different_samples": 39023,
+            "max_abs_difference": 103.89749526977539,
+            "nan_transitions": 3
+          },
+          "total/azimuth_px": {
+            "different_samples": 138,
+            "max_abs_difference": 17.28125,
+            "nan_transitions": 0
+          },
+          "total/range_px": {
+            "different_samples": 79,
+            "max_abs_difference": 6.8125,
+            "nan_transitions": 0
+          },
+          "valid_identical": true
+        },
+        "replay_vs_reference": {
+          "correlation_peak": {
+            "different_samples": 0,
+            "max_abs_difference": 0.0,
+            "nan_transitions": 0
+          },
+          "input_valid_identical": true,
+          "snr": {
+            "different_samples": 0,
+            "max_abs_difference": 0.0,
+            "nan_transitions": 0
+          },
+          "total/azimuth_px": {
+            "different_samples": 0,
+            "max_abs_difference": 0.0,
+            "nan_transitions": 0
+          },
+          "total/range_px": {
+            "different_samples": 0,
+            "max_abs_difference": 0.0,
+            "nan_transitions": 0
+          },
+          "valid_identical": true
+        }
+      },
+      "gate": {
+        "bound_px": 0.015625001,
+        "masks_identical": true,
+        "max_offset_difference_px": 0.0,
+        "passed": true,
+        "replay_max_offset_difference_px": 0.0
+      },
+      "native_wall_seconds": {
+        "isce3": 70.2,
+        "reference": 72.4,
+        "replay": 72.4
+      },
+      "windows": 77634
+    }
+  },
+  "notes": [
+    "The isce3 run and the reference replay of 2017-01-01_2017-01-07 are bit-identical in every offsets.h5 dataset.",
+    "Run-to-run native matcher differences on byte-identical inputs occur in low-SNR windows (median SNR 2.3 vs 10.5 overall) and are independent of the compositor.",
+    "The 2017-01-01 overwrite reference composition (407 s) overlapped exFAT deletion of an earlier partial run; other compositions took 20-36 s.",
+    "production_unchanged was finalized after a cleanup error: layout checksums against production records and watched mtimes against the comparison start."
+  ],
+  "output": "/Volumes/thinkplus/insar/glacier_offsets/work/larsen/experiments/isce3-mosaic-parity-20261024",
+  "production_policy": "midpoint",
+  "production_unchanged": {
+    "all_watched_mtimes_precede_comparison": true,
+    "layout_checksums_match_production_records": true,
+    "method": "finalized after a cleanup error: checksums against production records; mtimes against the earliest comparison output",
+    "watched_files": 77
+  },
+  "stack": "/Volumes/thinkplus/insar/glacier_offsets/work/larsen/stack-isce2",
+  "status": "passed"
+}

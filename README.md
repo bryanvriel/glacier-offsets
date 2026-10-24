@@ -116,9 +116,11 @@ each date pair. Acquisition preparation and date pairs run sequentially; more
 matching workers require more RAM. GPU matching requires a supported Linux/NVIDIA
 environment and a CUDA-enabled ISCE3 build.
 
-For the ISCE2 merge-first strategy, see the
-[configuration example](configs/stack.isce2.example.yaml) and
-[runtime/setup details](README_DETAILED.md#isce2-merge-first-stacks).
+For merge-first stacks (stack-common validity, later-burst overwrites and the
+ISCE3-backed compositor), see the
+[configuration example](configs/stack.merge-first.example.yaml) and
+[details](README_DETAILED.md#merge-first-stacks). The optional ISCE2 matcher has
+its own [example](configs/stack.isce2.example.yaml).
 
 ## Documentation
 

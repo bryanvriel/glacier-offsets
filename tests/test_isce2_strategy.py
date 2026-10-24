@@ -18,8 +18,8 @@ from glacier_offsets.config import load_defaults
 from glacier_offsets.isce2_matching import child_environment, validate_settings
 from glacier_offsets.matching_grid import MatchingGrid
 from glacier_offsets.products import checksum, identity
-from glacier_offsets.stack_isce2 import (POLICY, SWATH_MIDPOINT_POLICY, adjusted_window, date_validity,
-                                          overwrite_ownership, policy, prepare_common_layout)
+from glacier_offsets.stack_mosaic import (POLICY, SWATH_MIDPOINT_POLICY, adjusted_window, date_validity,
+                                          ownership as overwrite_ownership, policy, prepare_common_layout)
 from glacier_offsets.stack_storage import (assemble_date, assembly_specification, prepare_date,
                                            date_specification, read_manifest, write_reference_layout)
 from glacier_offsets.stack_workflow import execute_stack

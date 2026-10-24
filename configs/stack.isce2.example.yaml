@@ -1,7 +1,7 @@
 # Replace the inherited input paths and use an unused output root.
 extends: stack.example.yaml
 stack:
-  processing: isce2_merge_first
+  processing: isce3_merge_first
   swath_merge: overwrite  # midpoint keeps burst overwrites but switches swaths inside the overlap.
 output:
   directory: ../work/pig/stack-isce2-example

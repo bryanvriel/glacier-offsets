@@ -190,19 +190,18 @@ invalid resulting footprints still fail validation. Downloaded XML and imagery
 remain unchanged; existing collections do not need downloading or preparation
 again for this correction. Regenerate saved stack plans to update coverage.
 
-### ISCE2 merge-first stacks
+### Merge-first stacks
 
-Set `stack.processing: isce2_merge_first` in a stack YAML to use stack-common
-valid rectangles and later-source overwrite merging. Select the matcher
-independently with `matching.engine: isce3` or `matching.engine: isce2`.
-For compatibility, omitting the engine under this merge policy selects ISCE2;
-other stacks default to ISCE3. See [the example configuration](configs/stack.isce2.example.yaml).
-
-To use ISCE3 magnitude matching on the same assemblies:
+Set `stack.processing: isce3_merge_first` in a stack YAML to use stack-common
+valid rectangles and later-source overwrite merging, assembled by the
+ISCE3-backed compositor. This selector uses the ISCE3 matcher unless
+`matching.engine: isce2` is given explicitly. See
+[the example configuration](configs/stack.merge-first.example.yaml):
 
 ```yaml
 stack:
-  processing: isce2_merge_first
+  processing: isce3_merge_first
+  swath_merge: midpoint
 matching:
   engine: isce3
   backend: cpu
@@ -210,7 +209,20 @@ matching:
   zoom: 16
 ```
 
-This combination needs no ISCE2 installation or runtime probe. The existing
+`isce2_merge_first` is the earlier, deprecated name for the same merge policy;
+loading it logs a deprecation warning. Both selectors use the ISCE3
+compositor, which replaced the original GDAL merger after the Larsen parity
+gates (October 24). Omitting the engine under the deprecated name still
+selects the ISCE2 matcher. Both selectors share policy records and cache
+identities with stacks the GDAL merger produced, so those roots keep their
+geometry, aligned bursts, assemblies and pair products without `--force`;
+released merged SLCs are rebuilt by the ISCE3 compositor with identical pixels
+and masks. Manifests record `layout_implementation` and
+`assembly_implementation` for products the ISCE3 compositor wrote; these
+records enter no cache identity. The existing
+`stack.processing: isce3` interior-ownership policy is unchanged.
+
+The ISCE3 matcher needs no ISCE2 installation or runtime probe. The existing
 ISCE3 CPU worker scheduling and GPU selection still apply. Changing only the
 matcher preserves pinned geometry, common validity, and aligned acquisitions;
 it invalidates offsets, geocoding and diagnostics. Rerunning in the same root
@@ -222,7 +234,7 @@ cross-swath switch into the overlap interior, add:
 
 ```yaml
 stack:
-  processing: isce2_merge_first
+  processing: isce3_merge_first
   swath_merge: midpoint
 matching:
   engine: isce3
@@ -381,7 +393,32 @@ With `swath_merge: overwrite`, SLCs are merged in ascending swath/time order:
 later valid rectangles overwrite earlier ones. With `midpoint`, this overwrite
 rule applies within each swath before the range cuts described above. Neither
 option interpolates, blends, or substitutes sources for missing imagery. Geometry and source indices use the same
-ownership. Matching workers always read these **merged** SLCs, including across
+ownership.
+
+The compositor plans source placements, common validity and ownership once as
+an immutable plan. The categorical ownership raster, geometry VRTs, date SLCs
+and pair intervals all consume that plan. Placement uses ISCE3 radar grids with
+the same epoch reconciliation, rounding and 0.001-pixel tolerance as before;
+incompatible sampling and fractional placement are still rejected. Aligned
+bursts are read and `slc.tif`, its external mask and `valid.tif` are written in
+64-line `isce3.io.Raster` blocks, without a full-scene array. GDAL remains only
+for TIFF creation options, external masks, VRTs and ancillary-file lists. The
+frozen GDAL merger is kept only in `tools/reference_stack_merge.py`, for parity
+tests and the gate tool. To compare both on a saved stack without modifying it:
+
+```bash
+PYTHONPATH=src:.runtime/deps OMP_NUM_THREADS=8 \
+  /Users/briel/miniforge3/envs/isce3/bin/python -m tools.compare_stack_mosaic \
+  configs/stack.larsen.swath-midpoint.yaml --output /path/to/new-mosaic-parity
+```
+
+This verifies retained reference and aligned burst checksums, rebuilds both
+swath policies with each implementation, compares every layout and date raster
+block by block, and matches the selected pairs (`--pairs`, default January 1–7
+and 19–25) on each implementation's SLCs plus a reference replay control.
+`comparison.json` records per-field differences, validity transitions, wall
+time, block I/O, per-process peak RSS and production size/timestamp/checksum
+checks. Temporary SLCs are removed unless `--keep-slcs` is given. Matching workers always read these **merged** SLCs, including across
 worker boundaries. `OMP_NUM_THREADS` is the maximum number of independent CPU
 matching processes; date preparation and pairs remain sequential. Constant and
 velocity-guided gross offsets retain the existing sign convention and are
@@ -401,7 +438,7 @@ YAML that declares them. For this machine's existing installation:
 
 ```yaml
 stack:
-  processing: isce2_merge_first
+  processing: isce3_merge_first
 matching:
   engine: isce2
   backend: cpu
@@ -592,6 +629,29 @@ The parent combines results and publishes the pair product only after all work
 succeeds. Worker limits, PIDs, thread limits, native timings and wall time are
 recorded in the matching metadata. Extra workers increase RAM and concurrent SLC
 reads; the limit is a CPU budget, not an automatic memory or storage tuner.
+CPU stack matching pins FFTW's measured plans. ISCE3's CPU Ampcor compiles in
+`FFTW_MEASURE`, so workers that start together otherwise time FFT algorithms
+independently and can choose plans that round differently. That moves
+near-tied, low-SNR correlation peaks by one oversampled sample (1/64 px with
+raw oversampling 2 and oversampling 32). The first match in a stack runs one
+quiet spawned process that plans every native chunk shape on synthetic rasters
+(about 5 s) and writes `<stack>/.cache/fftw/<key>.wisdom`, with the key
+inputs in a matching `.json`. The key covers the FFTW version and library
+checksum, the ISCE3 version, the machine and CPU model, and `window`,
+`search`, `batch`, `raw_oversampling`, `oversampling`, `zoom` and `deramp`.
+Workers import that file before planning and never rewrite it; a missing file
+is an error. Repeated matching of the same pair on the same host and build is
+then bit-identical at any worker count. Segment metadata records
+`fftw_wisdom_sha256` and `fftw_wisdom_extended` (true if a call still had to
+measure a plan), and `native_parameters.fftw_wisdom` records the file. The
+wisdom enters no cache identity, so completed pairs are not rematched; pairs
+matched before pinning can differ from new ones by 1/64 px in about 0.1% of
+valid windows. Wisdom is not portable across hosts or builds: compare such
+runs with a tolerance of 1/(raw_oversampling × oversampling) px in valid
+windows. Deleting `.cache/fftw` remeasures it on the next match. Standalone
+pair/AOI matching and tools that call the matcher directly keep the temporary
+per-invocation plan cache. GPU (cuFFT) matching is unaffected.
+
 Shared tasks record `work_kind: unowned_or_inactive` and a null
 `scheduling_burst_id`; each segment includes its native elapsed time. Scheduling
 strategy v2 preserves completed matching products. Restart a running process to

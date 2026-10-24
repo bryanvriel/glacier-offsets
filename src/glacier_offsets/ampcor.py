@@ -27,22 +27,33 @@ _plan_cache_directory = None
 _worker_plan_cache = None
 _worker_fftw = None
 _worker_fftw_initialized = False
+_worker_pinned = None
 
 
-def _initialize_native_worker(plan_cache):
+def _initialize_native_worker(plan_cache, pinned=None):
     from .raster_io import RASTER_CACHE_BYTES
-    global _worker_plan_cache
+    global _worker_plan_cache, _worker_pinned
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     gdal.SetCacheMax(min(gdal.GetCacheMax(), RASTER_CACHE_BYTES))
     _worker_plan_cache = plan_cache
+    _worker_pinned = pinned
 
 
 @contextmanager
-def _native_executor(processes=1, *, single_threaded=False):
+def _native_executor(processes=1, *, single_threaded=False, wisdom=None):
+    """Spawn recycled native workers.
+
+    With a pinned `wisdom` record (see `fftw_cache.pinned_wisdom`), workers
+    import that file before planning and never republish it; otherwise they
+    share a temporary per-invocation plan cache.
+    """
     global _plan_cache_directory
-    if _plan_cache_directory is None:
-        _plan_cache_directory = tempfile.TemporaryDirectory(prefix='glacier-offsets-fftw-')
-    plan_cache = str(Path(_plan_cache_directory.name) / 'wisdom')
+    if wisdom is not None:
+        plan_cache = wisdom['path']
+    else:
+        if _plan_cache_directory is None:
+            _plan_cache_directory = tempfile.TemporaryDirectory(prefix='glacier-offsets-fftw-')
+        plan_cache = str(Path(_plan_cache_directory.name) / 'wisdom')
     # Set limits before spawning/importing NumPy/ISCE3, and retain them while
     # replacement workers start. Restore the parent's environment afterwards.
     limits = ('OMP_NUM_THREADS', 'OMP_THREAD_LIMIT', 'OPENBLAS_NUM_THREADS',
@@ -54,7 +65,7 @@ def _native_executor(processes=1, *, single_threaded=False):
         # Spawn rather than fork: GDAL, FFTW and CUDA can own native thread state.
         with multiprocessing.get_context('spawn').Pool(
                 processes=processes, initializer=_initialize_native_worker,
-                initargs=(plan_cache,),
+                initargs=(plan_cache, wisdom),
                 maxtasksperchild=NATIVE_CALLS_PER_WORKER) as worker:
             yield worker
     finally:
@@ -66,16 +77,29 @@ def _native_executor(processes=1, *, single_threaded=False):
 
 
 def _native_worker(arguments):
-    from .fftw_cache import restore, save
+    from .fftw_cache import export, restore, save
     global _worker_fftw, _worker_fftw_initialized
     if not _worker_fftw_initialized:
+        if _worker_pinned is not None:
+            if not Path(_worker_plan_cache).is_file():
+                raise RuntimeError(f'Pinned FFTW wisdom is missing: {_worker_plan_cache}')
+            _worker_pinned['entries'] = set(Path(_worker_plan_cache).read_text().splitlines())
         _worker_fftw = restore(_worker_plan_cache)
         _worker_fftw_initialized = True
     args, kwargs = arguments
     result = _native_match(*args, **kwargs)
-    save(_worker_fftw, _worker_plan_cache)
+    pinned = {}
+    if _worker_pinned is None:
+        save(_worker_fftw, _worker_plan_cache)
+    else:
+        # New entries mean a chunk shape the pinned file lacks; it was measured
+        # here. Export order is not stable, so entries are compared as a set.
+        extended = not set(export(_worker_fftw).splitlines()) <= _worker_pinned['entries']
+        if extended:
+            logging.warning('Native call measured FFTW plans missing from pinned wisdom %s', _worker_plan_cache)
+        pinned = dict(fftw_wisdom_sha256=_worker_pinned['sha256'], fftw_wisdom_extended=extended)
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    result['effective_parameters'].update(worker_pid=os.getpid(),
+    result['effective_parameters'].update(worker_pid=os.getpid(), **pinned,
         fftw_plan_cache=_worker_fftw is not None,
         worker_omp_threads=os.environ.get('OMP_NUM_THREADS'),
         worker_blas_threads=os.environ.get('OPENBLAS_NUM_THREADS'),

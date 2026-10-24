@@ -1,5 +1,6 @@
 """Independent stack configuration, retaining YAML-relative inheritance."""
 from datetime import date
+import logging
 import math
 from pathlib import Path
 
@@ -8,6 +9,8 @@ from .config import _load_overrides, load_defaults, merge_config, validate_commo
 STACK_DEFAULTS = {'start_date': None, 'end_date': None, 'reference_date': None, 'processing': 'isce3',
                   'swath_merge': 'overwrite',
                   'pairing': {'neighbors': 1, 'max_separation_days': 12, 'pairs_file': None}}
+# Canonical merge-first selector, then its deprecated ISCE2-named alias.
+MERGE_FIRST = ('isce3_merge_first', 'isce2_merge_first')
 
 
 def iso_date(value, label):
@@ -28,6 +31,8 @@ def iso_date(value, label):
 def _load_stack_settings(path):
     overrides = _load_overrides(Path(path))
     cfg = merge_config(load_defaults(), overrides)
+    if isinstance(cfg.get('stack'), dict) and cfg['stack'].get('processing') == 'isce2_merge_first':
+        logging.warning('stack.processing=isce2_merge_first is a deprecated alias of isce3_merge_first')
     # Preserve the original opt-in strategy's engine when omitted, while
     # honoring explicit engine choices (including inherited YAML settings).
     if (isinstance(cfg.get('stack'), dict) and
@@ -67,12 +72,12 @@ def validate_stack_config(cfg, discovery=False):
     if unknown:
         raise ValueError(f'Unknown stack options: {sorted(unknown)}')
     stack = merge_config(STACK_DEFAULTS, stack)
-    if stack['processing'] not in ('isce3', 'isce2_merge_first'):
-        raise ValueError('stack.processing must be isce3 or isce2_merge_first')
+    if stack['processing'] not in ('isce3', *MERGE_FIRST):
+        raise ValueError('stack.processing must be isce3, isce3_merge_first or isce2_merge_first')
     if stack['swath_merge'] not in ('overwrite', 'midpoint'):
         raise ValueError('stack.swath_merge must be overwrite or midpoint')
-    if stack['swath_merge'] == 'midpoint' and stack['processing'] != 'isce2_merge_first':
-        raise ValueError('stack.swath_merge=midpoint requires stack.processing=isce2_merge_first')
+    if stack['swath_merge'] == 'midpoint' and stack['processing'] not in MERGE_FIRST:
+        raise ValueError('stack.swath_merge=midpoint requires stack.processing=isce3_merge_first')
     for key in ('safe_directory', 'orbit_directory'):
         value = stack.get(key)
         if not value or not Path(value).is_dir():
