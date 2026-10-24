@@ -61,7 +61,7 @@ def burst_config(cfg, reference, acquisition):
 
 
 def reference_specification(cfg, plan, hashes, software):
-    from .stack_isce2 import policy
+    from .stack_mosaic import policy
     return {'method': METHOD, 'ownership_policy': policy(cfg), 'anchor': plan.anchor,
             'inputs': {key: hashes(path) for key, path in
                        [('safe', plan.reference.scene.path), ('orbit', plan.reference.orbit.path), ('dem', cfg['inputs']['dem'])]},
@@ -107,9 +107,10 @@ def prepare_geometry(cfg, plan, specification, software, force=False, process=Tr
                         'manifest': str(directory / 'manifest.json')})
     if len({CRS.from_user_input(e['coreg']['geometry_crs']).to_wkt() for e in sources}) != 1:
         raise ValueError('Reference burst geometry CRSs differ')
-    from .stack_isce2 import enabled
+    from .stack_mosaic import enabled, implementation
     layout = write_reference_layout(root, sources, checksums=checksums,
-                                    ownership_policy=specification['ownership_policy'])
+                                    ownership_policy=specification['ownership_policy'],
+                                    implementation=implementation(cfg))
     layout_identity = layout['layout_identity']
     pinned_layout = expected_layout or previous.get('layout_identity')
     if not enabled(cfg) and pinned_layout is not None and layout_identity != pinned_layout:
@@ -123,8 +124,11 @@ def prepare_geometry(cfg, plan, specification, software, force=False, process=Tr
     return frame
 
 
-def write_reference_layout(root, sources, *, checksums=None, ownership_policy=None):
+def write_reference_layout(root, sources, *, checksums=None, ownership_policy=None, implementation='reference'):
     """Write the interior ownership and matching geometry from prepared sources."""
+    from .stack_mosaic import POLICY as merge_policy, SWATH_MIDPOINT_POLICY, write_layout
+    if implementation == 'isce3' and ownership_policy in (merge_policy, SWATH_MIDPOINT_POLICY):
+        return write_layout(root, sources, checksums=checksums, ownership_policy=ownership_policy)
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     sources = deepcopy(sources)
@@ -174,6 +178,18 @@ def create_raster(path, shape, dtype):
                                               options=['TILED=NO', 'BIGTIFF=IF_SAFER'])
 
 
+def create_assembly_rasters(slc_path, mask_path, shape):
+    """Create a stripped complex SLC, its external GDAL mask and a validity raster."""
+    slc = create_raster(slc_path, shape, gdal.GDT_CFloat32)
+    mask = create_raster(mask_path, shape, gdal.GDT_Byte)
+    # Internal mask blocks can interleave with SLC strips after cache flushes.
+    # The CPU matcher always memory-maps its input, even with useMmap=0;
+    # macOS requires contiguous image strips instead of GDAL's VM fallback.
+    with gdal.config_option('GDAL_TIFF_INTERNAL_MASK', 'NO'):
+        slc.CreateMaskBand(gdal.GMF_PER_DATASET)
+    return slc, mask
+
+
 def date_specification(acquisition, frame, hashes):
     if acquisition.error:
         raise ValueError(acquisition.error)
@@ -195,7 +211,11 @@ def prepare_date(cfg, plan, acquisition, frame, specification, force=False, proc
         raise ValueError(f'{acquisition.date}: alignment missing or stale; run stack coregister first')
     write_json(root / 'manifest.json', {'specification': specification, 'status': 'aligning'})
     effective = burst_config(cfg, plan.reference, acquisition)
-    from .stack_isce2 import enabled, date_validity
+    from .stack_mosaic import enabled, implementation
+    if implementation(cfg) == 'isce3':
+        from .stack_mosaic import date_validity
+    else:
+        from .stack_isce2 import date_validity
     isce2 = enabled(cfg)
     slcs, windows, offset_paths = {}, {}, []
     reference_bursts = {b.id: b for b in plan.bursts}
@@ -252,6 +272,39 @@ def assembly_specification(frame, aligned):
     return spec
 
 
+def _compose_with_gdal(frame, aligned, slc_path, mask_path, shape):
+    """Reference composition reading the ownership raster; returns valid samples."""
+    owner = gdal.Open(frame['coreg']['source_index'])
+    count = 0
+    slc, mask = create_assembly_rasters(slc_path, mask_path, shape)
+    datasets = {key: gdal.Open(path) for key, path in aligned['slcs'].items()}
+    support = {key: ~invalid_samples(ds) for key, ds in datasets.items()}
+    for row in range(0, shape[0], 64):
+        h = min(64, shape[0]-row)
+        owners = owner.ReadAsArray(0, row, shape[1], h)
+        values = np.zeros((h, shape[1]), 'complex64')
+        valid = np.zeros(values.shape, bool)
+        for index, entry in enumerate(frame['sources'], 1):
+            source = datasets.get(entry['burst_id'])
+            if source is None:
+                continue
+            dy, dx = entry['offset']
+            y0, y1 = max(row, dy), min(row+h, dy+source.RasterYSize)
+            if y0 >= y1:
+                continue
+            block = source.ReadAsArray(0, y0-dy, source.RasterXSize, y1-y0)
+            section = (slice(y0-row, y1-row), slice(dx, dx+source.RasterXSize))
+            take = (owners[section] == index) & support[entry['burst_id']][y0-dy:y1-dy]
+            values[section][take] = block[take]
+            valid[section][take] = True
+        slc.GetRasterBand(1).WriteArray(values, 0, row)
+        mask.GetRasterBand(1).WriteArray(valid.astype('uint8'), 0, row)
+        slc.GetRasterBand(1).GetMaskBand().WriteArray(valid.astype('uint8')*255, 0, row)
+        count += int(valid.sum())
+    slc = mask = None
+    return count
+
+
 def assemble_date(cfg, acquisition, frame, aligned, force=False, process=True, checksums=None):
     """Apply identical reference ownership; never fill gaps from another source."""
     root = Path(cfg['output']['directory']) / 'acquisitions' / acquisition.date
@@ -265,45 +318,19 @@ def assemble_date(cfg, acquisition, frame, aligned, force=False, process=True, c
     result.pop('slc_cleanup', None)
     result.pop('slc_preview', None)
     result.pop('assembly_identity', None)
+    result.pop('assembly_implementation', None)
     result['status'] = 'assembling'
     write_json(root / 'manifest.json', result)
     shape = tuple(frame['coreg']['reference_grid'][k] for k in ('length', 'width'))
-    owner = gdal.Open(frame['coreg']['source_index'])
-    count = 0
+    from .stack_mosaic import IMPLEMENTATION, MergePlan, compose, enabled, implementation
     with tempfile.TemporaryDirectory(prefix='.merge-', dir=root) as scratch, bounded_raster_cache():
         slc_path, mask_path = Path(scratch)/'slc.tif', Path(scratch)/'valid.tif'
-        slc = create_raster(slc_path, shape, gdal.GDT_CFloat32)
-        mask = create_raster(mask_path, shape, gdal.GDT_Byte)
-        # Internal mask blocks can interleave with SLC strips after cache flushes.
-        # The CPU matcher always memory-maps its input, even with useMmap=0;
-        # macOS requires contiguous image strips instead of GDAL's VM fallback.
-        with gdal.config_option('GDAL_TIFF_INTERNAL_MASK', 'NO'):
-            slc.CreateMaskBand(gdal.GMF_PER_DATASET)
-        datasets = {key: gdal.Open(path) for key, path in aligned['slcs'].items()}
-        support = {key: ~invalid_samples(ds) for key, ds in datasets.items()}
-        for row in range(0, shape[0], 64):
-            h = min(64, shape[0]-row)
-            owners = owner.ReadAsArray(0, row, shape[1], h)
-            values = np.zeros((h, shape[1]), 'complex64')
-            valid = np.zeros(values.shape, bool)
-            for index, entry in enumerate(frame['sources'], 1):
-                source = datasets.get(entry['burst_id'])
-                if source is None:
-                    continue
-                dy, dx = entry['offset']
-                y0, y1 = max(row, dy), min(row+h, dy+source.RasterYSize)
-                if y0 >= y1:
-                    continue
-                block = source.ReadAsArray(0, y0-dy, source.RasterXSize, y1-y0)
-                section = (slice(y0-row, y1-row), slice(dx, dx+source.RasterXSize))
-                take = (owners[section] == index) & support[entry['burst_id']][y0-dy:y1-dy]
-                values[section][take] = block[take]
-                valid[section][take] = True
-            slc.GetRasterBand(1).WriteArray(values, 0, row)
-            mask.GetRasterBand(1).WriteArray(valid.astype('uint8'), 0, row)
-            slc.GetRasterBand(1).GetMaskBand().WriteArray(valid.astype('uint8')*255, 0, row)
-            count += int(valid.sum())
-        slc = mask = None
+        if enabled(cfg) and implementation(cfg) == 'isce3':
+            # Ownership comes from the saved plan, which also wrote source.tif.
+            count = compose(MergePlan.from_frame(frame), aligned['slcs'], slc_path, mask_path)
+            result['assembly_implementation'] = IMPLEMENTATION
+        else:
+            count = _compose_with_gdal(frame, aligned, slc_path, mask_path, shape)
         final = root / 'slc.tif'
         slc_path.replace(final)
         # External masks are created by GDAL unless internal masks are enabled.

@@ -50,7 +50,7 @@ def dependent(upstream, check):
 
 def reference_status(cfg, frame, error):
     from .stack_storage import METHOD
-    from .stack_isce2 import policy
+    from .stack_mosaic import policy
     if error:
         return state('unknown', error)
     result = recorded(frame, 'geometry_identity', frame.get('products', {}))

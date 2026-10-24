@@ -11,7 +11,7 @@ from .products import ChecksumCache, identity, write_json
 from .stack import plan_stack, read_catalog, validate_stack
 from .stack_lock import stack_lock
 from .stack_ownership import POLICY, interior_ownership
-from .stack_isce2 import POLICY as COMMON_POLICY, SWATH_MIDPOINT_POLICY, policy, overwrite_ownership
+from .stack_mosaic import POLICY as COMMON_POLICY, SWATH_MIDPOINT_POLICY, implementation, ownership, policy
 from .stack_storage import (METHOD, SourceHashes, product_hashes, read_manifest,
                             reference_specification, verified, write_reference_layout)
 
@@ -64,9 +64,9 @@ def _preflight(cfg, old, frame, specification, checksums):
     if common_migration:
         if not frame.get('common_validity_identity') or identity(frame['common_validity']) != frame['common_validity_identity']:
             raise ValueError('Common validity is missing or inconsistent; rebuild aborted')
-        _, ownership = overwrite_ownership(frame['sources'], swath_midpoint=selected_policy == SWATH_MIDPOINT_POLICY)
+        _, owners = ownership(frame['sources'], swath_midpoint=selected_policy == SWATH_MIDPOINT_POLICY)
     else:
-        _, ownership = interior_ownership(frame['sources'])
+        _, owners = interior_ownership(frame['sources'])
     updates, originals, native = {}, {}, {}
 
     def retain_metadata(path, before, after):
@@ -185,8 +185,8 @@ def _preflight(cfg, old, frame, specification, checksums):
             'native_products': native, 'delete': delete,
             'summary': {'aligned_dates': complete_dates, 'native_products': len(native),
                         'pair_directories': sum(p.startswith('pairs/') for p in delete),
-                        'range_cuts': sum('cut_global_sample' in c for c in ownership.get('cuts', [])),
-                        'azimuth_cuts': sum('cut_global_line' in c for c in ownership.get('cuts', [])),
+                        'range_cuts': sum('cut_global_sample' in c for c in owners.get('cuts', [])),
+                        'azimuth_cuts': sum('cut_global_line' in c for c in owners.get('cuts', [])),
                         'ownership_policy': selected_policy['method']}}
 
 
@@ -265,7 +265,8 @@ def rebuild_layout(cfg, *, dry_run=False):
         staging = _owned(root, '.layout-rebuild/staged')
         staging.mkdir(parents=True, exist_ok=True)
         layout = write_reference_layout(staging, frame['sources'], checksums=checksums,
-                                        ownership_policy=specification['ownership_policy'])
+                                        ownership_policy=specification['ownership_policy'],
+                                        implementation=implementation(cfg))
         if layout['coreg']['reference_grid'] != frame['coreg']['reference_grid']:
             raise ValueError('Ownership rebuild changed the native radar grid')
         layout_products = product_hashes([staging/name for name in LAYOUT_FILES], checksums=checksums)

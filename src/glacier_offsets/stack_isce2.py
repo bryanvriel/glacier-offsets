@@ -1,4 +1,9 @@
-"""ISCE2 stack-common validity and ordered overwrite layout preparation."""
+"""GDAL reference implementation of merge-first validity and layout.
+
+Retained for the deprecated `isce2_merge_first` selector until the ISCE3
+compositor in `stack_mosaic` passes its parity gates. Policy records and
+selector rules are shared with that module.
+"""
 from copy import deepcopy
 import math
 from pathlib import Path
@@ -10,28 +15,7 @@ from osgeo import gdal
 from .products import identity, write_json
 from .stack_ownership import _range_ownership, _swath, subtract_window
 
-POLICY = {'method': 'isce2-stack-common-valid-last-source-v1',
-          'validity': 'resampling-offset-adjusted secondary rectangles intersected across complete dates',
-          'precedence': 'ascending swath then radar time; later rectangle overwrites',
-          'missing_support': 'mask; no source substitution'}
-
-SWATH_MIDPOINT_POLICY = {
-    'method': 'isce2-common-valid-burst-overwrite-swath-midpoint-v1',
-    'validity': POLICY['validity'],
-    'precedence': 'later bursts overwrite within swaths; interior midpoint between swaths',
-    'edge_margin_samples': 8, 'narrow_overlap': 'error',
-    'missing_support': POLICY['missing_support']}
-
-
-def enabled(cfg):
-    return cfg.get('stack', {}).get('processing') == 'isce2_merge_first'
-
-
-def policy(cfg):
-    from .stack_ownership import POLICY as legacy
-    if not enabled(cfg):
-        return legacy
-    return SWATH_MIDPOINT_POLICY if cfg['stack'].get('swath_merge') == 'midpoint' else POLICY
+from .stack_mosaic import POLICY, SWATH_MIDPOINT_POLICY, enabled, policy  # noqa: F401 (shared records)
 
 
 def overwrite_ownership(sources, *, swath_midpoint=False):

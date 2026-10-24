@@ -54,7 +54,7 @@ def execute_stack(cfg, command, force=False):
 
 
 def _execute_stack(cfg, command, force=False):
-    from .stack_isce2 import enabled, prepare_common_layout
+    from .stack_mosaic import enabled, prepare_common_layout
     isce2 = enabled(cfg)
     invocation_started = time.perf_counter()
     if command not in (*STAGES, 'run'):
@@ -250,7 +250,7 @@ def _execute_stack(cfg, command, force=False):
             return 1
         try:
             previous_layout = frame['layout_identity']
-            logging.info('Preparing ISCE2 stack-common valid rectangles and overwrite layout')
+            logging.info('Preparing stack-common valid rectangles and merge-first layout')
             frame = prepare_common_layout(cfg, plan, frame, dates, checksums)
             if frame['layout_identity'] != previous_layout:
                 invalidate_pairs()
@@ -289,7 +289,7 @@ def _execute_stack(cfg, command, force=False):
             raise
         except Exception as exc:
             invalidate_pairs()
-            report.update(outcome='failed', error=f'ISCE2 common validity/assembly: {type(exc).__name__}: {exc}')
+            report.update(outcome='failed', error=f'Merge-first common validity/assembly: {type(exc).__name__}: {exc}')
             logging.error('%s', report['error'])
             finish()
             return 1
