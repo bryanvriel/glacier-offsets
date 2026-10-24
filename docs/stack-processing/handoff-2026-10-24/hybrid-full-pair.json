@@ -1,0 +1,73 @@
+{
+  "along_track_owners_unchanged": true,
+  "baseline_summary": {
+    "input_valid": 69535,
+    "quality_valid": 69535,
+    "seam_crossing": 5187,
+    "seam_crossing_valid": 3927,
+    "windows": 77634
+  },
+  "centers_unchanged": true,
+  "changed_center_swath_owners": 396,
+  "differences_px": {
+    "azimuth": {
+      "max_absolute": 0.453125,
+      "median_signed": 0.0,
+      "p90_absolute": 0.0
+    },
+    "range": {
+      "max_absolute": 0.3125,
+      "median_signed": 0.0,
+      "p90_absolute": 0.0
+    }
+  },
+  "hybrid_summary": {
+    "input_valid": 69535,
+    "quality_valid": 69535,
+    "seam_crossing": 5328,
+    "seam_crossing_valid": 4068,
+    "windows": 77634
+  },
+  "input_windows_lost": 0,
+  "input_windows_recovered": 0,
+  "native_grid_unchanged": true,
+  "pair": "2017-01-19_2017-01-25",
+  "production_sizes_mtimes_unchanged": true,
+  "range_cuts": [
+    {
+      "cut_global_sample": 20300,
+      "far_swath": "iw2",
+      "near_swath": "iw1",
+      "overlap_global": [
+        496,
+        5395,
+        20053,
+        20548
+      ]
+    },
+    {
+      "cut_global_sample": 20350,
+      "far_swath": "iw2",
+      "near_swath": "iw1",
+      "overlap_global": [
+        5395,
+        5968,
+        20053,
+        20647
+      ]
+    },
+    {
+      "cut_global_sample": 20395,
+      "far_swath": "iw2",
+      "near_swath": "iw1",
+      "overlap_global": [
+        5968,
+        6850,
+        20144,
+        20647
+      ]
+    }
+  ],
+  "status": "complete",
+  "wall_matching_seconds": 94.08613683299336
+}

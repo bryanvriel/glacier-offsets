@@ -263,6 +263,108 @@ and writes `comparison.json` and `matcher_comparison.png`. It releases its
 temporary merged SLCs after completion. It requires a saved ISCE2 baseline
 with zero or constant gross offsets; velocity-prior comparisons are excluded.
 
+To compare ISCE3 `deramp: 0` and `deramp: 1` independently in IW1 and IW2,
+use the same-patch overlap diagnostic on a saved zero-gross, `deramp: 0` pair:
+
+```bash
+PYTHONPATH=src:.runtime/deps MPLCONFIGDIR=/tmp/glacier-mpl OMP_NUM_THREADS=4 \
+  /Users/briel/miniforge3/envs/isce3/bin/python tools/compare_swath_overlap.py \
+  /path/to/stack/pairs/2017-01-19_2017-01-25 \
+  --output /path/to/new-deramp-comparison --workers 4 --compare-deramp
+```
+
+The command verifies retained aligned burst SLCs, selects each swath's latest
+fully supported source before matching, and runs both modes at identical saved
+global centers. Both workers read unspliced aligned bursts. Chip/search sizes,
+stride, native refinement settings, thresholds, geometry and support are fixed;
+only `deramp` changes. Source data and production results remain read-only.
+For triangles or new date pairs in the same stack, add
+`--acquisition-dates 2017-05-31 2017-06-12 --compare-deramp`. This reads those
+aligned acquisitions directly on the saved grid, verifies their input checksums,
+and omits comparisons against the template pair's merged offsets. The template
+may use either deramp mode; both unspliced modes are run for the requested dates.
+No merged SLC assembly or full-field matching is needed for this diagnostic.
+The output must be a new directory outside the source stack; there is no resume
+mode. Omit `--compare-deramp` for the original magnitude-first diagnostic.
+
+`deramp-0/` and `deramp-1/` retain all per-burst raw observations, native files,
+quality/failure masks, effective parameters, combined `observations.npz`, reports
+and individual plots. The root `selection.npz` records source owners and support
+before either mode runs. Root `report.json`, `comparison_masks.npz` and
+`deramp_comparison.png` compare both offset components, with fixed-support,
+burst-interior, baseline-quality and common-quality groups. Inspect validity
+transitions and sample counts alongside disagreement statistics: a smaller
+disagreement on fewer observations does not establish improvement or accuracy.
+No observations are selected for agreement, and failed owners never fall back
+to another burst. Native job exceptions are retained in reports while independent
+jobs continue; incomplete comparisons exit 1. `progress.json` records completed
+jobs, including failures. Initial integrity checks can take time before matching
+workers start. This diagnostic does not change production defaults or establish
+absolute glacier-motion accuracy.
+
+To isolate range input preparation further, use a completed paired-deramp
+diagnostic as a read-only baseline:
+
+```bash
+PYTHONPATH=src:.runtime/deps MPLCONFIGDIR=/tmp/glacier-mpl OMP_NUM_THREADS=4 \
+  /Users/briel/miniforge3/envs/isce3/bin/python -m tools.compare_swath_range_oversampling \
+  /path/to/completed-deramp-comparison \
+  --output /path/to/new-range-control --workers 4
+```
+
+This verifies the exact aligned inputs used by the baseline, interpolates full
+complex rows at twice the range sampling, and retains only strips around the
+original matching patches. It performs no azimuth interpolation or deramping
+before native magnitude detection. A quarter-original-pixel origin adjustment
+keeps physical chip centers and pixel-cell footprints fixed as window, search
+and stride double in range. Offsets and covariance are converted back to original
+pixel units; original support and source ownership are retained without fallback.
+Native raw/refinement factors and zoom stay fixed, so range quantization is finer
+and the physical native range-refinement extent is smaller. These differences,
+SNR normalization and full-row periodic interpolation are explicit limitations
+of this control. Reports compare unchanged baseline-quality cohorts and include
+the earlier `deramp: 1` observations. `range_control.png`, `report.json`, per-burst
+NPZ/native files, and prepared strip TIFFs are retained in the new output root.
+
+For the full merged pair, compare both treatments against its saved magnitude
+baseline without writing to the production stack:
+
+```bash
+PYTHONPATH=src:.runtime/deps MPLCONFIGDIR=/tmp/glacier-mpl OMP_NUM_THREADS=4 \
+  /Users/briel/miniforge3/envs/isce3/bin/python -m tools.compare_merged_preprocessing \
+  configs/stack.larsen.swath-midpoint.yaml /path/to/stack/pairs/2017-01-19_2017-01-25 \
+  --output /path/to/new-full-merged-comparison --workers 4
+```
+
+The tool reconstructs both merged SLCs from retained aligned bursts using the
+saved layout and requires their checksums to match the baseline. Native workers
+read complete merged images across scheduling boundaries in both treatments.
+The range-2x adapter transforms each segment's coordinates and converts its
+results back to original units before normal offset publication, geocoding and
+diagnostics. Original input support, source ownership and seam flags must agree
+exactly. Both variants reuse saved center geometry and the pinned map grid.
+`comparison.json`, `radar_comparison.png`, `radar_changes.png`, and
+`geo_comparison.png` retain full-field results and common-valid comparisons,
+including seam/interior groups and quality attrition. Temporary merged and
+range-oversampled images are released only after a successful comparison;
+native results, radar offsets, maps, previews and provenance remain. Choose a
+new output directory; this utility has no resume option. The range-only control
+limitations above also apply to the full merged experiment.
+
+For a scalar refinement-zoom sensitivity experiment, add `--zoom 32` and
+`--zoom-baseline /path/to/completed-full-merged-comparison`, using another new
+output directory. Only zoom may differ from the saved treatment settings.
+Requested zooms that would be silently clipped by the native search cap are
+rejected. With raw oversampling two, zoom 16 gives refinement half-widths
+`[4, 4]` original pixels for native `deramp: 1` and `[4, 2]` for range-2x;
+zoom 32 gives `[8, 8]` and `[8, 4]`, respectively. Thus range-2x/zoom-32
+restores the range extent of native/zoom-16 while expanding azimuth extent.
+The tool verifies actual native zoom and writes `zoom_sensitivity.json`, shared
+four-treatment masks, `zoom_changes.png` and `zoom_field_comparison.png`.
+The report separates validity transitions, seam/interior changes, large tails,
+native pool wall time and maximum individual-worker RSS; that RSS excludes
+the parent and does not measure concurrent process-tree memory.
+
 This strategy retains COMPASS geometry-only coregistration. For each aligned
 secondary burst it reads the actual COMPASS azimuth/range offset extrema and
 ports ISCE2's `adjustValidSampleLine_V2` validity adjustment, including its

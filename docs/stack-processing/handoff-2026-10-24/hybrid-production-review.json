@@ -1,0 +1,55 @@
+{
+  "pair": "2017-01-19_2017-01-25",
+  "common_strip_windows": 3366,
+  "scene_valid": 69535,
+  "fields": {
+    "azimuth": {
+      "changed_strip_windows": 580,
+      "fraction_scene_valid": 0.008341123175379305,
+      "median_signed_all_common": 0.0,
+      "p90_absolute_all_common": 0.015625,
+      "max_absolute": 0.453125,
+      "all_boundary": {
+        "n": 1051,
+        "median_absolute": 0.015625,
+        "p90_absolute": 0.046875
+      },
+      "strong_boundary": {
+        "n": 722,
+        "median_absolute": 0.015625,
+        "p90_absolute": 0.046875
+      }
+    },
+    "range": {
+      "changed_strip_windows": 600,
+      "fraction_scene_valid": 0.00862874811246135,
+      "median_signed_all_common": 0.0,
+      "p90_absolute_all_common": 0.015625,
+      "max_absolute": 0.3125,
+      "all_boundary": {
+        "n": 1051,
+        "median_absolute": 0.015625,
+        "p90_absolute": 0.0625
+      },
+      "strong_boundary": {
+        "n": 722,
+        "median_absolute": 0.015625,
+        "p90_absolute": 0.046875
+      }
+    }
+  },
+  "preview_comparison": {
+    "valid_masks_identical": true,
+    "fields": {
+      "total/azimuth_px": {
+        "max_valid_difference_px": 0.015625,
+        "changed_valid_windows": 21
+      },
+      "total/range_px": {
+        "max_valid_difference_px": 0.015625,
+        "changed_valid_windows": 26
+      }
+    }
+  },
+  "limitations": "Before values are retained narrow-strip native controls, previously verified to reproduce the old full pair exactly. Counts cover the examined strip. The four-worker preview and eight-worker production run differ at a few valid centers by one 1/64-pixel refinement increment. No independent displacement truth."
+}

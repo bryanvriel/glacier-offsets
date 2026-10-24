@@ -1,5 +1,15 @@
 # Reference-geometry stack validation
 
+Start with the [October 24 hand-off](HANDOFF_2026-10-24.md) for the current
+Larsen configuration, selectable merge/matcher strategies, completed diagnostics,
+and unresolved range-swath differences. The sections below retain the earlier
+validation history; their dated production recommendations are historical.
+
+The [proposed swath-correction enhancement](SWATH_CORRECTION_ENHANCEMENT.md)
+records physical forward modeling and empirical overlap-network calibration as
+separate strategies, with application conventions, validation gates and an
+implementation sequence. It is a design note; no production correction is enabled.
+
 The [October 22 burst-boundary investigation](boundary-investigation/README.md)
 uses corrected real three-date products and controlled native matching to trace
 the January 18–24 stripes to edge-amplitude notches at the SLC ownership cuts.

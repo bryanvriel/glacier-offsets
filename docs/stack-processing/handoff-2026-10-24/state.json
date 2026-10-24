@@ -1,0 +1,243 @@
+{
+  "as_of_date": "2026-10-24",
+  "branch": "codex/isce2-merge-first",
+  "code_commit": "ccd8c7bdf47ed000a2ea9553065f7110094ae8cf",
+  "repository": "/Users/briel/data/insar/glacier_offsets",
+  "stacks": {
+    "stack": {
+      "active_acquisitions": 61,
+      "active_pair_status_counts": {
+        "complete": 49,
+        "interrupted": 1,
+        "stale": 10
+      },
+      "geometry_identity": "d44481fe527d2e679d2fec17d0037aeafb76bc7ccb5bd18a6dcdbef8ad72612f",
+      "layout_identity": "9824abbaceb67a031730f0f8a1b7ff8825a836ec30b9eb8fc36a9a8a8f52507e",
+      "outcome": "interrupted",
+      "ownership": {
+        "cuts": [
+          {
+            "cut_global_line": 1424,
+            "lower_burst_id": "t038_080976_iw1",
+            "overlap_global": [
+              1363,
+              1485,
+              870,
+              20567
+            ],
+            "upper_burst_id": "t038_080975_iw1"
+          },
+          {
+            "cut_global_line": 2765,
+            "lower_burst_id": "t038_080977_iw1",
+            "overlap_global": [
+              2703,
+              2827,
+              870,
+              20567
+            ],
+            "upper_burst_id": "t038_080976_iw1"
+          },
+          {
+            "cut_global_line": 4107,
+            "lower_burst_id": "t038_080978_iw1",
+            "overlap_global": [
+              4046,
+              4168,
+              870,
+              20567
+            ],
+            "upper_burst_id": "t038_080977_iw1"
+          },
+          {
+            "cut_global_line": 5449,
+            "lower_burst_id": "t038_080979_iw1",
+            "overlap_global": [
+              5388,
+              5511,
+              970,
+              20567
+            ],
+            "upper_burst_id": "t038_080978_iw1"
+          },
+          {
+            "cut_global_line": 1886,
+            "lower_burst_id": "t038_080976_iw2",
+            "overlap_global": [
+              1827,
+              1946,
+              20023,
+              43557
+            ],
+            "upper_burst_id": "t038_080975_iw2"
+          },
+          {
+            "cut_global_line": 3228,
+            "lower_burst_id": "t038_080977_iw2",
+            "overlap_global": [
+              3171,
+              3286,
+              20023,
+              43557
+            ],
+            "upper_burst_id": "t038_080976_iw2"
+          },
+          {
+            "cut_global_line": 4571,
+            "lower_burst_id": "t038_080978_iw2",
+            "overlap_global": [
+              4512,
+              4631,
+              20023,
+              43557
+            ],
+            "upper_burst_id": "t038_080977_iw2"
+          },
+          {
+            "cut_global_line": 5911,
+            "lower_burst_id": "t038_080979_iw2",
+            "overlap_global": [
+              5854,
+              5969,
+              20114,
+              43558
+            ],
+            "upper_burst_id": "t038_080978_iw2"
+          },
+          {
+            "cut_global_sample": 20295,
+            "far_swath": "iw2",
+            "near_swath": "iw1",
+            "overlap_global": [
+              485,
+              5388,
+              20023,
+              20567
+            ]
+          },
+          {
+            "cut_global_sample": 20344,
+            "far_swath": "iw2",
+            "near_swath": "iw1",
+            "overlap_global": [
+              5388,
+              5969,
+              20023,
+              20666
+            ]
+          },
+          {
+            "cut_global_sample": 20390,
+            "far_swath": "iw2",
+            "near_swath": "iw1",
+            "overlap_global": [
+              5969,
+              6854,
+              20114,
+              20666
+            ]
+          }
+        ],
+        "edge_margin_lines": 8,
+        "edge_margin_samples": 8,
+        "method": "reference-swath-interior-midpoint-v2",
+        "missing_support": "mask; no source substitution",
+        "narrow_overlap": "error"
+      },
+      "path": "/Volumes/thinkplus/insar/glacier_offsets/work/larsen/stack",
+      "reference_date": "2017-01-01"
+    },
+    "stack-isce2": {
+      "active_acquisitions": 6,
+      "active_pair_status_counts": {
+        "complete": 5
+      },
+      "geometry_identity": "b4aede8ca76255e257738311514495b24a60c377ccdb9f0a475f417812dd8bc1",
+      "layout_identity": "9c9cbeaeccfa5c006c8e4b09d00db5d81e58947a8fd6b91502d342858d076e41",
+      "outcome": "complete",
+      "ownership": {
+        "cuts": [
+          {
+            "cut_global_sample": 20300,
+            "far_swath": "iw2",
+            "near_swath": "iw1",
+            "overlap_global": [
+              496,
+              5395,
+              20053,
+              20548
+            ]
+          },
+          {
+            "cut_global_sample": 20350,
+            "far_swath": "iw2",
+            "near_swath": "iw1",
+            "overlap_global": [
+              5395,
+              5968,
+              20053,
+              20647
+            ]
+          },
+          {
+            "cut_global_sample": 20395,
+            "far_swath": "iw2",
+            "near_swath": "iw1",
+            "overlap_global": [
+              5968,
+              6850,
+              20144,
+              20647
+            ]
+          }
+        ],
+        "edge_margin_samples": 8,
+        "method": "isce2-common-valid-burst-overwrite-swath-midpoint-v1",
+        "missing_support": "mask; no source substitution",
+        "narrow_overlap": "error",
+        "precedence": "later bursts overwrite within swaths; interior midpoint between swaths",
+        "validity": "resampling-offset-adjusted secondary rectangles intersected across complete dates"
+      },
+      "path": "/Volumes/thinkplus/insar/glacier_offsets/work/larsen/stack-isce2",
+      "reference_date": "2017-01-01",
+      "representative_pair": {
+        "matching": {
+          "backend": "cpu",
+          "batch": [
+            1,
+            8
+          ],
+          "correlation_threshold": 0.0,
+          "deramp": 0,
+          "oversampling": 32,
+          "raw_oversampling": 2,
+          "search": [
+            10,
+            40
+          ],
+          "snr_threshold": 0.0,
+          "stride": [
+            32,
+            128
+          ],
+          "window": [
+            64,
+            256
+          ],
+          "zoom": 16
+        },
+        "matching_summary": {
+          "input_valid": 69535,
+          "quality_valid": 69535,
+          "seam_crossing": 5328,
+          "seam_crossing_valid": 4068,
+          "windows": 77634
+        },
+        "matching_wall_seconds": 62.17128037501243,
+        "pair": "2017-01-19_2017-01-25",
+        "worker_count": 8
+      }
+    }
+  },
+  "timezone": "Asia/Shanghai"
+}

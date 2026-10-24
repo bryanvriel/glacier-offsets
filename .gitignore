@@ -29,6 +29,13 @@
 !/configs/stack.pig.validity.yaml
 !/configs/stack.pig.interior.yaml
 !/docs/stack-processing/README.md
+!/docs/stack-processing/SWATH_CORRECTION_ENHANCEMENT.md
+!/docs/stack-processing/HANDOFF_2026-10-24.md
+!/docs/stack-processing/handoff-2026-10-24/state.json
+!/docs/stack-processing/handoff-2026-10-24/independent-swath-overlap.json
+!/docs/stack-processing/handoff-2026-10-24/independent-swath-differences.png
+!/docs/stack-processing/handoff-2026-10-24/hybrid-full-pair.json
+!/docs/stack-processing/handoff-2026-10-24/hybrid-production-review.json
 !/docs/stack-processing/validation.json
 !/docs/stack-processing/validity-audit.json
 !/docs/stack-processing/boundary-investigation/README.md
