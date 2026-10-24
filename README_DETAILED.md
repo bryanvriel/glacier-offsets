@@ -190,6 +190,167 @@ invalid resulting footprints still fail validation. Downloaded XML and imagery
 remain unchanged; existing collections do not need downloading or preparation
 again for this correction. Regenerate saved stack plans to update coverage.
 
+### ISCE2 merge-first stacks
+
+Set `stack.processing: isce2_merge_first` in a stack YAML to use stack-common
+valid rectangles and later-source overwrite merging. Select the matcher
+independently with `matching.engine: isce3` or `matching.engine: isce2`.
+For compatibility, omitting the engine under this merge policy selects ISCE2;
+other stacks default to ISCE3. See [the example configuration](configs/stack.isce2.example.yaml).
+
+To use ISCE3 magnitude matching on the same assemblies:
+
+```yaml
+stack:
+  processing: isce2_merge_first
+matching:
+  engine: isce3
+  backend: cpu
+  deramp: 0
+  zoom: 16
+```
+
+This combination needs no ISCE2 installation or runtime probe. The existing
+ISCE3 CPU worker scheduling and GPU selection still apply. Changing only the
+matcher preserves pinned geometry, common validity, and aligned acquisitions;
+it invalidates offsets, geocoding and diagnostics. Rerunning in the same root
+replaces those pair results. Released merged SLCs are reassembled from retained
+aligned bursts. Preserve the earlier pair outputs before comparing engines.
+
+To keep the common valid rectangles and later-burst overwrites but move the
+cross-swath switch into the overlap interior, add:
+
+```yaml
+stack:
+  processing: isce2_merge_first
+  swath_merge: midpoint
+matching:
+  engine: isce3
+  deramp: 0
+```
+
+`swath_merge` defaults to `overwrite`. The `midpoint` option resolves burst
+overwrites within each swath first, then cuts adjacent swath support at the
+range midpoint for each azimuth interval. It retains unshared coverage and
+requires at least 16 samples of overlap (eight per side). The same fixed owner
+supplies SLCs and geometry on every date; unavailable samples remain masked.
+
+For an existing common-valid stack, use the controlled rebuild before running:
+
+```bash
+glacier-offsets stack rebuild-layout configs/stack.swath-midpoint.yaml --dry-run
+glacier-offsets stack rebuild-layout configs/stack.swath-midpoint.yaml
+OMP_NUM_THREADS=8 glacier-offsets stack run configs/stack.swath-midpoint.yaml --backend cpu
+```
+
+This verifies and preserves COMPASS reference/aligned bursts, resampling offsets
+and per-date validity metadata. It replaces ownership geometry, deletes pair
+outputs and temporary assemblies, and journals the change for restart. Reference
+inputs, selection and software must match the existing stack. Switching back
+to `swath_merge: overwrite` uses the same rebuild command.
+
+For an isolated full-pair test that preserves the baseline, use a config with
+the settings above and a new comparison directory outside the source stack:
+
+```bash
+OMP_NUM_THREADS=8 python tools/compare_stack_engines.py configs/stack.isce3.yaml \
+  /path/to/stack/pairs/2017-01-01_2017-01-07 --output /path/to/comparison
+```
+
+The tool verifies retained aligned inputs, reconstructs the saved ownership,
+runs matching/geocoding/diagnostics, checks identical grid and input support,
+and writes `comparison.json` and `matcher_comparison.png`. It releases its
+temporary merged SLCs after completion. It requires a saved ISCE2 baseline
+with zero or constant gross offsets; velocity-prior comparisons are excluded.
+
+This strategy retains COMPASS geometry-only coregistration. For each aligned
+secondary burst it reads the actual COMPASS azimuth/range offset extrema and
+ports ISCE2's `adjustValidSampleLine_V2` validity adjustment, including its
+four/eight-pixel interpolation margins and sign cases. COMPASS offsets already
+refer to secondary-local indices; ISCE2's separate relative-burst shift must
+not be added a second time. Rectangles are clipped to the physical raster.
+It then intersects reference and complete-date burst rectangles across all
+active dates before assembling any SLC. Partial dates are excluded from this
+intersection, following ISCE2's incomplete-acquisition handling, but retain
+their available imagery. A failed alignment blocks common-layout preparation
+instead of silently changing the inventory.
+
+With `swath_merge: overwrite`, SLCs are merged in ascending swath/time order:
+later valid rectangles overwrite earlier ones. With `midpoint`, this overwrite
+rule applies within each swath before the range cuts described above. Neither
+option interpolates, blends, or substitutes sources for missing imagery. Geometry and source indices use the same
+ownership. Matching workers always read these **merged** SLCs, including across
+worker boundaries. `OMP_NUM_THREADS` is the maximum number of independent CPU
+matching processes; date preparation and pairs remain sequential. Constant and
+velocity-guided gross offsets retain the existing sign convention and are
+subtracted from ISCE2's returned total to record the residual exactly once.
+
+The adapter calls `mroipac.ampcor.Ampcor`, the same Fortran kernel used by
+ISCE2 DenseAmpcor, with both input types set to `mag`. It preserves our explicit
+matching grid instead of DenseAmpcor's automatic grid and fork wrapper.
+Raw oversampling is fixed at two; `oversampling` and `zoom` map to ISCE2's native
+refinement settings. `deramp` and `batch` are ISCE3 settings and do not control
+this engine. Native covariance is converted from range/azimuth order into our
+azimuth/range convention. This implements ISCE2 validity/merge/matching on
+COMPASS-aligned inputs; it does not replace COMPASS with ISCE2 resampling or NESD.
+
+ISCE2 can run in a separate environment. All paths resolve relative to the
+YAML that declares them. For this machine's existing installation:
+
+```yaml
+stack:
+  processing: isce2_merge_first
+matching:
+  engine: isce2
+  backend: cpu
+  zoom: 8
+  correlation_threshold: 0.0
+  isce2:
+    python: /Users/briel/miniforge3/envs/isce/bin/python
+    packages: /Users/briel/apps/isce2/packages
+    library_path: /Users/briel/miniforge3/envs/gmt/lib
+output:
+  directory: /path/to/new/stack-isce2
+```
+
+`python: null` uses the workflow's interpreter when ISCE2 is installed there.
+`packages` and `library_path` are optional; the latter is needed only when the
+native installation needs additional library resolution. Environment overrides
+apply only to the child process. The local library path above supplies the GDAL
+ABI required by this particular ISCE2 build; it is not a general installation
+requirement. Runtime import errors fail before stack mutation. Engine version,
+native binary and Python wrapper checksums enter matching provenance and cache
+identities. There is no ISCE3 fallback for an ISCE2 request.
+
+ISCE2 does not expose a refined normalized correlation peak. That field and
+its geocoded raster are explicitly NaN; they do not reject otherwise accepted
+offsets. Use `snr_threshold` for additional quality selection and leave
+`correlation_threshold: 0`. GPU requests are rejected for this CPU engine.
+
+Use a new output root when switching an existing midpoint stack to common
+validity. `rebuild-layout` supports the earlier midpoint-policy repair and
+switches between the two common-valid swath merge policies described above.
+On an ISCE2 stack, extending/filtering the active date inventory recomputes
+common validity. Aligned burst products remain cached, but changed common
+validity invalidates affected assembly and pair identities. The map extent
+is retained from initial reference preparation. Completed merged SLCs retain
+the normal bounded-storage cleanup/rebuild behavior.
+
+```bash
+glacier-offsets stack validate configs/stack.isce2.example.yaml --backend cpu
+OMP_NUM_THREADS=4 glacier-offsets stack run configs/stack.isce2.example.yaml --backend cpu
+```
+
+Native integration tests can be enabled without installing ISCE2 into the
+COMPASS environment:
+
+```bash
+GLACIER_ISCE2_PYTHON=/Users/briel/miniforge3/envs/isce/bin/python \
+GLACIER_ISCE2_PACKAGES=/Users/briel/apps/isce2/packages \
+GLACIER_ISCE2_LIBRARY_PATH=/Users/briel/miniforge3/envs/gmt/lib \
+OMP_NUM_THREADS=2 python -m unittest discover -s tests -v
+```
+
 ### Reference-geometry stacks
 
 If you have only SAFE scenes, first use the [input preparation command](#prepare-orbits-and-a-dem).

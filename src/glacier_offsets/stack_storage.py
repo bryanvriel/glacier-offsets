@@ -61,7 +61,8 @@ def burst_config(cfg, reference, acquisition):
 
 
 def reference_specification(cfg, plan, hashes, software):
-    return {'method': METHOD, 'ownership_policy': POLICY, 'anchor': plan.anchor,
+    from .stack_isce2 import policy
+    return {'method': METHOD, 'ownership_policy': policy(cfg), 'anchor': plan.anchor,
             'inputs': {key: hashes(path) for key, path in
                        [('safe', plan.reference.scene.path), ('orbit', plan.reference.orbit.path), ('dem', cfg['inputs']['dem'])]},
             'software': software['packages'], 'flatten': False, 'backend': 'cpu'}
@@ -106,10 +107,12 @@ def prepare_geometry(cfg, plan, specification, software, force=False, process=Tr
                         'manifest': str(directory / 'manifest.json')})
     if len({CRS.from_user_input(e['coreg']['geometry_crs']).to_wkt() for e in sources}) != 1:
         raise ValueError('Reference burst geometry CRSs differ')
-    layout = write_reference_layout(root, sources, checksums=checksums)
+    from .stack_isce2 import enabled
+    layout = write_reference_layout(root, sources, checksums=checksums,
+                                    ownership_policy=specification['ownership_policy'])
     layout_identity = layout['layout_identity']
     pinned_layout = expected_layout or previous.get('layout_identity')
-    if pinned_layout is not None and layout_identity != pinned_layout:
+    if not enabled(cfg) and pinned_layout is not None and layout_identity != pinned_layout:
         raise ValueError('Pinned radar layout/ownership changed; use a new output root')
     files = [layout['coreg']['source_index'], *layout['coreg']['geometry'].values()]
     for entry in sources:
@@ -120,7 +123,7 @@ def prepare_geometry(cfg, plan, specification, software, force=False, process=Tr
     return frame
 
 
-def write_reference_layout(root, sources, *, checksums=None):
+def write_reference_layout(root, sources, *, checksums=None, ownership_policy=None):
     """Write the interior ownership and matching geometry from prepared sources."""
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
@@ -128,7 +131,10 @@ def write_reference_layout(root, sources, *, checksums=None):
     grid, placements = radar_layout([e['coreg']['reference_grid'] for e in sources], .001)
     for entry, placement in zip(sources, placements):
         entry.update(placement)
-    sources, ownership = interior_ownership(sources)
+    from .stack_isce2 import POLICY as isce2_policy, SWATH_MIDPOINT_POLICY, overwrite_ownership
+    isce2 = ownership_policy in (isce2_policy, SWATH_MIDPOINT_POLICY)
+    sources, ownership = (overwrite_ownership(sources, swath_midpoint=ownership_policy == SWATH_MIDPOINT_POLICY)
+                          if isce2 else interior_ownership(sources))
     shape = grid['length'], grid['width']
     # Geometry VRTs retain original burst sources; ownership is a materialized
     # categorical raster using only actual reference support, including holes.
@@ -140,12 +146,12 @@ def write_reference_layout(root, sources, *, checksums=None):
     with bounded_raster_cache():
         for index, entry in enumerate(sources, 1):
             source = gdal.Open(entry['coreg']['slcs']['reference'])
-            unsupported = invalid_samples(source)
+            unsupported = None if isce2 else invalid_samples(source)
             dy, dx = entry['offset']
             for y0, y1, x0, x1 in entry['ownership_windows']:
                 for row in range(y0, y1, 64):
                     h = min(64, y1-row)
-                    valid = ~unsupported[row:row+h, x0:x1]
+                    valid = np.ones((h, x1-x0), bool) if isce2 else ~unsupported[row:row+h, x0:x1]
                     band = owner.GetRasterBand(1)
                     block = band.ReadAsArray(x0+dx, row+dy, x1-x0, h)
                     block[valid] = index
@@ -189,7 +195,9 @@ def prepare_date(cfg, plan, acquisition, frame, specification, force=False, proc
         raise ValueError(f'{acquisition.date}: alignment missing or stale; run stack coregister first')
     write_json(root / 'manifest.json', {'specification': specification, 'status': 'aligning'})
     effective = burst_config(cfg, plan.reference, acquisition)
-    slcs = {}
+    from .stack_isce2 import enabled, date_validity
+    isce2 = enabled(cfg)
+    slcs, windows, offset_paths = {}, {}, []
     reference_bursts = {b.id: b for b in plan.bursts}
     for entry in frame['sources']:
         key = entry['burst_id']
@@ -197,24 +205,39 @@ def prepare_date(cfg, plan, acquisition, frame, specification, force=False, proc
             continue
         if acquisition.date == plan.reference.date:
             slcs[key] = entry['coreg']['slcs']['reference']
+            if isce2:
+                windows[key] = {'window': entry.get('reference_valid_window', entry['valid_window']),
+                                'method': 'reference-annotation'}
             continue
         directory = root / 'bursts' / key
         spec = {'date': fingerprint, 'burst_id': key}
         previous = read_manifest(directory)
         if not force and verified(previous, 'identity', identity(spec), checksums=checksums):
             slcs[key] = previous['slc']
+            if isce2:
+                windows[key] = previous['validity']
         else:
             write_json(directory / 'manifest.json', {'specification': spec, 'status': 'aligning'})
             slc = align_acquisition(effective, reference_bursts[key], acquisition.bursts[key], directory, entry['coreg'])
             slcs[key] = slc
-            write_json(directory / 'manifest.json', {'identity': identity(spec), 'slc': slc,
-                       'products': product_hashes([slc], checksums=checksums), 'status': 'complete'})
+            record = {'identity': identity(spec), 'slc': slc, 'status': 'complete'}
+            if isce2:
+                shape = tuple(entry['coreg']['reference_grid'][k] for k in ('length', 'width'))
+                record['validity'] = windows[key] = date_validity(acquisition.bursts[key], slc, shape,
+                    entry.get('reference_valid_window', entry['valid_window']))
+            record['products'] = product_hashes([slc, *record.get('validity', {}).get('offset_products', [])], checksums=checksums)
+            write_json(directory / 'manifest.json', record)
+        if isce2:
+            offset_paths.extend(windows[key].get('offset_products', []))
     result = {'alignment_identity': fingerprint, 'specification': specification, 'slcs': slcs,
-              'products': product_hashes(slcs.values(), checksums=checksums), 'status': 'aligned', 'date': acquisition.date,
+              'products': product_hashes([*slcs.values(), *offset_paths], checksums=checksums), 'status': 'aligned', 'date': acquisition.date,
               'burst_times': specification['burst_times']}
     # An acquisition with no selected bursts is an explicitly empty aligned date.
     if not slcs:
-        result['products'] = product_hashes([Path(cfg['output']['directory']) / 'geometry/source.tif'], checksums=checksums)
+        marker = frame['sources'][0]['coreg']['slcs']['reference'] if isce2 else Path(cfg['output']['directory']) / 'geometry/source.tif'
+        result['products'] = product_hashes([marker], checksums=checksums)
+    if isce2:
+        result['valid_windows'] = windows
     result['alignment_products'] = result['products']
     write_json(root / 'manifest.json', result)
     return result
@@ -222,8 +245,11 @@ def prepare_date(cfg, plan, acquisition, frame, specification, force=False, proc
 
 def assembly_specification(frame, aligned):
     """Version date storage independently of the pinned COMPASS reference frame."""
-    return {'method': METHOD, 'alignment': aligned['alignment_identity'],
+    spec = {'method': METHOD, 'alignment': aligned['alignment_identity'],
             'geometry': frame['geometry_identity'], 'slc_storage': SLC_STORAGE}
+    if frame.get('common_validity_identity'):
+        spec.update(layout=frame['layout_identity'])
+    return spec
 
 
 def assemble_date(cfg, acquisition, frame, aligned, force=False, process=True, checksums=None):

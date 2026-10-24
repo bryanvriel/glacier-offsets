@@ -263,4 +263,8 @@ def validate_stack(cfg, plan, check_dates=True):
                 raise ValueError(f'{acquisition.date}: {acquisition.error}')
             for key in reference.keys() & acquisition.bursts.keys():
                 validate_burst(effective_config(cfg, key), (reference[key], acquisition.bursts[key]), extent)
+    if cfg['matching'].get('engine') == 'isce2':
+        from .isce2_matching import provenance
+        provenance(cfg)
+        return 'cpu'
     return select_backend(cfg['matching']['backend'])[0]

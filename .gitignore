@@ -24,6 +24,7 @@
 !/configs/pair.pig.velocity.yaml
 !/configs/pair.pig.aoi.yaml
 !/configs/stack.example.yaml
+!/configs/stack.isce2.example.yaml
 !/configs/stack.pig.yaml
 !/configs/stack.pig.validity.yaml
 !/configs/stack.pig.interior.yaml

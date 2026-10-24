@@ -33,7 +33,9 @@ def recorded(manifest, key, paths, expected=None, released=None):
         return state('stale', 'Saved identity differs from current settings or dependencies')
     if not paths:
         return state('incomplete', 'No output products recorded')
-    missing = next((str(p) for p in paths if not Path(p).is_file() and str(p) not in (released or {})), None)
+    released_paths = {str(Path(p).resolve()) for p in (released or {})}
+    missing = next((str(p) for p in paths if not Path(p).is_file() and
+                    str(Path(p).resolve()) not in released_paths), None)
     if missing:
         return state('incomplete', f'Missing output: {missing}')
     return state('complete', 'Completion identity and key output files present' if not released else
@@ -48,7 +50,7 @@ def dependent(upstream, check):
 
 def reference_status(cfg, frame, error):
     from .stack_storage import METHOD
-    from .stack_ownership import POLICY
+    from .stack_isce2 import policy
     if error:
         return state('unknown', error)
     result = recorded(frame, 'geometry_identity', frame.get('products', {}))
@@ -57,7 +59,7 @@ def reference_status(cfg, frame, error):
     spec = frame.get('specification', {})
     if identity(spec) != frame['geometry_identity']:
         return state('incomplete', 'Reference specification does not match its completion identity')
-    if spec.get('method') != METHOD or spec.get('ownership_policy') != POLICY:
+    if spec.get('method') != METHOD or spec.get('ownership_policy') != policy(cfg):
         return state('stale', 'Reference ownership policy changed; use a new output root or stack rebuild-layout for the supported policy update')
     anchor = spec.get('anchor', {})
     requested = cfg['stack'].get('reference_date')
@@ -68,7 +70,7 @@ def reference_status(cfg, frame, error):
         if key in selection and cfg['inputs'].get(key) != selection[key]:
             return state('stale', f'Reference selection changed: inputs.{key}')
     dem = spec.get('inputs', {}).get('dem', {}).get('path')
-    if dem and cfg['inputs'].get('dem') != dem:
+    if dem and Path(cfg['inputs'].get('dem', '')).resolve() != Path(dem).resolve():
         return state('stale', 'Configured DEM path differs from the pinned reference')
     old_aoi = (selection.get('aoi') or {}).get('specification')
     if old_aoi != cfg.get('aoi'):
@@ -85,7 +87,12 @@ def matching_status(cfg, manifest, root):
             return state('unknown', 'Saved velocity-source fingerprints unavailable')
         settings = cfg['gross_offsets']['velocity']
         current['velocity_provenance'] = {k: settings[k] | {'sha256': saved[k]['sha256']} for k in ('vx', 'vy')}
-    expected = identity(matching_specification(cfg, current))
+    native_engine = None
+    if cfg['matching'].get('engine') == 'isce2':
+        native_engine = manifest.get('matching', {}).get('native_engine')
+        if native_engine is None:
+            return state('unknown', 'Saved ISCE2 native provenance unavailable; status never starts native processes')
+    expected = identity(matching_specification(cfg, current, native_engine=native_engine))
     return recorded(manifest, 'match_identity', [root/'radar/offsets.h5'], expected)
 
 
@@ -106,7 +113,7 @@ def pair_status(cfg, manifest, root, upstream):
     for stage, check in checks.items():
         try:
             upstream = dependent(upstream, check)
-        except (KeyError, TypeError, ValueError) as exc:
+        except (KeyError, TypeError, ValueError, RuntimeError, OSError) as exc:
             upstream = state('unknown', f'Cannot compare saved metadata: {exc}')
         result[stage] = upstream
     return result

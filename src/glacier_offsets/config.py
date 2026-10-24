@@ -16,6 +16,7 @@ PATH_FIELDS = (
     ('stack', 'safe_directory'),
     ('stack', 'orbit_directory'),
     ('stack', 'pairing', 'pairs_file'),
+    *(('matching', 'isce2', key) for key in ('python', 'packages', 'library_path')),
 )
 
 
@@ -170,6 +171,11 @@ def validate_common(cfg: dict, discovery: bool = False) -> dict:
         gross_values(cfg)
     matching = cfg['matching']
     if not isinstance(matching,dict):raise ValueError('matching must be a YAML mapping')
+    if matching.get('engine', 'isce3') not in ('isce2', 'isce3'):
+        raise ValueError('matching.engine must be isce2 or isce3')
+    if matching.get('engine') == 'isce2':
+        from .isce2_matching import validate_settings
+        validate_settings(cfg)
     if matching["backend"] not in {"cpu", "gpu", "auto"}:
         raise ValueError("backend must be cpu, gpu, or auto")
     for key in ("window", "search", "stride", "batch"):

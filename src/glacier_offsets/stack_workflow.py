@@ -54,6 +54,8 @@ def execute_stack(cfg, command, force=False):
 
 
 def _execute_stack(cfg, command, force=False):
+    from .stack_isce2 import enabled, prepare_common_layout
+    isce2 = enabled(cfg)
     invocation_started = time.perf_counter()
     if command not in (*STAGES, 'run'):
         raise ValueError(f'Unknown stack stage {command}')
@@ -63,6 +65,9 @@ def _execute_stack(cfg, command, force=False):
     plan = plan_stack(cfg, previous=old)
     # Native reference placement/DEM checks happen before any scientific mutation.
     validate_stack(cfg, plan, check_dates=False)
+    if cfg['matching'].get('engine') == 'isce2':
+        from .isce2_matching import provenance
+        provenance(cfg)  # Fail before scientific mutation if the native runtime is unavailable.
     hashes = SourceHashes()
     checksums = ChecksumCache()
     software = inspect_environment()
@@ -136,7 +141,7 @@ def _execute_stack(cfg, command, force=False):
             save()
         frame = prepare_geometry(cfg, plan, specification, software,
                                  force=force and command in ('coregister', 'run'),
-                                 process=command in ('coregister', 'run'), expected_layout=old.get('layout_identity'),
+                                 process=command in ('coregister', 'run'), expected_layout=None if isce2 else old.get('layout_identity'),
                                  checksums=checksums)
         report.update(anchor=plan.anchor, reference_specification_identity=fingerprint,
                       geometry_identity=frame['geometry_identity'], reference_status='complete')
@@ -191,7 +196,9 @@ def _execute_stack(cfg, command, force=False):
             aligned = prepare_date(cfg, plan, acquisition, frame, specification,
                                    force=force and command in ('coregister', 'run'),
                                    process=command in ('coregister', 'run'), checksums=checksums)
-            if command != 'coregister':
+            if isce2:
+                dates[acquisition.date] = aligned
+            if command != 'coregister' and not isce2:
                 assembly_identity = identity(assembly_specification(frame, aligned))
                 logical = verified(aligned, 'assembly_identity', assembly_identity, allow_released=True, checksums=checksums)
                 if not logical:
@@ -215,7 +222,7 @@ def _execute_stack(cfg, command, force=False):
                              valid_samples=dates[acquisition.date].get('valid_samples'),
                              coverage_fraction=dates[acquisition.date].get('coverage_fraction'))
             entry.update(status='complete', alignment_identity=aligned['alignment_identity'],
-                         completed_stage='coregister' if command == 'coregister' else 'assemble')
+                         completed_stage='coregister' if command == 'coregister' or isce2 else 'assemble')
         except KeyboardInterrupt:
             invalidate_pairs(acquisition.date)
             entry['status'] = 'interrupted'
@@ -231,6 +238,61 @@ def _execute_stack(cfg, command, force=False):
             entry['elapsed_seconds'] = time.perf_counter()-started
             save()
             gc.collect()
+    if isce2:
+        # All aligned dates must be inspected before any date is merged. Never
+        # silently shrink the common-validity inventory to successful dates.
+        if failed:
+            for entry in report['pairs'].values():
+                if entry['active']:
+                    entry.update(status='blocked', error='Common validity requires all active acquisitions to be aligned')
+            report['outcome'] = 'failed'
+            finish()
+            return 1
+        try:
+            previous_layout = frame['layout_identity']
+            logging.info('Preparing ISCE2 stack-common valid rectangles and overwrite layout')
+            frame = prepare_common_layout(cfg, plan, frame, dates, checksums)
+            if frame['layout_identity'] != previous_layout:
+                invalidate_pairs()
+            report.update(layout_identity=frame['layout_identity'],
+                          common_validity=frame['common_validity'],
+                          common_validity_identity=frame['common_validity_identity'])
+            save()
+            for acquisition in plan.acquisitions:
+                day = acquisition.date
+                aligned = dates[day]
+                assembly_id = identity(assembly_specification(frame, aligned))
+                logical = verified(aligned, 'assembly_identity', assembly_id, allow_released=True, checksums=checksums)
+                if not logical:
+                    invalidate_pairs(day)
+                    if command == 'coregister':
+                        invalidate_date(root/'acquisitions'/day)
+                if command == 'coregister':
+                    continue
+                need_slc = command == 'assemble' or (retain_slcs and command in ('match', 'run'))
+                if logical and not (force and command in ('assemble', 'run')) and not need_slc:
+                    dates[day] = aligned
+                elif command == 'run' and not retain_slcs:
+                    dates[day] = deepcopy(aligned) | {'assembly_identity': assembly_id,
+                        'assembly_pending': True, 'products': {},
+                        'slc': str((root/'acquisitions'/day/'slc.tif').resolve())}
+                else:
+                    dates[day] = assemble_date(cfg, acquisition, frame, aligned,
+                        force=force and command in ('assemble', 'run'),
+                        process=command in ('assemble', 'run') or (logical and need_slc), checksums=checksums)
+                report['acquisitions'][day].update(assembly_identity=assembly_id, completed_stage='assemble',
+                    valid_samples=dates[day].get('valid_samples'), coverage_fraction=dates[day].get('coverage_fraction'))
+            save()
+        except KeyboardInterrupt:
+            report['outcome'] = 'interrupted'
+            finish()
+            raise
+        except Exception as exc:
+            invalidate_pairs()
+            report.update(outcome='failed', error=f'ISCE2 common validity/assembly: {type(exc).__name__}: {exc}')
+            logging.error('%s', report['error'])
+            finish()
+            return 1
     if command in ('coregister', 'assemble'):
         for key, entry in report['pairs'].items():
             manifest = read_manifest(root/'pairs'/key)
@@ -263,7 +325,10 @@ def _execute_stack(cfg, command, force=False):
         report['matching_template_identity'] = identity(specification)
         report['matching_template'] = specification
         template_failure_stage = 'geocode'
-        target_grid = common_map_grid(cfg, frame)
+        target_grid = (frame.get('map_grid') if isce2 else None) or common_map_grid(cfg, frame)
+        if isce2 and (target_grid['epsg'] != cfg['geocoding']['epsg'] or
+                      target_grid['transform'][1] != cfg['geocoding']['spacing_m']):
+            target_grid = common_map_grid(cfg, frame)
         report['map_grid'] = target_grid
         report['map_grid_identity'] = identity(target_grid)
         grid_path = root/'geometry/map_grid.json'
@@ -323,6 +388,8 @@ def _execute_stack(cfg, command, force=False):
                             dates[day].pop('assembly_pending', None)
                             report['acquisitions'][day].update(completed_stage='assemble',
                                 valid_samples=dates[day]['valid_samples'], coverage_fraction=dates[day]['coverage_fraction'])
+                    logging.info('Matching stack pair %s with %s Ampcor on merged SLCs',
+                                 key, effective['matching'].get('engine', 'isce3').upper())
                 match(effective, directory, manifest, force=force, native_pair=reference_bursts)
             elif manifest.get('match_identity') != identity(matching_specification(effective, manifest)):
                 invalidate_pair(directory, 'match')

@@ -14,6 +14,11 @@ burst_merge:
 storage:
   keep_merged_slcs: false  # Release assembled SLCs after their last matching use; keep per-burst coreg.
 matching:
+  engine: isce3  # isce3 | isce2 (actual ISCE2 CPU magnitude Ampcor)
+  isce2:
+    python: null  # null uses the current interpreter; may point to a separate ISCE2 environment
+    packages: null  # optional directory containing the installed isce/isce2 package
+    library_path: null  # optional native-library directory, applied only in the ISCE2 child
   backend: auto
   window: [64, 256]
   search: [10, 40]

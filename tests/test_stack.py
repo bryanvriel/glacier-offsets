@@ -17,7 +17,7 @@ from glacier_offsets.cli import main
 from glacier_offsets.config import load_defaults
 from glacier_offsets.inputs import Burst
 from glacier_offsets.stack import StackPreflightError, pair_graph, plan_stack, scan_safes
-from glacier_offsets.stack_config import load_stack_config
+from glacier_offsets.stack_config import load_stack_config, load_status_config
 from test_initialization import manifest, orbit, scene
 
 
@@ -49,6 +49,38 @@ class StackPlanningTests(unittest.TestCase):
         i = self.paths.index(Path(safe))
         native = SimpleNamespace(border=[box(-100, -76, -98, -74)])
         return [Burst('burst', 2, self.times[i], native)]
+
+    def test_merge_policy_honors_explicit_and_inherited_matching_engine(self):
+        cfg = deepcopy(self.cfg)
+        cfg['stack']['processing'] = 'isce2_merge_first'
+        cfg['matching'].pop('engine')
+        self.path.write_text(yaml.safe_dump(cfg))
+        for loader in (load_stack_config, load_status_config):
+            self.assertEqual(loader(self.path)['matching']['engine'], 'isce2')
+        child = self.root/'isce3.yaml'
+        child.write_text('extends: stack.yaml\nmatching:\n  engine: isce3\n')
+        grandchild = self.root/'inherited.yaml'
+        grandchild.write_text('extends: isce3.yaml\nmatching:\n  deramp: 0\n')
+        with patch('glacier_offsets.isce2_matching.validate_settings', side_effect=AssertionError('ISCE2 runtime required')):
+            for path in (child, grandchild):
+                for loader in (load_stack_config, load_status_config):
+                    selected = loader(path)
+                    self.assertEqual(selected['matching']['engine'], 'isce3')
+                    self.assertEqual(selected['stack']['processing'], 'isce2_merge_first')
+
+    def test_swath_midpoint_requires_common_validity_and_rejects_unknown_policy(self):
+        cfg=deepcopy(self.cfg)
+        cfg['stack']['swath_merge']='midpoint'
+        self.path.write_text(yaml.safe_dump(cfg))
+        with self.assertRaisesRegex(ValueError,'requires stack.processing'):
+            load_stack_config(self.path)
+        cfg['stack']['processing']='isce2_merge_first'
+        self.path.write_text(yaml.safe_dump(cfg))
+        self.assertEqual(load_stack_config(self.path)['stack']['swath_merge'],'midpoint')
+        cfg['stack']['swath_merge']='average'
+        self.path.write_text(yaml.safe_dump(cfg))
+        with self.assertRaisesRegex(ValueError,'stack.swath_merge'):
+            load_stack_config(self.path)
 
     def test_order_exact_cap_explicit_override_and_disconnected_dates(self):
         plan = plan_stack(self.cfg)

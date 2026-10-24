@@ -5,7 +5,8 @@ from pathlib import Path
 
 from .config import _load_overrides, load_defaults, merge_config, validate_common
 
-STACK_DEFAULTS = {'start_date': None, 'end_date': None, 'reference_date': None,
+STACK_DEFAULTS = {'start_date': None, 'end_date': None, 'reference_date': None, 'processing': 'isce3',
+                  'swath_merge': 'overwrite',
                   'pairing': {'neighbors': 1, 'max_separation_days': 12, 'pairs_file': None}}
 
 
@@ -24,14 +25,27 @@ def iso_date(value, label):
     return value
 
 
+def _load_stack_settings(path):
+    overrides = _load_overrides(Path(path))
+    cfg = merge_config(load_defaults(), overrides)
+    # Preserve the original opt-in strategy's engine when omitted, while
+    # honoring explicit engine choices (including inherited YAML settings).
+    if (isinstance(cfg.get('stack'), dict) and
+            cfg['stack'].get('processing') == 'isce2_merge_first' and
+            isinstance(cfg.get('matching'), dict) and
+            'engine' not in overrides.get('matching', {})):
+        cfg['matching']['engine'] = 'isce2'
+    return cfg
+
+
 def load_stack_config(path, discovery=False):
-    cfg = merge_config(load_defaults(), _load_overrides(Path(path)))
+    cfg = _load_stack_settings(path)
     return validate_stack_config(cfg, discovery=discovery)
 
 
 def load_status_config(path):
     """Resolve settings for inspection even when raw-data volumes are offline."""
-    cfg = merge_config(load_defaults(), _load_overrides(Path(path)))
+    cfg = _load_stack_settings(path)
     if not isinstance(cfg.get('stack'), dict):
         raise ValueError('stack must be a YAML mapping')
     for section in ('inputs', 'output', 'matching', 'gross_offsets', 'geocoding'):
@@ -53,6 +67,12 @@ def validate_stack_config(cfg, discovery=False):
     if unknown:
         raise ValueError(f'Unknown stack options: {sorted(unknown)}')
     stack = merge_config(STACK_DEFAULTS, stack)
+    if stack['processing'] not in ('isce3', 'isce2_merge_first'):
+        raise ValueError('stack.processing must be isce3 or isce2_merge_first')
+    if stack['swath_merge'] not in ('overwrite', 'midpoint'):
+        raise ValueError('stack.swath_merge must be overwrite or midpoint')
+    if stack['swath_merge'] == 'midpoint' and stack['processing'] != 'isce2_merge_first':
+        raise ValueError('stack.swath_merge=midpoint requires stack.processing=isce2_merge_first')
     for key in ('safe_directory', 'orbit_directory'):
         value = stack.get(key)
         if not value or not Path(value).is_dir():

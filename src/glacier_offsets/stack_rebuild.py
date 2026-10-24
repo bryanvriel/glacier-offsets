@@ -11,6 +11,7 @@ from .products import ChecksumCache, identity, write_json
 from .stack import plan_stack, read_catalog, validate_stack
 from .stack_lock import stack_lock
 from .stack_ownership import POLICY, interior_ownership
+from .stack_isce2 import POLICY as COMMON_POLICY, SWATH_MIDPOINT_POLICY, policy, overwrite_ownership
 from .stack_storage import (METHOD, SourceHashes, product_hashes, read_manifest,
                             reference_specification, verified, write_reference_layout)
 
@@ -53,10 +54,19 @@ def _preflight(cfg, old, frame, specification, checksums):
             old.get('layout_identity') != frame['layout_identity']):
         raise ValueError('Stack reference pins are inconsistent; rebuild aborted')
     previous = frame['specification']
-    if (previous.get('method') != METHOD or previous.get('ownership_policy') != PREVIOUS_POLICY or
-            previous | {'ownership_policy': POLICY} != specification):
-        raise ValueError('Rebuild supports only the previous ownership policy with unchanged reference inputs, selection and software')
-    _, ownership = interior_ownership(frame['sources'])
+    selected_policy = policy(cfg)
+    common_migration = (previous.get('ownership_policy') in (COMMON_POLICY, SWATH_MIDPOINT_POLICY)
+                        and selected_policy in (COMMON_POLICY, SWATH_MIDPOINT_POLICY))
+    legacy_migration = previous.get('ownership_policy') == PREVIOUS_POLICY and selected_policy == POLICY
+    if (previous.get('method') != METHOD or not (common_migration or legacy_migration) or
+            previous | {'ownership_policy': selected_policy} != specification):
+        raise ValueError('Rebuild requires supported ownership policies and unchanged reference inputs, selection and software')
+    if common_migration:
+        if not frame.get('common_validity_identity') or identity(frame['common_validity']) != frame['common_validity_identity']:
+            raise ValueError('Common validity is missing or inconsistent; rebuild aborted')
+        _, ownership = overwrite_ownership(frame['sources'], swath_midpoint=selected_policy == SWATH_MIDPOINT_POLICY)
+    else:
+        _, ownership = interior_ownership(frame['sources'])
     updates, originals, native = {}, {}, {}
 
     def retain_metadata(path, before, after):
@@ -127,15 +137,32 @@ def _preflight(cfg, old, frame, specification, checksums):
             for name in names:
                 if name not in products or checksums(name) != products[name]:
                     raise ValueError(f'{path.parent.name}: retained aligned SLC is missing or damaged')
-            products = {name: products[name] for name in names}
+            if common_migration:
+                # Resampling offsets and validity metadata are needed again
+                # when the active inventory changes. Keep every alignment
+                # product, including the stable reference marker of empty dates.
+                for name, digest in products.items():
+                    if checksums(name) != digest:
+                        raise ValueError(f'{path.parent.name}: retained alignment product is missing or damaged')
+                if set(data.get('valid_windows', {})) != set(slcs):
+                    raise ValueError(f'{path.parent.name}: retained valid rectangles are incomplete')
+            else:
+                products = {name: products[name] for name in names}
             native.update(products)
             complete_dates += 1
         after = {'date': path.parent.name, 'specification': new_spec, 'burst_times': spec.get('burst_times', {}),
                  'status': 'aligned' if aligned else 'aligning', 'slcs': data.get('slcs', {}) if aligned else {}}
         if aligned:
             after.update(alignment_identity=new_alignment, products=products, alignment_products=products)
+            if common_migration:
+                after['valid_windows'] = deepcopy(data['valid_windows'])
         retain_metadata(path, data, after)
         delete.extend(str((path.parent/name).relative_to(root)) for name in ASSEMBLY_FILES)
+    if common_migration:
+        missing = [day for day in frame['common_validity']['dates']
+                   if f'acquisitions/{day}/manifest.json' not in updates]
+        if missing:
+            raise ValueError(f'Common-validity acquisition metadata is missing: {missing}; rebuild aborted')
     for directory in sorted((root/'pairs').glob('*')):
         # Finder writes AppleDouble sidecars on external volumes. These files
         # are not pair outputs and must not enter the rebuild deletion journal.
@@ -158,9 +185,9 @@ def _preflight(cfg, old, frame, specification, checksums):
             'native_products': native, 'delete': delete,
             'summary': {'aligned_dates': complete_dates, 'native_products': len(native),
                         'pair_directories': sum(p.startswith('pairs/') for p in delete),
-                        'range_cuts': sum('cut_global_sample' in c for c in ownership['cuts']),
-                        'azimuth_cuts': sum('cut_global_line' in c for c in ownership['cuts']),
-                        'ownership_policy': POLICY['method']}}
+                        'range_cuts': sum('cut_global_sample' in c for c in ownership.get('cuts', [])),
+                        'azimuth_cuts': sum('cut_global_line' in c for c in ownership.get('cuts', [])),
+                        'ownership_policy': selected_policy['method']}}
 
 
 def _ignore_missing_output(operation, path, error):
@@ -230,14 +257,15 @@ def rebuild_layout(cfg, *, dry_run=False):
                 _apply(root, journal, checksums)
             return journal['summary'] | {'status': 'resume_ready' if dry_run else 'complete'}
         if frame.get('specification') == specification:
-            return {'status': 'already_current', 'ownership_policy': POLICY['method']}
+            return {'status': 'already_current', 'ownership_policy': policy(cfg)['method']}
         logging.info('Verifying retained COMPASS products before ownership rebuild')
         journal = _preflight(cfg, old, frame, specification, checksums)
         if dry_run:
             return journal['summary'] | {'status': 'ready', 'dry_run': True}
         staging = _owned(root, '.layout-rebuild/staged')
         staging.mkdir(parents=True, exist_ok=True)
-        layout = write_reference_layout(staging, frame['sources'], checksums=checksums)
+        layout = write_reference_layout(staging, frame['sources'], checksums=checksums,
+                                        ownership_policy=specification['ownership_policy'])
         if layout['coreg']['reference_grid'] != frame['coreg']['reference_grid']:
             raise ValueError('Ownership rebuild changed the native radar grid')
         layout_products = product_hashes([staging/name for name in LAYOUT_FILES], checksums=checksums)
@@ -247,18 +275,30 @@ def rebuild_layout(cfg, *, dry_run=False):
         coreg['geometry'] = {field: str(root/f'geometry/{field}.vrt') for field in coreg['geometry']}
         new_frame = dict(layout, geometry_identity=identity(specification), specification=specification,
                          software=frame['software'], status='complete')
+        if frame.get('common_validity_identity'):
+            common = deepcopy(frame['common_validity'])
+            common['method'] = specification['ownership_policy']['method']
+            common['dates'] = {day: identity(journal['updates'][f'acquisitions/{day}/manifest.json']['specification'])
+                               for day in common['dates']}
+            new_frame.update(common_validity=common, common_validity_identity=identity(common))
+            if 'map_grid' in frame:
+                new_frame['map_grid'] = frame['map_grid']
         # Geometry verification should cover reference products, not every date.
         new_frame['products'] = {name: digest for entry in frame['sources']
                                  for name, digest in read_manifest(Path(entry['manifest']).parent)['products'].items()}
         new_frame['products'].update({str(root/name): digest for name, digest in layout_products.items()})
         for relative, data in journal['updates'].items():
-            if relative.startswith('acquisitions/') and data.get('alignment_identity') and not data['slcs']:
+            if (not frame.get('common_validity_identity') and relative.startswith('acquisitions/')
+                    and data.get('alignment_identity') and not data['slcs']):
                 products = {str(root/'geometry/source.tif'): layout_products['geometry/source.tif']}
                 data.update(products=products, alignment_products=products)
         catalog = deepcopy(old)
         catalog.update(reference_specification_identity=new_frame['geometry_identity'],
                        geometry_identity=new_frame['geometry_identity'], layout_identity=new_frame['layout_identity'],
                        reference_status='complete', command='rebuild-layout', outcome='complete')
+        for key in ('common_validity', 'common_validity_identity'):
+            if key in new_frame:
+                catalog[key] = new_frame[key]
         for key in ('map_grid', 'map_grid_identity', 'matching_template', 'matching_template_identity', 'metrics', 'error'):
             catalog.pop(key, None)
         for day, entry in catalog.get('acquisitions', {}).items():

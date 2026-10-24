@@ -5,7 +5,8 @@ offset tracking. Process a single acquisition pair or a stack of dates, selectin
 one geographic burst or complete bursts intersecting a polygon area of interest.
 
 The workflow uses COMPASS for geometry-only coregistration and native ISCE3
-Ampcor for amplitude matching. It produces radar offsets, geocoded displacement
+Ampcor for amplitude matching. An optional ISCE2-style stack strategy uses common-valid
+overwrite merging with either ISCE3 Ampcor or the ISCE2 CPU magnitude kernel. It produces radar offsets, geocoded displacement
 and velocity GeoTIFFs, quality metrics, and diagnostic plots. Range and azimuth
 motion are reported in radar directions; they are not east/north components.
 
@@ -110,10 +111,14 @@ so storage still grows with acquisition count. See the
 [storage policy](README_DETAILED.md#reference-geometry-stacks) before planning
 a large stack.
 
-Stack CPU matching uses up to `OMP_NUM_THREADS` separate burst workers within
+Default ISCE3 stack CPU matching uses up to `OMP_NUM_THREADS` separate burst workers within
 each date pair. Acquisition preparation and date pairs run sequentially; more
 matching workers require more RAM. GPU matching requires a supported Linux/NVIDIA
 environment and a CUDA-enabled ISCE3 build.
+
+For the ISCE2 merge-first strategy, see the
+[configuration example](configs/stack.isce2.example.yaml) and
+[runtime/setup details](README_DETAILED.md#isce2-merge-first-stacks).
 
 ## Documentation
 

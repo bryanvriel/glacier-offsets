@@ -130,6 +130,9 @@ def match_prepared(cfg, manifest, directory, prior):
         grid = prior['grid']
         velocity = True
     prior['valid'] &= valid_windows(ref, sec, grid, prior['integer_px'])
+    if cfg['matching'].get('engine') == 'isce2':
+        return native_match(slcs['reference'], slcs['secondary'], directory/'native', cfg['matching'],
+                            cfg, 'cpu', prior=prior, _valid_input=prior['valid'])
     bounds = False
     if not velocity and prior['valid'].any():
         gross = gross_values(cfg)

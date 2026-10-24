@@ -36,7 +36,7 @@ def _union(intervals):
     return result
 
 
-def _range_ownership(bounds, regions, swaths):
+def _range_ownership(bounds, regions, swaths, *, edge_margin_samples=POLICY['edge_margin_samples']):
     """Cut swath support unions, after along-track ownership is resolved.
 
     A sweep over rectangle edges avoids pairwise range/time cuts leaving holes
@@ -65,9 +65,9 @@ def _range_ownership(bounds, regions, swaths):
                 # support components need a switch or an edge-margin check.
                 if m != n+1:
                     continue
-                if b-c < 2*POLICY['edge_margin_samples']:
+                if b-c < 2*edge_margin_samples:
                     raise ValueError(f'{near} / {far}: overlap has {b-c} samples; interior ownership '
-                                     f"requires at least {2*POLICY['edge_margin_samples']} for the edge margin")
+                                     f"requires at least {2*edge_margin_samples} for the edge margin")
                 cut = (c+b)//2
                 excluded[near].append([cut, b])
                 excluded[far].append([c, cut])
