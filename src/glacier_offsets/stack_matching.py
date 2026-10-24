@@ -14,6 +14,7 @@ import numpy as np
 
 from .ampcor import _empty_match, _native_executor, _native_worker, _write_native_layout
 from .assembly import source_indices
+from .fftw_cache import pinned_wisdom
 from .matching_grid import MatchingGrid
 
 
@@ -122,7 +123,12 @@ def match_bursts(cfg, manifest, directory, prior, *, full_grid=False):
         records = {}
         logging.info('CPU stack matching: %d workers for %d runnable bursts (OMP_NUM_THREADS=%d)',
                      workers, len(runnable), budget)
-        with _native_executor(workers, single_threaded=True) as pool:
+        wisdom = pinned_wisdom(cfg['matching'])
+        if wisdom is not None:
+            if wisdom['measured_now']:
+                logging.info('Measured pinned FFTW wisdom %s', wisdom['path'])
+            effective['fftw_wisdom'] = {k: wisdom[k] for k in ('method', 'path', 'key_identity', 'sha256')}
+        with _native_executor(workers, single_threaded=True, wisdom=wisdom) as pool:
             while ready or shared or active:
                 while (ready or shared) and len(active) < workers:
                     index = ready.popleft() if ready else None

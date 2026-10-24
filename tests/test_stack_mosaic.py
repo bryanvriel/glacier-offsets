@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import json
 from pathlib import Path
 import re
+import shutil
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -442,6 +443,9 @@ class MergeFirstWorkflowTests(unittest.TestCase):
                                              ('isce3', 'isce2_merge_first', ExitStack)):
                 cfg = self.configure(processing, name)
                 cfg['storage'] = {'keep_merged_slcs': True}
+                if roots:
+                    # Separate roots measure their own FFTW plans; share them to compare bitwise.
+                    shutil.copytree(roots['gdal']/'.cache', Path(cfg['output']['directory'])/'.cache')
                 with merger():
                     self.assertEqual(execute_stack(cfg, 'run'), 0)
                 roots[name] = Path(cfg['output']['directory'])
@@ -465,6 +469,11 @@ class MergeFirstWorkflowTests(unittest.TestCase):
         by_date = {a.date: n for n, a in enumerate(self.acquisitions)}
         for earlier, later in self.plan.pairs:
             pair = f'{earlier}_{later}'
+            native = read_manifest(new/'pairs'/pair)['matching']['native_parameters']
+            wisdom = Path(native['fftw_wisdom']['path'])
+            self.assertEqual(wisdom.parent, new/'.cache/fftw')
+            self.assertEqual(checksum(wisdom), native['fftw_wisdom']['sha256'])
+            self.assertEqual({s['fftw_wisdom_extended'] for s in native['segments']}, {False})
             # Pair identities name the geometry manifest, so compare their specifications.
             self.assertEqual(portable(read_manifest(new/'pairs'/pair)['coreg_specification'], new),
                              portable(read_manifest(reference/'pairs'/pair)['coreg_specification'], reference))

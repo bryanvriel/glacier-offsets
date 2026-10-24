@@ -629,6 +629,29 @@ The parent combines results and publishes the pair product only after all work
 succeeds. Worker limits, PIDs, thread limits, native timings and wall time are
 recorded in the matching metadata. Extra workers increase RAM and concurrent SLC
 reads; the limit is a CPU budget, not an automatic memory or storage tuner.
+CPU stack matching pins FFTW's measured plans. ISCE3's CPU Ampcor compiles in
+`FFTW_MEASURE`, so workers that start together otherwise time FFT algorithms
+independently and can choose plans that round differently. That moves
+near-tied, low-SNR correlation peaks by one oversampled sample (1/64 px with
+raw oversampling 2 and oversampling 32). The first match in a stack runs one
+quiet spawned process that plans every native chunk shape on synthetic rasters
+(about 5 s) and writes `<stack>/.cache/fftw/<key>.wisdom`, with the key
+inputs in a matching `.json`. The key covers the FFTW version and library
+checksum, the ISCE3 version, the machine and CPU model, and `window`,
+`search`, `batch`, `raw_oversampling`, `oversampling`, `zoom` and `deramp`.
+Workers import that file before planning and never rewrite it; a missing file
+is an error. Repeated matching of the same pair on the same host and build is
+then bit-identical at any worker count. Segment metadata records
+`fftw_wisdom_sha256` and `fftw_wisdom_extended` (true if a call still had to
+measure a plan), and `native_parameters.fftw_wisdom` records the file. The
+wisdom enters no cache identity, so completed pairs are not rematched; pairs
+matched before pinning can differ from new ones by 1/64 px in about 0.1% of
+valid windows. Wisdom is not portable across hosts or builds: compare such
+runs with a tolerance of 1/(raw_oversampling × oversampling) px in valid
+windows. Deleting `.cache/fftw` remeasures it on the next match. Standalone
+pair/AOI matching and tools that call the matcher directly keep the temporary
+per-invocation plan cache. GPU (cuFFT) matching is unaffected.
+
 Shared tasks record `work_kind: unowned_or_inactive` and a null
 `scheduling_burst_id`; each segment includes its native elapsed time. Scheduling
 strategy v2 preserves completed matching products. Restart a running process to
