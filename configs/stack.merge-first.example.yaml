@@ -1,0 +1,13 @@
+# Merge-first stack: stack-common valid rectangles, later-burst overwrites and
+# the ISCE3-backed compositor. Replace the inherited inputs and use an unused output root.
+extends: stack.example.yaml
+stack:
+  processing: isce3_merge_first
+  swath_merge: midpoint  # overwrite (default) lets later swaths overwrite the whole overlap.
+output:
+  directory: ../work/pig/stack-merge-first-example
+matching:
+  engine: isce3  # Default for this selector; isce2 remains available as a separate matcher.
+  backend: cpu
+  deramp: 0
+  zoom: 16

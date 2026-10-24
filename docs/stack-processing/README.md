@@ -18,6 +18,58 @@ Interior ownership is now the stack default, with a versioned pin and an
 The original stack remains unchanged. The historical input-access notes below
 describe earlier checks, not current local availability.
 
+## ISCE3 merge-first compositor parity (October 24)
+
+`stack.processing: isce3_merge_first` selects the ISCE3-backed compositor in
+`stack_mosaic`. It was checked against the frozen GDAL merger
+(`tools/reference_stack_merge.py`) on the six-date Larsen pilot using
+`tools.compare_stack_mosaic`. The production root was read only. Its layout
+checksums still match their records, and no watched file was modified. A
+compact record is in [mosaic-parity.json](mosaic-parity.json). The full report
+and retained layouts are in
+`/Volumes/thinkplus/insar/glacier_offsets/work/larsen/experiments/isce3-mosaic-parity-20261024/`.
+
+- **Layouts.** For both swath policies, source placements, ownership windows,
+  cuts, the radar grid, `source.tif` and all four geometry VRTs are identical.
+  The midpoint layout also reproduces production's ownership raster and
+  geometry exactly. The `source.tif` *bytes* differ even though the pixels are
+  equal. Existing layouts are reused, so their byte-based identities stay the
+  same; a newly written layout gets a new identity.
+- **Dates.** Under both policies, all 12 date compositions (7336 × 44088) have
+  zero differing complex samples, external-mask values or validity samples,
+  with identical counts, including unsupported regions. The midpoint SLCs from
+  both implementations are byte-identical to the checksums production recorded
+  before releasing its merged SLCs. Native CPU Ampcor can memory-map every
+  output.
+- **Matching.** Both pairs were matched with the unchanged ISCE3 matcher and the
+  production settings (8 workers, `deramp: 0`, zoom 16, zero gross). Input-
+  validity, validity, ownership, seam and center grids are identical.
+  - January 19–25: the reference, ISCE3 and replay runs are equal in every
+    dataset.
+  - January 1–7: the ISCE3 run equals the replay control bit for bit. Both
+    differ from the first reference run in 28 azimuth and 47 range windows of
+    77,634, each by exactly 1/64 pixel.
+- **Native run-to-run variation.** This is independent of the compositor. It
+  occurs on byte-identical inputs, in low-SNR windows (median SNR 2.3, against
+  10.5 for all valid windows). The saved production offsets differ from
+  today's runs in 45–138 windows per component, by up to 29 pixels where a
+  different near-tied peak is chosen; validity is unchanged. This existing
+  matcher behavior should be investigated separately; agreement filtering was
+  not applied.
+- **Cost.** Alternating controlled runs on one date, writing to the internal
+  disk: median 13.3 s for the reference and 13.9 s for ISCE3. Peak RSS was
+  1.13–1.23 GB for the reference and 1.28–1.30 GB for ISCE3, about 0.1 GB more
+  for the ISCE3 library. That is below the 2.6 GB of a single full-scene
+  complex array. Gate-run timings on the exFAT volume include write-back of
+  retained outputs. The first draft of the compositor kept an SLC and its
+  external `.msk` open as two writers, which made closing take about 260 s on
+  exFAT. It now writes the mask in a separate pass, and a regression test
+  guards against concurrent SLC/mask writers.
+
+Cutover, which routes `isce2_merge_first` to the new compositor, awaits review
+of these results. Production configurations and completed pair products were
+not changed.
+
 Implementation follows M9–M12 in `plans/stack-processing.md`. Existing pair
 configuration, output paths and scientific cache specifications remain intact.
 

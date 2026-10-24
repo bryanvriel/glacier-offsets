@@ -190,19 +190,18 @@ invalid resulting footprints still fail validation. Downloaded XML and imagery
 remain unchanged; existing collections do not need downloading or preparation
 again for this correction. Regenerate saved stack plans to update coverage.
 
-### ISCE2 merge-first stacks
+### Merge-first stacks
 
-Set `stack.processing: isce2_merge_first` in a stack YAML to use stack-common
-valid rectangles and later-source overwrite merging. Select the matcher
-independently with `matching.engine: isce3` or `matching.engine: isce2`.
-For compatibility, omitting the engine under this merge policy selects ISCE2;
-other stacks default to ISCE3. See [the example configuration](configs/stack.isce2.example.yaml).
-
-To use ISCE3 magnitude matching on the same assemblies:
+Set `stack.processing: isce3_merge_first` in a stack YAML to use stack-common
+valid rectangles and later-source overwrite merging, assembled by the
+ISCE3-backed compositor. This selector uses the ISCE3 matcher unless
+`matching.engine: isce2` is given explicitly. See
+[the example configuration](configs/stack.merge-first.example.yaml):
 
 ```yaml
 stack:
-  processing: isce2_merge_first
+  processing: isce3_merge_first
+  swath_merge: midpoint
 matching:
   engine: isce3
   backend: cpu
@@ -210,7 +209,18 @@ matching:
   zoom: 16
 ```
 
-This combination needs no ISCE2 installation or runtime probe. The existing
+`isce2_merge_first` is the earlier, deprecated name for the same merge policy.
+Existing configurations keep their behavior: omitting the engine there still
+selects the ISCE2 matcher, and until cutover that selector keeps the original
+GDAL compositor. Both selectors share policy records and cache identities.
+Switching an existing root between them reuses its geometry, aligned bursts,
+assemblies and pair products without `--force`; released merged SLCs are
+rebuilt by the selected compositor with identical pixels and masks. Manifests
+record `layout_implementation` and `assembly_implementation` for products the
+ISCE3 compositor wrote; these records enter no cache identity. The existing
+`stack.processing: isce3` interior-ownership policy is unchanged.
+
+The ISCE3 matcher needs no ISCE2 installation or runtime probe. The existing
 ISCE3 CPU worker scheduling and GPU selection still apply. Changing only the
 matcher preserves pinned geometry, common validity, and aligned acquisitions;
 it invalidates offsets, geocoding and diagnostics. Rerunning in the same root
@@ -222,7 +232,7 @@ cross-swath switch into the overlap interior, add:
 
 ```yaml
 stack:
-  processing: isce2_merge_first
+  processing: isce3_merge_first
   swath_merge: midpoint
 matching:
   engine: isce3
@@ -381,7 +391,32 @@ With `swath_merge: overwrite`, SLCs are merged in ascending swath/time order:
 later valid rectangles overwrite earlier ones. With `midpoint`, this overwrite
 rule applies within each swath before the range cuts described above. Neither
 option interpolates, blends, or substitutes sources for missing imagery. Geometry and source indices use the same
-ownership. Matching workers always read these **merged** SLCs, including across
+ownership.
+
+The compositor plans source placements, common validity and ownership once as
+an immutable plan. The categorical ownership raster, geometry VRTs, date SLCs
+and pair intervals all consume that plan. Placement uses ISCE3 radar grids with
+the same epoch reconciliation, rounding and 0.001-pixel tolerance as before;
+incompatible sampling and fractional placement are still rejected. Aligned
+bursts are read and `slc.tif`, its external mask and `valid.tif` are written in
+64-line `isce3.io.Raster` blocks, without a full-scene array. GDAL remains only
+for TIFF creation options, external masks, VRTs and ancillary-file lists. The
+frozen GDAL merger is kept in `tools/reference_stack_merge.py` for parity tests.
+To compare both on a saved stack without modifying it:
+
+```bash
+PYTHONPATH=src:.runtime/deps OMP_NUM_THREADS=8 \
+  /Users/briel/miniforge3/envs/isce3/bin/python -m tools.compare_stack_mosaic \
+  configs/stack.larsen.swath-midpoint.yaml --output /path/to/new-mosaic-parity
+```
+
+This verifies retained reference and aligned burst checksums, rebuilds both
+swath policies with each implementation, compares every layout and date raster
+block by block, and matches the selected pairs (`--pairs`, default January 1–7
+and 19–25) on each implementation's SLCs plus a reference replay control.
+`comparison.json` records per-field differences, validity transitions, wall
+time, block I/O, per-process peak RSS and production size/timestamp/checksum
+checks. Temporary SLCs are removed unless `--keep-slcs` is given. Matching workers always read these **merged** SLCs, including across
 worker boundaries. `OMP_NUM_THREADS` is the maximum number of independent CPU
 matching processes; date preparation and pairs remain sequential. Constant and
 velocity-guided gross offsets retain the existing sign convention and are
@@ -401,7 +436,7 @@ YAML that declares them. For this machine's existing installation:
 
 ```yaml
 stack:
-  processing: isce2_merge_first
+  processing: isce3_merge_first
 matching:
   engine: isce2
   backend: cpu

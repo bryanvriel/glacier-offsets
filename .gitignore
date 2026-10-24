@@ -25,6 +25,7 @@
 !/configs/pair.pig.aoi.yaml
 !/configs/stack.example.yaml
 !/configs/stack.isce2.example.yaml
+!/configs/stack.merge-first.example.yaml
 !/configs/stack.pig.yaml
 !/configs/stack.pig.validity.yaml
 !/configs/stack.pig.interior.yaml
@@ -36,6 +37,7 @@
 !/docs/stack-processing/handoff-2026-10-24/independent-swath-differences.png
 !/docs/stack-processing/handoff-2026-10-24/hybrid-full-pair.json
 !/docs/stack-processing/handoff-2026-10-24/hybrid-production-review.json
+!/docs/stack-processing/mosaic-parity.json
 !/docs/stack-processing/validation.json
 !/docs/stack-processing/validity-audit.json
 !/docs/stack-processing/boundary-investigation/README.md

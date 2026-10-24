@@ -263,8 +263,8 @@ def compose(plan, slcs, slc_path, mask_path):
     """Compose one date onto the plan; return its number of valid samples.
 
     `slcs` maps burst IDs to aligned SLCs; missing bursts stay masked. Output
-    lines are written once, in bounded blocks, to the stripped complex TIFF,
-    its external GDAL mask and the separate validity raster.
+    lines are written once, in bounded blocks, to the stripped complex TIFF and
+    the separate validity raster, then copied to the SLC's external GDAL mask.
     """
     from .matching_grid import invalid_samples
     from .raster_io import bounded_raster_cache
@@ -283,7 +283,7 @@ def compose(plan, slcs, slc_path, mask_path):
                 support[p.burst_id] = ~invalid_samples(ds)
                 ds = None
                 sources[p.burst_id] = _open(slcs[p.burst_id])
-            outputs = [_open(slc_path, True), _open(f'{slc_path}.msk', True), _open(mask_path, True)]
+            outputs = [_open(slc_path, True), _open(mask_path, True)]
             try:
                 count = 0
                 for row in range(0, height, BLOCK_LINES):
@@ -309,13 +309,21 @@ def compose(plan, slcs, slc_path, mask_path):
                         valid[section][take] = True
                     key = (slice(row, stop), slice(0, width))
                     outputs[0].set_block(key, values, 1)
-                    outputs[1].set_block(key, valid.astype('uint8')*255, 1)
-                    outputs[2].set_block(key, valid.astype('uint8'), 1)
+                    outputs[1].set_block(key, valid.astype('uint8'), 1)
                     count += int(valid.sum())
             finally:
                 _close(*outputs)
         finally:
             _close(*sources.values())
+        # An open SLC also owns its external mask band. Write the mask only after
+        # the SLC is closed, so the file never has two concurrent writers.
+        validity, external = _open(mask_path), _open(f'{slc_path}.msk', True)
+        try:
+            for row in range(0, height, BLOCK_LINES):
+                key = (slice(row, min(row+BLOCK_LINES, height)), slice(0, width))
+                external.set_block(key, validity.get_block(key, 1)*np.uint8(255), 1)
+        finally:
+            _close(validity, external)
     return count
 
 

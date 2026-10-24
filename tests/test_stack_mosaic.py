@@ -343,6 +343,28 @@ class RasterParityTests(unittest.TestCase):
             mosaic.compose(plan, self.dates(entries, 1)[0], self.root/'blocks.tif', self.root/'blocks-valid.tif')
         self.assertEqual(sum(calls), plan.shape[0])
         self.assertLessEqual(max(calls), 16)
+        # The SLC handle owns its external mask band; they are never open together
+        # for update (concurrent writers made closing take minutes on exFAT).
+        opened, open_ = set(), mosaic._open
+
+        class Tracked:
+            def __init__(self, path, update=False):
+                self.raster, self.path = open_(path, update), str(path)
+                self.slc = self.path.removesuffix('.msk')
+                if update:
+                    if self.slc in opened or f'{self.slc}.msk' in opened:
+                        raise AssertionError(f'Concurrent SLC/mask writers: {self.path}')
+                    opened.add(self.path)
+
+            def __getattr__(self, name):
+                return getattr(self.raster, name)
+
+            def close_dataset(self):
+                opened.discard(self.path)
+                self.raster.close_dataset()
+        with patch.object(mosaic, '_open', Tracked):
+            mosaic.compose(plan, self.dates(entries, 1)[0], self.root/'tracked.tif', self.root/'tracked-valid.tif')
+        self.assertFalse(opened)
         # Closed outputs can be renamed and reopened by another process.
         for name in ('blocks.tif', 'blocks.tif.msk', 'blocks-valid.tif'):
             (self.root/name).replace(self.root/f'moved-{name}')
