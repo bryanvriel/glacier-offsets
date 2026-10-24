@@ -1,5 +1,6 @@
 """Independent stack configuration, retaining YAML-relative inheritance."""
 from datetime import date
+import logging
 import math
 from pathlib import Path
 
@@ -30,6 +31,8 @@ def iso_date(value, label):
 def _load_stack_settings(path):
     overrides = _load_overrides(Path(path))
     cfg = merge_config(load_defaults(), overrides)
+    if isinstance(cfg.get('stack'), dict) and cfg['stack'].get('processing') == 'isce2_merge_first':
+        logging.warning('stack.processing=isce2_merge_first is a deprecated alias of isce3_merge_first')
     # Preserve the original opt-in strategy's engine when omitted, while
     # honoring explicit engine choices (including inherited YAML settings).
     if (isinstance(cfg.get('stack'), dict) and

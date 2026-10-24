@@ -11,7 +11,7 @@ from .products import ChecksumCache, identity, write_json
 from .stack import plan_stack, read_catalog, validate_stack
 from .stack_lock import stack_lock
 from .stack_ownership import POLICY, interior_ownership
-from .stack_mosaic import POLICY as COMMON_POLICY, SWATH_MIDPOINT_POLICY, implementation, ownership, policy
+from .stack_mosaic import POLICY as COMMON_POLICY, SWATH_MIDPOINT_POLICY, ownership, policy
 from .stack_storage import (METHOD, SourceHashes, product_hashes, read_manifest,
                             reference_specification, verified, write_reference_layout)
 
@@ -265,8 +265,7 @@ def rebuild_layout(cfg, *, dry_run=False):
         staging = _owned(root, '.layout-rebuild/staged')
         staging.mkdir(parents=True, exist_ok=True)
         layout = write_reference_layout(staging, frame['sources'], checksums=checksums,
-                                        ownership_policy=specification['ownership_policy'],
-                                        implementation=implementation(cfg))
+                                        ownership_policy=specification['ownership_policy'])
         if layout['coreg']['reference_grid'] != frame['coreg']['reference_grid']:
             raise ValueError('Ownership rebuild changed the native radar grid')
         layout_products = product_hashes([staging/name for name in LAYOUT_FILES], checksums=checksums)

@@ -107,10 +107,9 @@ def prepare_geometry(cfg, plan, specification, software, force=False, process=Tr
                         'manifest': str(directory / 'manifest.json')})
     if len({CRS.from_user_input(e['coreg']['geometry_crs']).to_wkt() for e in sources}) != 1:
         raise ValueError('Reference burst geometry CRSs differ')
-    from .stack_mosaic import enabled, implementation
+    from .stack_mosaic import enabled
     layout = write_reference_layout(root, sources, checksums=checksums,
-                                    ownership_policy=specification['ownership_policy'],
-                                    implementation=implementation(cfg))
+                                    ownership_policy=specification['ownership_policy'])
     layout_identity = layout['layout_identity']
     pinned_layout = expected_layout or previous.get('layout_identity')
     if not enabled(cfg) and pinned_layout is not None and layout_identity != pinned_layout:
@@ -124,10 +123,14 @@ def prepare_geometry(cfg, plan, specification, software, force=False, process=Tr
     return frame
 
 
-def write_reference_layout(root, sources, *, checksums=None, ownership_policy=None, implementation='reference'):
-    """Write the interior ownership and matching geometry from prepared sources."""
+def write_reference_layout(root, sources, *, checksums=None, ownership_policy=None):
+    """Write the ownership and matching geometry from prepared sources.
+
+    Merge-first policies use the ISCE3 stack plan; otherwise the legacy
+    interior ownership is materialized from actual reference support.
+    """
     from .stack_mosaic import POLICY as merge_policy, SWATH_MIDPOINT_POLICY, write_layout
-    if implementation == 'isce3' and ownership_policy in (merge_policy, SWATH_MIDPOINT_POLICY):
+    if ownership_policy in (merge_policy, SWATH_MIDPOINT_POLICY):
         return write_layout(root, sources, checksums=checksums, ownership_policy=ownership_policy)
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
@@ -135,10 +138,7 @@ def write_reference_layout(root, sources, *, checksums=None, ownership_policy=No
     grid, placements = radar_layout([e['coreg']['reference_grid'] for e in sources], .001)
     for entry, placement in zip(sources, placements):
         entry.update(placement)
-    from .stack_isce2 import POLICY as isce2_policy, SWATH_MIDPOINT_POLICY, overwrite_ownership
-    isce2 = ownership_policy in (isce2_policy, SWATH_MIDPOINT_POLICY)
-    sources, ownership = (overwrite_ownership(sources, swath_midpoint=ownership_policy == SWATH_MIDPOINT_POLICY)
-                          if isce2 else interior_ownership(sources))
+    sources, ownership = interior_ownership(sources)
     shape = grid['length'], grid['width']
     # Geometry VRTs retain original burst sources; ownership is a materialized
     # categorical raster using only actual reference support, including holes.
@@ -150,12 +150,12 @@ def write_reference_layout(root, sources, *, checksums=None, ownership_policy=No
     with bounded_raster_cache():
         for index, entry in enumerate(sources, 1):
             source = gdal.Open(entry['coreg']['slcs']['reference'])
-            unsupported = None if isce2 else invalid_samples(source)
+            unsupported = invalid_samples(source)
             dy, dx = entry['offset']
             for y0, y1, x0, x1 in entry['ownership_windows']:
                 for row in range(y0, y1, 64):
                     h = min(64, y1-row)
-                    valid = np.ones((h, x1-x0), bool) if isce2 else ~unsupported[row:row+h, x0:x1]
+                    valid = ~unsupported[row:row+h, x0:x1]
                     band = owner.GetRasterBand(1)
                     block = band.ReadAsArray(x0+dx, row+dy, x1-x0, h)
                     block[valid] = index
@@ -211,11 +211,7 @@ def prepare_date(cfg, plan, acquisition, frame, specification, force=False, proc
         raise ValueError(f'{acquisition.date}: alignment missing or stale; run stack coregister first')
     write_json(root / 'manifest.json', {'specification': specification, 'status': 'aligning'})
     effective = burst_config(cfg, plan.reference, acquisition)
-    from .stack_mosaic import enabled, implementation
-    if implementation(cfg) == 'isce3':
-        from .stack_mosaic import date_validity
-    else:
-        from .stack_isce2 import date_validity
+    from .stack_mosaic import date_validity, enabled
     isce2 = enabled(cfg)
     slcs, windows, offset_paths = {}, {}, []
     reference_bursts = {b.id: b for b in plan.bursts}
@@ -273,7 +269,7 @@ def assembly_specification(frame, aligned):
 
 
 def _compose_with_gdal(frame, aligned, slc_path, mask_path, shape):
-    """Reference composition reading the ownership raster; returns valid samples."""
+    """Legacy interior composition from the ownership raster; returns valid samples."""
     owner = gdal.Open(frame['coreg']['source_index'])
     count = 0
     slc, mask = create_assembly_rasters(slc_path, mask_path, shape)
@@ -322,10 +318,10 @@ def assemble_date(cfg, acquisition, frame, aligned, force=False, process=True, c
     result['status'] = 'assembling'
     write_json(root / 'manifest.json', result)
     shape = tuple(frame['coreg']['reference_grid'][k] for k in ('length', 'width'))
-    from .stack_mosaic import IMPLEMENTATION, MergePlan, compose, enabled, implementation
+    from .stack_mosaic import IMPLEMENTATION, MergePlan, compose, enabled
     with tempfile.TemporaryDirectory(prefix='.merge-', dir=root) as scratch, bounded_raster_cache():
         slc_path, mask_path = Path(scratch)/'slc.tif', Path(scratch)/'valid.tif'
-        if enabled(cfg) and implementation(cfg) == 'isce3':
+        if enabled(cfg):
             # Ownership comes from the saved plan, which also wrote source.tif.
             count = compose(MergePlan.from_frame(frame), aligned['slcs'], slc_path, mask_path)
             result['assembly_implementation'] = IMPLEMENTATION

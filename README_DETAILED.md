@@ -209,15 +209,17 @@ matching:
   zoom: 16
 ```
 
-`isce2_merge_first` is the earlier, deprecated name for the same merge policy.
-Existing configurations keep their behavior: omitting the engine there still
-selects the ISCE2 matcher, and until cutover that selector keeps the original
-GDAL compositor. Both selectors share policy records and cache identities.
-Switching an existing root between them reuses its geometry, aligned bursts,
-assemblies and pair products without `--force`; released merged SLCs are
-rebuilt by the selected compositor with identical pixels and masks. Manifests
-record `layout_implementation` and `assembly_implementation` for products the
-ISCE3 compositor wrote; these records enter no cache identity. The existing
+`isce2_merge_first` is the earlier, deprecated name for the same merge policy;
+loading it logs a deprecation warning. Both selectors use the ISCE3
+compositor, which replaced the original GDAL merger after the Larsen parity
+gates (October 24). Omitting the engine under the deprecated name still
+selects the ISCE2 matcher. Both selectors share policy records and cache
+identities with stacks the GDAL merger produced, so those roots keep their
+geometry, aligned bursts, assemblies and pair products without `--force`;
+released merged SLCs are rebuilt by the ISCE3 compositor with identical pixels
+and masks. Manifests record `layout_implementation` and
+`assembly_implementation` for products the ISCE3 compositor wrote; these
+records enter no cache identity. The existing
 `stack.processing: isce3` interior-ownership policy is unchanged.
 
 The ISCE3 matcher needs no ISCE2 installation or runtime probe. The existing
@@ -401,8 +403,8 @@ incompatible sampling and fractional placement are still rejected. Aligned
 bursts are read and `slc.tif`, its external mask and `valid.tif` are written in
 64-line `isce3.io.Raster` blocks, without a full-scene array. GDAL remains only
 for TIFF creation options, external masks, VRTs and ancillary-file lists. The
-frozen GDAL merger is kept in `tools/reference_stack_merge.py` for parity tests.
-To compare both on a saved stack without modifying it:
+frozen GDAL merger is kept only in `tools/reference_stack_merge.py`, for parity
+tests and the gate tool. To compare both on a saved stack without modifying it:
 
 ```bash
 PYTHONPATH=src:.runtime/deps OMP_NUM_THREADS=8 \

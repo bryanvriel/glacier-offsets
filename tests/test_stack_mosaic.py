@@ -103,8 +103,7 @@ class PlanParityTests(unittest.TestCase):
         for merge in ('overwrite', 'midpoint'):
             records = [mosaic.policy({'stack': {'processing': p, 'swath_merge': merge}}) for p in mosaic.SELECTORS]
             self.assertEqual(records[0], records[1])
-        self.assertEqual(mosaic.implementation({'stack': {'processing': 'isce3_merge_first'}}), 'isce3')
-        self.assertEqual(mosaic.implementation({'stack': {'processing': 'isce2_merge_first'}}), 'reference')
+        self.assertTrue(all(mosaic.enabled({'stack': {'processing': p}}) for p in mosaic.SELECTORS))
         self.assertFalse(mosaic.enabled({'stack': {'processing': 'isce3'}}))
 
     def test_placement_matches_epochs_rounding_tolerance_and_incompatible_grids(self):
@@ -402,6 +401,18 @@ class MergeFirstWorkflowTests(unittest.TestCase):
                 stack.enter_context(patch(f'glacier_offsets.{target}'))
             yield
 
+    @contextmanager
+    def frozen_merger(self):
+        """Write layouts and compose dates with the frozen GDAL merger, as
+        the stacks produced before the ISCE3 cutover were."""
+        def layout(root, sources, *, checksums=None, ownership_policy):
+            return frozen.write_layout(root, sources, ownership_policy=ownership_policy)
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(mosaic, 'write_layout', layout))
+            stack.enter_context(patch.object(mosaic.MergePlan, 'from_frame', staticmethod(lambda frame: frame)))
+            stack.enter_context(patch.object(mosaic, 'compose', frozen.compose))
+            yield
+
     def reference_arrays(self, root, name):
         """Frozen-reference composition of every saved date on the saved layout."""
         frame = read_manifest(root/'geometry')
@@ -423,15 +434,18 @@ class MergeFirstWorkflowTests(unittest.TestCase):
             self.assertEqual(date['valid_samples'], count)
             require_native_mmap(gdal.Open(date['slc']))
 
-    def test_selectors_produce_identical_layouts_dates_offsets_and_known_translations(self):
+    def test_isce3_workflow_reproduces_frozen_merger_layouts_dates_offsets_and_known_translations(self):
         roots = {}
         with self.workflow():
-            for processing in ('isce2_merge_first', 'isce3_merge_first'):
-                cfg = self.configure(processing, processing)
+            # The deprecated alias selects the ISCE3 compositor too.
+            for name, processing, merger in (('gdal', 'isce3_merge_first', self.frozen_merger),
+                                             ('isce3', 'isce2_merge_first', ExitStack)):
+                cfg = self.configure(processing, name)
                 cfg['storage'] = {'keep_merged_slcs': True}
-                self.assertEqual(execute_stack(cfg, 'run'), 0)
-                roots[processing] = Path(cfg['output']['directory'])
-        reference, new = roots['isce2_merge_first'], roots['isce3_merge_first']
+                with merger():
+                    self.assertEqual(execute_stack(cfg, 'run'), 0)
+                roots[name] = Path(cfg['output']['directory'])
+        reference, new = roots['gdal'], roots['isce3']
         old, frame = read_manifest(reference/'geometry'), read_manifest(new/'geometry')
 
         for key in ('sources', 'ownership', 'common_validity', 'map_grid', 'geometry_identity'):
@@ -445,7 +459,6 @@ class MergeFirstWorkflowTests(unittest.TestCase):
             self.assertEqual(after['assembly_identity'], before['assembly_identity'])
             self.assertEqual(portable(after['valid_windows'], new), portable(before['valid_windows'], reference))
             self.assertEqual(after['assembly_implementation'], mosaic.IMPLEMENTATION)
-            self.assertNotIn('assembly_implementation', before)
             for field in ('slc', 'validity_mask'):
                 np.testing.assert_array_equal(read(after[field]), read(before[field]))
             np.testing.assert_array_equal(read(after['slc'], mask=True), read(before['slc'], mask=True))
@@ -471,12 +484,13 @@ class MergeFirstWorkflowTests(unittest.TestCase):
             for name in ('range_velocity_m_per_day.tif', 'azimuth_velocity_m_per_day.tif', 'valid_mask.tif'):
                 np.testing.assert_array_equal(read(new/'pairs'/pair/'geo'/name), read(reference/'pairs'/pair/'geo'/name))
 
-    def test_selector_switch_reuses_pairs_and_reassembles_released_dates_exactly(self):
+    def test_cutover_reuses_frozen_merger_pairs_and_reassembles_released_dates_exactly(self):
         from glacier_offsets.stack_status import inspect_stack
         cfg = self.configure('isce2_merge_first', 'switch')
         root = Path(cfg['output']['directory'])
         with self.workflow():
-            self.assertEqual(execute_stack(cfg, 'run'), 0)
+            with self.frozen_merger():
+                self.assertEqual(execute_stack(cfg, 'run'), 0)
             expected = self.reference_arrays(root, 'frozen')
             frame = read_manifest(root/'geometry')
             layout = [root/'geometry/manifest.json', Path(frame['coreg']['source_index'])]

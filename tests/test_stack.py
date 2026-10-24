@@ -56,7 +56,9 @@ class StackPlanningTests(unittest.TestCase):
         cfg['matching'].pop('engine')
         self.path.write_text(yaml.safe_dump(cfg))
         for loader in (load_stack_config, load_status_config):
-            self.assertEqual(loader(self.path)['matching']['engine'], 'isce2')
+            with self.assertLogs(level='WARNING') as logs:
+                self.assertEqual(loader(self.path)['matching']['engine'], 'isce2')
+            self.assertIn('deprecated alias of isce3_merge_first', logs.output[0])
         child = self.root/'isce3.yaml'
         child.write_text('extends: stack.yaml\nmatching:\n  engine: isce3\n')
         grandchild = self.root/'inherited.yaml'

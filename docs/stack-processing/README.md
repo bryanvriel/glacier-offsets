@@ -66,9 +66,13 @@ and retained layouts are in
   exFAT. It now writes the mask in a separate pass, and a regression test
   guards against concurrent SLC/mask writers.
 
-Cutover, which routes `isce2_merge_first` to the new compositor, awaits review
-of these results. Production configurations and completed pair products were
-not changed.
+After review, both merge-first selectors were cut over to the ISCE3
+compositor, with `isce2_merge_first` kept as a deprecated alias. The in-source
+GDAL merge-first path was removed; its frozen copy remains only in
+`tools/reference_stack_merge.py` for the parity tests and
+`tools.compare_stack_mosaic`. Policy records and cache identities are
+unchanged, so existing stacks need no rebuild. Production configurations and
+completed pair products were not changed.
 
 Implementation follows M9–M12 in `plans/stack-processing.md`. Existing pair
 configuration, output paths and scientific cache specifications remain intact.

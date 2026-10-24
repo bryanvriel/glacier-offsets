@@ -6,9 +6,11 @@ VRTs, date SLC composition and pair intervals all consume that one plan.
 Composition copies supported owned complex samples in 64-line ISCE3 raster
 blocks; it never interpolates, blends or substitutes another source.
 
-These rules reproduce the earlier GDAL merger exactly. Its policy records
-remain the compatibility identifiers of existing stacks; the implementation
-version is recorded separately and enters no cache identity.
+These rules reproduce the earlier GDAL merger exactly (its frozen copy is
+`tools/reference_stack_merge.py`). Its policy records remain the
+compatibility identifiers of existing stacks; the implementation version is
+recorded separately and enters no cache identity. Both merge-first selectors
+use this module; `isce2_merge_first` is a deprecated alias.
 """
 from copy import deepcopy
 from dataclasses import dataclass
@@ -45,12 +47,6 @@ GEOMETRY_FIELDS = ('x', 'y', 'z', 'layover_shadow_mask')
 
 def enabled(cfg):
     return cfg.get('stack', {}).get('processing') in SELECTORS
-
-
-def implementation(cfg):
-    """Select the compositor. The deprecated selector keeps the GDAL reference
-    implementation until the ISCE3 compositor passes its parity gates."""
-    return 'isce3' if cfg.get('stack', {}).get('processing') == 'isce3_merge_first' else 'reference'
 
 
 def policy(cfg):
@@ -424,9 +420,6 @@ def common_windows(sources, dates):
 
 def prepare_common_layout(cfg, plan, frame, dates, checksums=None):
     """Fix stack-common validity, rewriting the layout only when it changes."""
-    if implementation(cfg) != 'isce3':
-        from .stack_isce2 import prepare_common_layout as reference
-        return reference(cfg, plan, frame, dates, checksums)
     from .stack_pairs import common_map_grid
     from .stack_storage import product_hashes
     root = Path(cfg['output']['directory'])/'geometry'
