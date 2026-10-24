@@ -262,6 +262,32 @@ with other plans (the investigation's unpinned and separately pinned runs),
 concurrent test run. The wisdom enters no cache identity, so completed pairs
 are kept.
 
+## Range-2x matching option (October 24)
+
+`matching.range_oversampling: 2` turns the validated range-2x preprocessing
+prototype (`tools.compare_merged_preprocessing`) into a stack matching option;
+see [README_DETAILED.md](../../README_DETAILED.md#range-2x-matching). The
+production implementation interpolates complete merged images instead of
+retained strips, so its Fourier lengths differ from the prototype's.
+
+Real-data check on the Larsen 2017-01-19_2017-01-25 pair (77,634 windows,
+zoom 16, zero gross, midpoint layout). Both merged SLCs were rebuilt from the
+retained bursts and matched the production release checksums.
+
+| Comparison | Result |
+| --- | --- |
+| Input support, validity vs the prototype | identical; 69,534 valid windows, no transitions |
+| Total offsets vs the prototype | 99.97% (azimuth) and 99.85% (range) bit-identical; the rest differ by exactly 1/64 px, mean 0 |
+| Range shift vs the `deramp: 0` production pair | mean +0.040 px, as for the prototype |
+| Repeated runs with one stack wisdom file | bit-identical (three runs, inputs on either disk) |
+| Cost, 8 workers, inputs on the internal SSD | 164 s (33 s preparation, 131 s matching) against 93 s for `deramp: 0`; peak worker RSS 1.2 GB against 0.85 GB |
+| Preparation with inputs on the external volume | about 190 s per date, limited by sustained writes of about 20 MB/s |
+
+The last row motivated `storage.scratch_directory`. A synthetic known-shift
+test ([test_range_oversampling.py](../../tests/test_range_oversampling.py))
+checks that range-2x recovers a 0.3 px range shift to better than 0.02 px while
+plain magnitude matching is pulled more than 0.1 px toward whole pixels.
+
 ## Disposable merged SLCs
 
 The default `storage.keep_merged_slcs: false` retains per-burst aligned SLCs,

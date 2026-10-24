@@ -12,10 +12,19 @@ METHOD = 'merged-slc-release-v1'
 
 def keep_merged_slcs(cfg):
     options = cfg.get('storage', {})
-    if (not isinstance(options, dict) or set(options) - {'keep_merged_slcs'} or
+    if (not isinstance(options, dict) or set(options) - {'keep_merged_slcs', 'scratch_directory'} or
             type(options.get('keep_merged_slcs', False)) is not bool):
         raise ValueError('storage.keep_merged_slcs must be true or false')
+    scratch_directory(cfg)
     return options.get('keep_merged_slcs', False)
+
+
+def scratch_directory(cfg):
+    """Optional fast local directory for large temporary matching inputs."""
+    path = cfg.get('storage', {}).get('scratch_directory')
+    if path is not None and (not isinstance(path, str) or not Path(path).is_absolute() or not Path(path).is_dir()):
+        raise ValueError('storage.scratch_directory must be null or an existing absolute directory')
+    return None if path is None else Path(path)
 
 
 def released_files(manifest, key, fingerprint):

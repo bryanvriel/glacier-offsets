@@ -193,6 +193,11 @@ def validate_common(cfg: dict, discovery: bool = False) -> dict:
     if type(matching['deramp']) is not int or matching['deramp'] not in (0,1,2):
         raise ValueError('matching.deramp must be 0,1,2')
     if any(v<8 for v in matching['window']):raise ValueError('Matching windows must be at least 8 pixels per axis')
+    range_factor=matching.get('range_oversampling',1)
+    if type(range_factor) is not int or range_factor not in (1,2):
+        raise ValueError('matching.range_oversampling must be 1 or 2')
+    if range_factor==2 and (matching.get('engine','isce3')!='isce3' or matching['backend']!='cpu' or matching['deramp']!=0):
+        raise ValueError('matching.range_oversampling=2 requires engine isce3, backend cpu and deramp 0')
     for key in ('snr_threshold','correlation_threshold'):
         if type(matching[key]) not in (int,float) or not math.isfinite(matching[key]) or matching[key]<0:
             raise ValueError(f'matching.{key} must be nonnegative')

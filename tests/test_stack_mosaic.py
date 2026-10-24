@@ -493,6 +493,37 @@ class MergeFirstWorkflowTests(unittest.TestCase):
             for name in ('range_velocity_m_per_day.tif', 'azimuth_velocity_m_per_day.tif', 'valid_mask.tif'):
                 np.testing.assert_array_equal(read(new/'pairs'/pair/'geo'/name), read(reference/'pairs'/pair/'geo'/name))
 
+    def test_range2x_stack_matching_recovers_known_translations_in_original_units(self):
+        from glacier_offsets import range_oversampling
+        from glacier_offsets.stack_pairs import matching_template
+        cfg = self.configure('isce3_merge_first', 'range2x')
+        cfg['matching'].update(range_oversampling=2, backend='cpu')
+        scratch = self.root/'scratch'
+        scratch.mkdir()
+        cfg['storage'] = {'scratch_directory': str(scratch)}
+        root = Path(cfg['output']['directory'])
+        with self.workflow():
+            self.assertEqual(execute_stack(cfg, 'run'), 0)
+        self.assertEqual(list(scratch.iterdir()), [])  # Temporary inputs are released.
+        grid = matching_template(cfg, read_manifest(root/'geometry'))
+        by_date = {a.date: n for n, a in enumerate(self.acquisitions)}
+        for earlier, later in self.plan.pairs:
+            directory = root/'pairs'/f'{earlier}_{later}'
+            native = read_manifest(directory)['matching']['native_parameters']
+            self.assertEqual(native['range_oversampling']['method'], range_oversampling.METHOD)
+            self.assertEqual({s['range_oversampling']['factor_yx'][1] for s in native['segments']}, {2})
+            self.assertEqual({s['windowSizeWidth'] for s in native['segments']}, {2*cfg['matching']['window'][1]})
+            self.assertFalse((directory/'radar/native/range2x').exists())
+            with h5py.File(directory/'radar/offsets.h5') as h:
+                np.testing.assert_array_equal(h['center_sample'][:], grid.centers[1])
+                good = h['valid'][:]
+                self.assertGreater(int(good.sum()), 20)
+                expected = np.subtract(self.translations[by_date[later]], self.translations[by_date[earlier]])
+                for k, axis in enumerate(('azimuth', 'range')):
+                    gross = h[f'gross/{axis}_px'][:]
+                    np.testing.assert_array_equal(gross[good], (1, -1)[k])
+                    np.testing.assert_allclose(h[f'total/{axis}_px'][:][good], expected[k], atol=.2)
+
     def test_cutover_reuses_frozen_merger_pairs_and_reassembles_released_dates_exactly(self):
         from glacier_offsets.stack_status import inspect_stack
         cfg = self.configure('isce2_merge_first', 'switch')

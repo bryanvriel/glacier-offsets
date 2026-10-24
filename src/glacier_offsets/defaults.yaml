@@ -13,6 +13,7 @@ burst_merge:
   alignment_tolerance_px: 0.001
 storage:
   keep_merged_slcs: false  # Release assembled SLCs after their last matching use; keep per-burst coreg.
+  scratch_directory: null  # Optional fast local directory for temporary range-2x matching inputs.
 matching:
   engine: isce3  # isce3 | isce2 (actual ISCE2 CPU magnitude Ampcor)
   isce2:
@@ -27,6 +28,7 @@ matching:
   oversampling: 32
   zoom: 16
   deramp: 1
+  range_oversampling: 1  # 1 | 2: interpolate complex SLCs 2x in range before detection (stack CPU, deramp 0)
   batch: [1, 8]
   snr_threshold: 0.0
   correlation_threshold: 0.0

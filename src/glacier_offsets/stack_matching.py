@@ -4,10 +4,12 @@ Only native calls run in children. The parent owns masks, sparse output arrays,
 provenance and publication; no GDAL objects or native bursts cross processes.
 """
 from collections import deque
+from contextlib import ExitStack
 import logging
 import multiprocessing
 import os
 from pathlib import Path
+import tempfile
 import time
 
 import numpy as np
@@ -15,6 +17,8 @@ import numpy as np
 from .ampcor import _empty_match, _native_executor, _native_worker, _write_native_layout
 from .assembly import source_indices
 from .fftw_cache import pinned_wisdom
+from . import range_oversampling
+from .storage import scratch_directory
 from .matching_grid import MatchingGrid
 
 
@@ -123,12 +127,25 @@ def match_bursts(cfg, manifest, directory, prior, *, full_grid=False):
         records = {}
         logging.info('CPU stack matching: %d workers for %d runnable bursts (OMP_NUM_THREADS=%d)',
                      workers, len(runnable), budget)
-        wisdom = pinned_wisdom(cfg['matching'])
+        inputs = manifest['coreg']['slcs']
+        worker, native = _native_worker, cfg['matching']
+        range2x = range_oversampling.factor(cfg['matching']) != 1
+        if range2x:
+            # Workers convert each segment between original and range-2x native coordinates.
+            worker, native = range_oversampling.range_worker, range_oversampling.native_parameters(cfg['matching'])
+        wisdom = pinned_wisdom(native)
         if wisdom is not None:
             if wisdom['measured_now']:
                 logging.info('Measured pinned FFTW wisdom %s', wisdom['path'])
             effective['fftw_wisdom'] = {k: wisdom[k] for k in ('method', 'path', 'key_identity', 'sha256')}
-        with _native_executor(workers, single_threaded=True, wisdom=wisdom) as pool:
+        context = ExitStack()
+        if range2x:
+            scratch = scratch_directory(cfg)
+            temporary = (output/'range2x' if scratch is None else
+                         Path(context.enter_context(tempfile.TemporaryDirectory(prefix='range2x-', dir=scratch)))/'inputs')
+            inputs, effective['range_oversampling'] = context.enter_context(
+                range_oversampling.prepared_inputs(inputs, temporary, workers=budget))
+        with context, _native_executor(workers, single_threaded=True, wisdom=wisdom) as pool:
             while ready or shared or active:
                 while (ready or shared) and len(active) < workers:
                     index = ready.popleft() if ready else None
@@ -137,12 +154,12 @@ def match_bursts(cfg, manifest, directory, prior, *, full_grid=False):
                     section = (slice(y0, y1), slice(x0, x1))
                     local = MatchingGrid(grid.starts_line[y0:y1], grid.starts_sample[x0:x1],
                                          grid.window, grid.search, grid.stride)
-                    args = (manifest['coreg']['slcs']['reference'], manifest['coreg']['slcs']['secondary'],
+                    args = (inputs['reference'], inputs['secondary'],
                             output / (f'shared-part-{number:06d}' if index is None else
                                       f'burst-{index:04d}-part-{number:06d}'), cfg['matching'], cfg, 'cpu')
                     kwargs = {'_grid': local, '_valid_input': prior['valid'][section],
                               '_gross': None if full_grid else prior['integer_px'][section]}
-                    pending = pool.apply_async(_native_worker, ((args, kwargs),))
+                    pending = pool.apply_async(worker, ((args, kwargs),))
                     active[number] = (index, section, pending)
                 completed = [number for number, (_, _, pending) in active.items() if pending.ready()]
                 if not completed:
