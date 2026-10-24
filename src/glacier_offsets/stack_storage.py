@@ -37,18 +37,19 @@ def read_manifest(root):
     return json.loads(path.read_text()) if path.is_file() else {}
 
 
-def verified(manifest, key, fingerprint, *, allow_released=False):
+def verified(manifest, key, fingerprint, *, allow_released=False, checksums=None):
     products = manifest.get('products', {})
-    return products_valid(products, manifest, key, fingerprint, allow_released=allow_released)
+    return products_valid(products, manifest, key, fingerprint, allow_released=allow_released, checksums=checksums)
 
 
-def alignment_verified(manifest, fingerprint):
+def alignment_verified(manifest, fingerprint, *, checksums=None):
     products = manifest.get('alignment_products', manifest.get('products', {}))
-    return verified(manifest | {'products': products}, 'alignment_identity', fingerprint)
+    return verified(manifest | {'products': products}, 'alignment_identity', fingerprint, checksums=checksums)
 
 
-def product_hashes(paths):
-    return {str(Path(p).resolve()): checksum(p) for p in dict.fromkeys(map(str, paths))}
+def product_hashes(paths, *, checksums=None):
+    digest = checksum if checksums is None else checksums
+    return {str(Path(p).resolve()): digest(p) for p in dict.fromkeys(map(str, paths))}
 
 
 def burst_config(cfg, reference, acquisition):
@@ -60,17 +61,18 @@ def burst_config(cfg, reference, acquisition):
 
 
 def reference_specification(cfg, plan, hashes, software):
-    return {'method': METHOD, 'ownership_policy': POLICY, 'anchor': plan.anchor,
+    from .stack_mosaic import policy
+    return {'method': METHOD, 'ownership_policy': policy(cfg), 'anchor': plan.anchor,
             'inputs': {key: hashes(path) for key, path in
                        [('safe', plan.reference.scene.path), ('orbit', plan.reference.orbit.path), ('dem', cfg['inputs']['dem'])]},
             'software': software['packages'], 'flatten': False, 'backend': 'cpu'}
 
 
-def prepare_geometry(cfg, plan, specification, software, force=False, process=True, expected_layout=None):
+def prepare_geometry(cfg, plan, specification, software, force=False, process=True, expected_layout=None, checksums=None):
     root = Path(cfg['output']['directory']) / 'geometry'
     fingerprint = identity(specification)
     previous = read_manifest(root)
-    if not force and verified(previous, 'geometry_identity', fingerprint):
+    if not force and verified(previous, 'geometry_identity', fingerprint, checksums=checksums):
         return previous
     if not process:
         raise ValueError('Reference preparation missing, incomplete or damaged; run stack coregister first')
@@ -83,7 +85,7 @@ def prepare_geometry(cfg, plan, specification, software, force=False, process=Tr
         directory = root / 'bursts' / burst.id
         spec = {'reference': fingerprint, 'burst_id': burst.id}
         old = read_manifest(directory)
-        if not force and verified(old, 'identity', identity(spec)):
+        if not force and verified(old, 'identity', identity(spec), checksums=checksums):
             coreg = old['coreg']
         else:
             write_json(directory / 'manifest.json', {'specification': spec, 'status': 'running'})
@@ -92,7 +94,7 @@ def prepare_geometry(cfg, plan, specification, software, force=False, process=Tr
             if 'reference_directory' in coreg:
                 files.extend(p for p in Path(coreg['reference_directory']).iterdir() if p.is_file())
             write_json(directory / 'manifest.json', {'identity': identity(spec), 'coreg': coreg,
-                       'products': product_hashes(files), 'status': 'complete'})
+                       'products': product_hashes(files, checksums=checksums), 'status': 'complete'})
         window = _coverage_bounds(coreg['slcs']['reference'])
         annotation = _annotation_window((burst, burst))
         if annotation:
@@ -105,22 +107,31 @@ def prepare_geometry(cfg, plan, specification, software, force=False, process=Tr
                         'manifest': str(directory / 'manifest.json')})
     if len({CRS.from_user_input(e['coreg']['geometry_crs']).to_wkt() for e in sources}) != 1:
         raise ValueError('Reference burst geometry CRSs differ')
-    layout = write_reference_layout(root, sources)
+    from .stack_mosaic import enabled
+    layout = write_reference_layout(root, sources, checksums=checksums,
+                                    ownership_policy=specification['ownership_policy'])
     layout_identity = layout['layout_identity']
     pinned_layout = expected_layout or previous.get('layout_identity')
-    if pinned_layout is not None and layout_identity != pinned_layout:
+    if not enabled(cfg) and pinned_layout is not None and layout_identity != pinned_layout:
         raise ValueError('Pinned radar layout/ownership changed; use a new output root')
     files = [layout['coreg']['source_index'], *layout['coreg']['geometry'].values()]
     for entry in sources:
         files.extend(read_manifest(Path(entry['manifest']).parent)['products'])
     frame = dict(layout, geometry_identity=fingerprint, specification=specification,
-                 software=software, status='complete', products=product_hashes(files))
+                 software=software, status='complete', products=product_hashes(files, checksums=checksums))
     write_json(root / 'manifest.json', frame)
     return frame
 
 
-def write_reference_layout(root, sources):
-    """Write the interior ownership and matching geometry from prepared sources."""
+def write_reference_layout(root, sources, *, checksums=None, ownership_policy=None):
+    """Write the ownership and matching geometry from prepared sources.
+
+    Merge-first policies use the ISCE3 stack plan; otherwise the legacy
+    interior ownership is materialized from actual reference support.
+    """
+    from .stack_mosaic import POLICY as merge_policy, SWATH_MIDPOINT_POLICY, write_layout
+    if ownership_policy in (merge_policy, SWATH_MIDPOINT_POLICY):
+        return write_layout(root, sources, checksums=checksums, ownership_policy=ownership_policy)
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     sources = deepcopy(sources)
@@ -151,7 +162,8 @@ def write_reference_layout(root, sources):
                     band.WriteArray(block, x0+dx, row+dy)
             del unsupported
     owner = None
-    layout_identity = identity({'reference_grid': grid, 'source_index_sha256': checksum(owner_path),
+    digest = checksum if checksums is None else checksums
+    layout_identity = identity({'reference_grid': grid, 'source_index_sha256': digest(owner_path),
                                'ownership': ownership,
                                'placements': [{k: e[k] for k in ('burst_id', 'offset', 'valid_window', 'ownership_windows')}
                                               for e in sources]})
@@ -166,6 +178,18 @@ def create_raster(path, shape, dtype):
                                               options=['TILED=NO', 'BIGTIFF=IF_SAFER'])
 
 
+def create_assembly_rasters(slc_path, mask_path, shape):
+    """Create a stripped complex SLC, its external GDAL mask and a validity raster."""
+    slc = create_raster(slc_path, shape, gdal.GDT_CFloat32)
+    mask = create_raster(mask_path, shape, gdal.GDT_Byte)
+    # Internal mask blocks can interleave with SLC strips after cache flushes.
+    # The CPU matcher always memory-maps its input, even with useMmap=0;
+    # macOS requires contiguous image strips instead of GDAL's VM fallback.
+    with gdal.config_option('GDAL_TIFF_INTERNAL_MASK', 'NO'):
+        slc.CreateMaskBand(gdal.GMF_PER_DATASET)
+    return slc, mask
+
+
 def date_specification(acquisition, frame, hashes):
     if acquisition.error:
         raise ValueError(acquisition.error)
@@ -176,18 +200,20 @@ def date_specification(acquisition, frame, hashes):
                             for e in frame['sources'] if e['burst_id'] in acquisition.bursts}}
 
 
-def prepare_date(cfg, plan, acquisition, frame, specification, force=False, process=True):
+def prepare_date(cfg, plan, acquisition, frame, specification, force=False, process=True, checksums=None):
     """Align available bursts once; cache each burst independently of pair count."""
     root = Path(cfg['output']['directory']) / 'acquisitions' / acquisition.date
     fingerprint = identity(specification)
     old = read_manifest(root)
-    if not force and alignment_verified(old, fingerprint):
+    if not force and alignment_verified(old, fingerprint, checksums=checksums):
         return old
     if not process:
         raise ValueError(f'{acquisition.date}: alignment missing or stale; run stack coregister first')
     write_json(root / 'manifest.json', {'specification': specification, 'status': 'aligning'})
     effective = burst_config(cfg, plan.reference, acquisition)
-    slcs = {}
+    from .stack_mosaic import date_validity, enabled
+    isce2 = enabled(cfg)
+    slcs, windows, offset_paths = {}, {}, []
     reference_bursts = {b.id: b for b in plan.bursts}
     for entry in frame['sources']:
         key = entry['burst_id']
@@ -195,24 +221,39 @@ def prepare_date(cfg, plan, acquisition, frame, specification, force=False, proc
             continue
         if acquisition.date == plan.reference.date:
             slcs[key] = entry['coreg']['slcs']['reference']
+            if isce2:
+                windows[key] = {'window': entry.get('reference_valid_window', entry['valid_window']),
+                                'method': 'reference-annotation'}
             continue
         directory = root / 'bursts' / key
         spec = {'date': fingerprint, 'burst_id': key}
         previous = read_manifest(directory)
-        if not force and verified(previous, 'identity', identity(spec)):
+        if not force and verified(previous, 'identity', identity(spec), checksums=checksums):
             slcs[key] = previous['slc']
+            if isce2:
+                windows[key] = previous['validity']
         else:
             write_json(directory / 'manifest.json', {'specification': spec, 'status': 'aligning'})
             slc = align_acquisition(effective, reference_bursts[key], acquisition.bursts[key], directory, entry['coreg'])
             slcs[key] = slc
-            write_json(directory / 'manifest.json', {'identity': identity(spec), 'slc': slc,
-                       'products': product_hashes([slc]), 'status': 'complete'})
+            record = {'identity': identity(spec), 'slc': slc, 'status': 'complete'}
+            if isce2:
+                shape = tuple(entry['coreg']['reference_grid'][k] for k in ('length', 'width'))
+                record['validity'] = windows[key] = date_validity(acquisition.bursts[key], slc, shape,
+                    entry.get('reference_valid_window', entry['valid_window']))
+            record['products'] = product_hashes([slc, *record.get('validity', {}).get('offset_products', [])], checksums=checksums)
+            write_json(directory / 'manifest.json', record)
+        if isce2:
+            offset_paths.extend(windows[key].get('offset_products', []))
     result = {'alignment_identity': fingerprint, 'specification': specification, 'slcs': slcs,
-              'products': product_hashes(slcs.values()), 'status': 'aligned', 'date': acquisition.date,
+              'products': product_hashes([*slcs.values(), *offset_paths], checksums=checksums), 'status': 'aligned', 'date': acquisition.date,
               'burst_times': specification['burst_times']}
     # An acquisition with no selected bursts is an explicitly empty aligned date.
     if not slcs:
-        result['products'] = product_hashes([Path(cfg['output']['directory']) / 'geometry/source.tif'])
+        marker = frame['sources'][0]['coreg']['slcs']['reference'] if isce2 else Path(cfg['output']['directory']) / 'geometry/source.tif'
+        result['products'] = product_hashes([marker], checksums=checksums)
+    if isce2:
+        result['valid_windows'] = windows
     result['alignment_products'] = result['products']
     write_json(root / 'manifest.json', result)
     return result
@@ -220,15 +261,51 @@ def prepare_date(cfg, plan, acquisition, frame, specification, force=False, proc
 
 def assembly_specification(frame, aligned):
     """Version date storage independently of the pinned COMPASS reference frame."""
-    return {'method': METHOD, 'alignment': aligned['alignment_identity'],
+    spec = {'method': METHOD, 'alignment': aligned['alignment_identity'],
             'geometry': frame['geometry_identity'], 'slc_storage': SLC_STORAGE}
+    if frame.get('common_validity_identity'):
+        spec.update(layout=frame['layout_identity'])
+    return spec
 
 
-def assemble_date(cfg, acquisition, frame, aligned, force=False, process=True):
+def _compose_with_gdal(frame, aligned, slc_path, mask_path, shape):
+    """Legacy interior composition from the ownership raster; returns valid samples."""
+    owner = gdal.Open(frame['coreg']['source_index'])
+    count = 0
+    slc, mask = create_assembly_rasters(slc_path, mask_path, shape)
+    datasets = {key: gdal.Open(path) for key, path in aligned['slcs'].items()}
+    support = {key: ~invalid_samples(ds) for key, ds in datasets.items()}
+    for row in range(0, shape[0], 64):
+        h = min(64, shape[0]-row)
+        owners = owner.ReadAsArray(0, row, shape[1], h)
+        values = np.zeros((h, shape[1]), 'complex64')
+        valid = np.zeros(values.shape, bool)
+        for index, entry in enumerate(frame['sources'], 1):
+            source = datasets.get(entry['burst_id'])
+            if source is None:
+                continue
+            dy, dx = entry['offset']
+            y0, y1 = max(row, dy), min(row+h, dy+source.RasterYSize)
+            if y0 >= y1:
+                continue
+            block = source.ReadAsArray(0, y0-dy, source.RasterXSize, y1-y0)
+            section = (slice(y0-row, y1-row), slice(dx, dx+source.RasterXSize))
+            take = (owners[section] == index) & support[entry['burst_id']][y0-dy:y1-dy]
+            values[section][take] = block[take]
+            valid[section][take] = True
+        slc.GetRasterBand(1).WriteArray(values, 0, row)
+        mask.GetRasterBand(1).WriteArray(valid.astype('uint8'), 0, row)
+        slc.GetRasterBand(1).GetMaskBand().WriteArray(valid.astype('uint8')*255, 0, row)
+        count += int(valid.sum())
+    slc = mask = None
+    return count
+
+
+def assemble_date(cfg, acquisition, frame, aligned, force=False, process=True, checksums=None):
     """Apply identical reference ownership; never fill gaps from another source."""
     root = Path(cfg['output']['directory']) / 'acquisitions' / acquisition.date
     fingerprint = identity(assembly_specification(frame, aligned))
-    if not force and verified(aligned, 'assembly_identity', fingerprint):
+    if not force and verified(aligned, 'assembly_identity', fingerprint, checksums=checksums):
         return aligned
     if not process:
         raise ValueError(f'{acquisition.date}: merged SLC missing or stale; run stack assemble first')
@@ -237,45 +314,19 @@ def assemble_date(cfg, acquisition, frame, aligned, force=False, process=True):
     result.pop('slc_cleanup', None)
     result.pop('slc_preview', None)
     result.pop('assembly_identity', None)
+    result.pop('assembly_implementation', None)
     result['status'] = 'assembling'
     write_json(root / 'manifest.json', result)
     shape = tuple(frame['coreg']['reference_grid'][k] for k in ('length', 'width'))
-    owner = gdal.Open(frame['coreg']['source_index'])
-    count = 0
+    from .stack_mosaic import IMPLEMENTATION, MergePlan, compose, enabled
     with tempfile.TemporaryDirectory(prefix='.merge-', dir=root) as scratch, bounded_raster_cache():
         slc_path, mask_path = Path(scratch)/'slc.tif', Path(scratch)/'valid.tif'
-        slc = create_raster(slc_path, shape, gdal.GDT_CFloat32)
-        mask = create_raster(mask_path, shape, gdal.GDT_Byte)
-        # Internal mask blocks can interleave with SLC strips after cache flushes.
-        # The CPU matcher always memory-maps its input, even with useMmap=0;
-        # macOS requires contiguous image strips instead of GDAL's VM fallback.
-        with gdal.config_option('GDAL_TIFF_INTERNAL_MASK', 'NO'):
-            slc.CreateMaskBand(gdal.GMF_PER_DATASET)
-        datasets = {key: gdal.Open(path) for key, path in aligned['slcs'].items()}
-        support = {key: ~invalid_samples(ds) for key, ds in datasets.items()}
-        for row in range(0, shape[0], 64):
-            h = min(64, shape[0]-row)
-            owners = owner.ReadAsArray(0, row, shape[1], h)
-            values = np.zeros((h, shape[1]), 'complex64')
-            valid = np.zeros(values.shape, bool)
-            for index, entry in enumerate(frame['sources'], 1):
-                source = datasets.get(entry['burst_id'])
-                if source is None:
-                    continue
-                dy, dx = entry['offset']
-                y0, y1 = max(row, dy), min(row+h, dy+source.RasterYSize)
-                if y0 >= y1:
-                    continue
-                block = source.ReadAsArray(0, y0-dy, source.RasterXSize, y1-y0)
-                section = (slice(y0-row, y1-row), slice(dx, dx+source.RasterXSize))
-                take = (owners[section] == index) & support[entry['burst_id']][y0-dy:y1-dy]
-                values[section][take] = block[take]
-                valid[section][take] = True
-            slc.GetRasterBand(1).WriteArray(values, 0, row)
-            mask.GetRasterBand(1).WriteArray(valid.astype('uint8'), 0, row)
-            slc.GetRasterBand(1).GetMaskBand().WriteArray(valid.astype('uint8')*255, 0, row)
-            count += int(valid.sum())
-        slc = mask = None
+        if enabled(cfg):
+            # Ownership comes from the saved plan, which also wrote source.tif.
+            count = compose(MergePlan.from_frame(frame), aligned['slcs'], slc_path, mask_path)
+            result['assembly_implementation'] = IMPLEMENTATION
+        else:
+            count = _compose_with_gdal(frame, aligned, slc_path, mask_path, shape)
         final = root / 'slc.tif'
         slc_path.replace(final)
         # External masks are created by GDAL unless internal masks are enabled.
@@ -291,7 +342,7 @@ def assemble_date(cfg, acquisition, frame, aligned, force=False, process=True):
     result.update(assembly_identity=fingerprint, slc_storage=SLC_STORAGE,
                   status='complete', slc=str((root/'slc.tif').resolve()),
                   validity_mask=str((root/'valid.tif').resolve()), valid_samples=count,
-                  coverage_fraction=count/int(np.prod(shape)), products=product_hashes(files))
+                  coverage_fraction=count/int(np.prod(shape)), products=product_hashes(files, checksums=checksums))
     write_json(root / 'manifest.json', result)
     return result
 

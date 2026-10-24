@@ -14,6 +14,7 @@ import numpy as np
 
 from .ampcor import _empty_match, _native_executor, _native_worker, _write_native_layout
 from .assembly import source_indices
+from .fftw_cache import pinned_wisdom
 from .matching_grid import MatchingGrid
 
 
@@ -56,12 +57,37 @@ def burst_rectangles(owner, selected):
     return sorted(rectangles)
 
 
+def matching_rectangles(owner, selected, runnable, workers):
+    """Keep burst lanes and split other work into bounded, shareable tasks.
+
+    None denotes scheduling work without a runnable source, not scientific
+    ownership. Full-grid matching retains these raw invalid-window results.
+    Bounding their size to half an average worker's workload avoids a single
+    large padding rectangle becoming the serial tail of a partial acquisition.
+    """
+    if not workers:
+        return []
+    labels = np.where(np.isin(owner, runnable), owner, -1)
+    target = max(1, (int(selected.sum()) + 2*workers-1)//(2*workers))
+    tasks = []
+    for index, y0, y1, x0, x1 in burst_rectangles(labels, selected):
+        if index != -1:
+            tasks.append((index, y0, y1, x0, x1))
+            continue
+        width = min(x1-x0, target)
+        height = max(1, target//width)
+        for row in range(y0, y1, height):
+            for col in range(x0, x1, width):
+                tasks.append((None, row, min(row+height, y1), col, min(col+width, x1)))
+    return tasks
+
+
 def match_bursts(cfg, manifest, directory, prior, *, full_grid=False):
     """One in-flight native call per burst, up to the OpenMP CPU budget.
 
     ``prior.valid`` already includes full-SLC support/bounds checks. Constant
     matching's full-grid path also retains its raw invalid-window measurements;
-    unowned/missing regions share the first runnable burst's scheduling lane.
+    unowned/missing regions use a shared queue available to any idle worker.
     Varying/edge-bounded matching continues to call native Ampcor only where
     eligible, leaving the other raw windows as NaN.
     """
@@ -77,42 +103,48 @@ def match_bursts(cfg, manifest, directory, prior, *, full_grid=False):
                 if source['interval_seconds'] is not None and source['interval_seconds'] > 0
                 and np.any(prior['valid'] & (owner == index))]
     workers = min(budget, len(runnable))
-    effective = {'strategy': 'stack-burst-cpu-v1', 'mergeGrossOffset': 0,
+    effective = {'strategy': 'stack-burst-cpu-v2', 'mergeGrossOffset': 0,
                  'requested_workers': budget, 'workers': workers, 'threads_per_worker': 1,
-                 'partition_policy': 'center ownership; unowned/inactive windows share first runnable lane',
+                 'partition_policy': 'center ownership; bounded unowned/inactive tasks shared by idle workers',
                  'segments': []}
     result['effective_parameters'] = effective
     output = Path(directory) / 'native'
     output.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
     if workers:
-        # These are scheduling labels only; scientific ownership is unchanged
-        # and annotate_result still applies the original seam/interval masks.
-        labels = np.where(np.isin(owner, runnable), owner, runnable[0])
         selected = np.ones(grid.shape, bool) if full_grid else prior['valid']
         lanes = {index: deque() for index in runnable}
-        for number, (index, y0, y1, x0, x1) in enumerate(burst_rectangles(labels, selected)):
-            lanes[index].append((number, y0, y1, x0, x1))
+        shared = deque()
+        for number, (index, y0, y1, x0, x1) in enumerate(matching_rectangles(owner, selected, runnable, workers)):
+            queue = shared if index is None else lanes[index]
+            queue.append((number, y0, y1, x0, x1))
         ready = deque(index for index in runnable if lanes[index])
         active = {}
         records = {}
         logging.info('CPU stack matching: %d workers for %d runnable bursts (OMP_NUM_THREADS=%d)',
                      workers, len(runnable), budget)
-        with _native_executor(workers, single_threaded=True) as pool:
-            while ready or active:
-                while ready and len(active) < workers:
-                    index = ready.popleft()
-                    number, y0, y1, x0, x1 = lanes[index].popleft()
+        wisdom = pinned_wisdom(cfg['matching'])
+        if wisdom is not None:
+            if wisdom['measured_now']:
+                logging.info('Measured pinned FFTW wisdom %s', wisdom['path'])
+            effective['fftw_wisdom'] = {k: wisdom[k] for k in ('method', 'path', 'key_identity', 'sha256')}
+        with _native_executor(workers, single_threaded=True, wisdom=wisdom) as pool:
+            while ready or shared or active:
+                while (ready or shared) and len(active) < workers:
+                    index = ready.popleft() if ready else None
+                    queue = shared if index is None else lanes[index]
+                    number, y0, y1, x0, x1 = queue.popleft()
                     section = (slice(y0, y1), slice(x0, x1))
                     local = MatchingGrid(grid.starts_line[y0:y1], grid.starts_sample[x0:x1],
                                          grid.window, grid.search, grid.stride)
                     args = (manifest['coreg']['slcs']['reference'], manifest['coreg']['slcs']['secondary'],
-                            output / f'burst-{index:04d}-part-{number:06d}', cfg['matching'], cfg, 'cpu')
+                            output / (f'shared-part-{number:06d}' if index is None else
+                                      f'burst-{index:04d}-part-{number:06d}'), cfg['matching'], cfg, 'cpu')
                     kwargs = {'_grid': local, '_valid_input': prior['valid'][section],
                               '_gross': None if full_grid else prior['integer_px'][section]}
                     pending = pool.apply_async(_native_worker, ((args, kwargs),))
-                    active[index] = (number, section, pending)
-                completed = [index for index, (_, _, pending) in active.items() if pending.ready()]
+                    active[number] = (index, section, pending)
+                completed = [number for number, (_, _, pending) in active.items() if pending.ready()]
                 if not completed:
                     # Timed get keeps Ctrl-C responsive even on native failures.
                     try:
@@ -120,17 +152,19 @@ def match_bursts(cfg, manifest, directory, prior, *, full_grid=False):
                     except multiprocessing.TimeoutError:
                         pass
                     continue
-                for index in completed:
-                    number, section, pending = active.pop(index)
+                for number in completed:
+                    index, section, pending = active.pop(number)
                     native = pending.get()  # Failure terminates/joins the pool; no product is published.
                     for name in ('gross', 'residual', 'total', 'snr', 'correlation_peak', 'covariance',
                                  'finite', 'search_boundary', 'valid'):
                         result[name][section] = native[name]
                     result['elapsed_seconds'] += native['elapsed_seconds']
                     records[number] = native['effective_parameters'] | {
-                        'scheduling_burst_id': sources[index-1]['burst_id'],
+                        'scheduling_burst_id': sources[index-1]['burst_id'] if index is not None else None,
+                        'work_kind': 'burst' if index is not None else 'unowned_or_inactive',
+                        'elapsed_seconds': native['elapsed_seconds'],
                         'grid_slice': [[part.start, part.stop] for part in section]}
-                    if lanes[index]:
+                    if index is not None and lanes[index]:
                         ready.append(index)
         effective['segments'] = [records[number] for number in sorted(records)]
     effective['wall_seconds'] = time.perf_counter() - started

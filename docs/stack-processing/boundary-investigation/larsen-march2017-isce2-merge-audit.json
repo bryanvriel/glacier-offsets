@@ -1,0 +1,2190 @@
+{
+  "pair": "2017-03-14_2017-03-20",
+  "official_source_sha256": {
+    "/Users/briel/src/isce2-official/contrib/stack/topsStack/mergeBursts.py": "97aabe913c2e7f41cc6b891bb2b9b932d1f47aaf6db40790b7832c7482cbb448",
+    "/Users/briel/src/isce2-official/contrib/stack/topsStack/VRTManager.py": "445a2263f3632588de6e22f812d114d1e35f7b833ad994ba445ee864a5872d60",
+    "/Users/briel/src/isce2-official/contrib/stack/topsStack/Stack.py": "ef9fb86ec6623e84fbb9151f0f22e9b9a592cbf341aab617c0d1c0fb20e3b12e"
+  },
+  "isce2_git_commit": "a492b8d76fc91fa82a100458b1714120b0fae090",
+  "scope": "Direct execution of official VRTManager using our fixed placements and reference rectangles; not original ISCE2 coregistered products or stack-common XML validity.",
+  "owner_comparison": {
+    "covered_pixels": 291786541,
+    "different_owner_pixels": 11844809,
+    "coverage_disagreements": 44,
+    "numpy_precedence_disagreements": 0,
+    "changed_matching_center_owners": 2895
+  },
+  "official_cross_swath_switches_from_reference_rectangles": [
+    20023,
+    20114
+  ],
+  "current_cross_swath_cuts": [
+    {
+      "cut_global_line": 1424,
+      "lower_burst_id": "t038_080976_iw1",
+      "overlap_global": [
+        1363,
+        1485,
+        870,
+        20567
+      ],
+      "upper_burst_id": "t038_080975_iw1"
+    },
+    {
+      "cut_global_line": 2765,
+      "lower_burst_id": "t038_080977_iw1",
+      "overlap_global": [
+        2703,
+        2827,
+        870,
+        20567
+      ],
+      "upper_burst_id": "t038_080976_iw1"
+    },
+    {
+      "cut_global_line": 4107,
+      "lower_burst_id": "t038_080978_iw1",
+      "overlap_global": [
+        4046,
+        4168,
+        870,
+        20567
+      ],
+      "upper_burst_id": "t038_080977_iw1"
+    },
+    {
+      "cut_global_line": 5449,
+      "lower_burst_id": "t038_080979_iw1",
+      "overlap_global": [
+        5388,
+        5511,
+        970,
+        20567
+      ],
+      "upper_burst_id": "t038_080978_iw1"
+    },
+    {
+      "cut_global_line": 1886,
+      "lower_burst_id": "t038_080976_iw2",
+      "overlap_global": [
+        1827,
+        1946,
+        20023,
+        43557
+      ],
+      "upper_burst_id": "t038_080975_iw2"
+    },
+    {
+      "cut_global_line": 3228,
+      "lower_burst_id": "t038_080977_iw2",
+      "overlap_global": [
+        3171,
+        3286,
+        20023,
+        43557
+      ],
+      "upper_burst_id": "t038_080976_iw2"
+    },
+    {
+      "cut_global_line": 4571,
+      "lower_burst_id": "t038_080978_iw2",
+      "overlap_global": [
+        4512,
+        4631,
+        20023,
+        43557
+      ],
+      "upper_burst_id": "t038_080977_iw2"
+    },
+    {
+      "cut_global_line": 5911,
+      "lower_burst_id": "t038_080979_iw2",
+      "overlap_global": [
+        5854,
+        5969,
+        20114,
+        43558
+      ],
+      "upper_burst_id": "t038_080978_iw2"
+    },
+    {
+      "cut_global_sample": 20295,
+      "far_swath": "iw2",
+      "near_swath": "iw1",
+      "overlap_global": [
+        485,
+        5388,
+        20023,
+        20567
+      ]
+    },
+    {
+      "cut_global_sample": 20344,
+      "far_swath": "iw2",
+      "near_swath": "iw1",
+      "overlap_global": [
+        5388,
+        5969,
+        20023,
+        20666
+      ]
+    },
+    {
+      "cut_global_sample": 20390,
+      "far_swath": "iw2",
+      "near_swath": "iw1",
+      "overlap_global": [
+        5969,
+        6854,
+        20114,
+        20666
+      ]
+    }
+  ],
+  "overlap_differences_without_agreement_selection": {
+    "complex": [
+      {
+        "sources": [
+          "t038_080975_iw1",
+          "t038_080976_iw1"
+        ],
+        "kind": "along_track",
+        "thresholds": {
+          "0": {
+            "n": 152,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.05453125000000014
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.05453125000000014
+              }
+            }
+          },
+          "0.3": {
+            "n": 145,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.040000000000000036
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.046875
+              }
+            }
+          },
+          "0.5": {
+            "n": 111,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.03125
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.046875
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080975_iw1",
+          "t038_080975_iw2"
+        ],
+        "kind": "cross_swath",
+        "thresholds": {
+          "0": {
+            "n": 56,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.053906250000000044
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.0,
+                "p90_absolute": 0.015625,
+                "p99_absolute": 0.03125
+              }
+            }
+          },
+          "0.3": {
+            "n": 56,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.053906250000000044
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.0,
+                "p90_absolute": 0.015625,
+                "p99_absolute": 0.03125
+              }
+            }
+          },
+          "0.5": {
+            "n": 56,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.053906250000000044
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.0,
+                "p90_absolute": 0.015625,
+                "p99_absolute": 0.03125
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080976_iw1",
+          "t038_080977_iw1"
+        ],
+        "kind": "along_track",
+        "thresholds": {
+          "0": {
+            "n": 152,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.11703125000000014
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.046875
+              }
+            }
+          },
+          "0.3": {
+            "n": 144,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.08921874999999968
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.046875
+              }
+            }
+          },
+          "0.5": {
+            "n": 70,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.036093750000000036
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.046875
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080976_iw1",
+          "t038_080975_iw2"
+        ],
+        "kind": "cross_swath",
+        "thresholds": {
+          "0": {
+            "n": 32,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.046875
+              },
+              "range": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.046875
+              }
+            }
+          },
+          "0.3": {
+            "n": 32,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.046875
+              },
+              "range": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.046875
+              }
+            }
+          },
+          "0.5": {
+            "n": 32,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.046875
+              },
+              "range": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.046875
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080976_iw1",
+          "t038_080976_iw2"
+        ],
+        "kind": "cross_swath",
+        "thresholds": {
+          "0": {
+            "n": 56,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.046875
+              },
+              "range": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.046875
+              }
+            }
+          },
+          "0.3": {
+            "n": 56,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.046875
+              },
+              "range": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.046875
+              }
+            }
+          },
+          "0.5": {
+            "n": 56,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.046875
+              },
+              "range": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.046875
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080977_iw1",
+          "t038_080978_iw1"
+        ],
+        "kind": "along_track",
+        "thresholds": {
+          "0": {
+            "n": 152,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.078125
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.05453125000000014
+              }
+            }
+          },
+          "0.3": {
+            "n": 130,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.0735937499999999
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.0423437499999999
+              }
+            }
+          },
+          "0.5": {
+            "n": 39,
+            "axes": {
+              "azimuth": {
+                "median_signed": -0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.03125
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.018750000000000044,
+                "p99_absolute": 0.03125
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080977_iw1",
+          "t038_080976_iw2"
+        ],
+        "kind": "cross_swath",
+        "thresholds": {
+          "0": {
+            "n": 32,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0234375,
+                "median_absolute": 0.0234375,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.046875
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.015625,
+                "p99_absolute": 0.015625
+              }
+            }
+          },
+          "0.3": {
+            "n": 32,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0234375,
+                "median_absolute": 0.0234375,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.046875
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.015625,
+                "p99_absolute": 0.015625
+              }
+            }
+          },
+          "0.5": {
+            "n": 32,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0234375,
+                "median_absolute": 0.0234375,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.046875
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.015625,
+                "p99_absolute": 0.015625
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080977_iw1",
+          "t038_080977_iw2"
+        ],
+        "kind": "cross_swath",
+        "thresholds": {
+          "0": {
+            "n": 56,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.0625
+              },
+              "range": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.06953125000000004
+              }
+            }
+          },
+          "0.3": {
+            "n": 49,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.0625
+              },
+              "range": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.015625,
+                "p99_absolute": 0.03125
+              }
+            }
+          },
+          "0.5": {
+            "n": 23,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.04343750000000002
+              },
+              "range": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.015625,
+                "p99_absolute": 0.027812500000000018
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080978_iw1",
+          "t038_080979_iw1"
+        ],
+        "kind": "along_track",
+        "thresholds": {
+          "0": {
+            "n": 151,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.09375,
+                "p99_absolute": 0.234375
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.0625,
+                "p99_absolute": 0.109375
+              }
+            }
+          },
+          "0.3": {
+            "n": 115,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.08750000000000013,
+                "p99_absolute": 0.26812499999999995
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.0625,
+                "p99_absolute": 0.109375
+              }
+            }
+          },
+          "0.5": {
+            "n": 39,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.11250000000000004,
+                "p99_absolute": 0.29093749999999996
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.078125,
+                "p99_absolute": 0.10343749999999996
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080978_iw1",
+          "t038_080977_iw2"
+        ],
+        "kind": "cross_swath",
+        "thresholds": {
+          "0": {
+            "n": 30,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.046875
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.0078125,
+                "p90_absolute": 0.015625,
+                "p99_absolute": 0.015625
+              }
+            }
+          },
+          "0.3": {
+            "n": 30,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.046875
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.0078125,
+                "p90_absolute": 0.015625,
+                "p99_absolute": 0.015625
+              }
+            }
+          },
+          "0.5": {
+            "n": 30,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.046875
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.0078125,
+                "p90_absolute": 0.015625,
+                "p99_absolute": 0.015625
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080978_iw1",
+          "t038_080978_iw2"
+        ],
+        "kind": "cross_swath",
+        "thresholds": {
+          "0": {
+            "n": 58,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.20781250000000007,
+                "p99_absolute": 4.605156249999999
+              },
+              "range": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.1078125000000002,
+                "p99_absolute": 22.2778125
+              }
+            }
+          },
+          "0.3": {
+            "n": 44,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.07140625
+              },
+              "range": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.042187500000000044,
+                "p99_absolute": 0.055781250000000004
+              }
+            }
+          },
+          "0.5": {
+            "n": 38,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.03593750000000007,
+                "p99_absolute": 0.05671875000000004
+              },
+              "range": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.046875
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080979_iw1",
+          "t038_080978_iw2"
+        ],
+        "kind": "cross_swath",
+        "thresholds": {
+          "0": {
+            "n": 30,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0234375,
+                "median_absolute": 0.046875,
+                "p90_absolute": 0.11250000000000004,
+                "p99_absolute": 0.18296875
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.07968750000000002,
+                "p99_absolute": 0.109375
+              }
+            }
+          },
+          "0.3": {
+            "n": 29,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.046875,
+                "p90_absolute": 0.11562499999999998,
+                "p99_absolute": 0.18312499999999998
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.08124999999999999,
+                "p99_absolute": 0.109375
+              }
+            }
+          },
+          "0.5": {
+            "n": 22,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0390625,
+                "median_absolute": 0.0546875,
+                "p90_absolute": 0.13750000000000007,
+                "p99_absolute": 0.18421875
+              },
+              "range": {
+                "median_signed": -0.015625,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.09218750000000003,
+                "p99_absolute": 0.109375
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080979_iw1",
+          "t038_080979_iw2"
+        ],
+        "kind": "cross_swath",
+        "thresholds": {
+          "0": {
+            "n": 29,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.046875,
+                "p90_absolute": 0.11562499999999998,
+                "p99_absolute": 0.140625
+              },
+              "range": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.06562499999999999,
+                "p99_absolute": 0.10062499999999996
+              }
+            }
+          },
+          "0.3": {
+            "n": 13,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.10625000000000001,
+                "p99_absolute": 0.13687499999999997
+              },
+              "range": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.07500000000000001,
+                "p99_absolute": 0.10562499999999997
+              }
+            }
+          },
+          "0.5": {
+            "n": 3,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.0,
+                "p90_absolute": 0.1125,
+                "p99_absolute": 0.1378125
+              },
+              "range": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.040625,
+                "p99_absolute": 0.04625
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080975_iw2",
+          "t038_080976_iw2"
+        ],
+        "kind": "along_track",
+        "thresholds": {
+          "0": {
+            "n": 181,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.0625,
+                "p99_absolute": 0.3374999999999986
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.24374999999999947
+              }
+            }
+          },
+          "0.3": {
+            "n": 159,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.24906249999999863
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.2540624999999994
+              }
+            }
+          },
+          "0.5": {
+            "n": 132,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.0,
+                "p90_absolute": 0.015625,
+                "p99_absolute": 0.14656249999999993
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.2667187499999999
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080976_iw2",
+          "t038_080977_iw2"
+        ],
+        "kind": "along_track",
+        "thresholds": {
+          "0": {
+            "n": 181,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.078125,
+                "p99_absolute": 0.23437499999999734
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.078125,
+                "p99_absolute": 0.18749999999999822
+              }
+            }
+          },
+          "0.3": {
+            "n": 142,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.0625,
+                "p99_absolute": 0.31937500000000085
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.23562500000000064
+              }
+            }
+          },
+          "0.5": {
+            "n": 105,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.41187499999999844
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.30437499999999873
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080977_iw2",
+          "t038_080978_iw2"
+        ],
+        "kind": "along_track",
+        "thresholds": {
+          "0": {
+            "n": 181,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.03125,
+                "p90_absolute": 1.9375,
+                "p99_absolute": 9.778124999999987
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.03125,
+                "p90_absolute": 2.984375,
+                "p99_absolute": 33.2437499999997
+              }
+            }
+          },
+          "0.3": {
+            "n": 98,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.109375,
+                "p99_absolute": 0.29828125000000005
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.08281249999999996,
+                "p99_absolute": 0.3782812500000001
+              }
+            }
+          },
+          "0.5": {
+            "n": 47,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.07187499999999991,
+                "p99_absolute": 0.32218749999999996
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.078125,
+                "p99_absolute": 0.2815624999999998
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080978_iw2",
+          "t038_080979_iw2"
+        ],
+        "kind": "along_track",
+        "thresholds": {
+          "0": {
+            "n": 180,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.0625,
+                "p90_absolute": 1.068749999999997,
+                "p99_absolute": 10.217031250000002
+              },
+              "range": {
+                "median_signed": -0.015625,
+                "median_absolute": 0.0625,
+                "p90_absolute": 5.1843749999999975,
+                "p99_absolute": 35.49078125000004
+              }
+            }
+          },
+          "0.3": {
+            "n": 96,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.125,
+                "p99_absolute": 0.3265624999999992
+              },
+              "range": {
+                "median_signed": -0.015625,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.1484375,
+                "p99_absolute": 1.162499999999988
+              }
+            }
+          },
+          "0.5": {
+            "n": 41,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.140625,
+                "p99_absolute": 0.1875
+              },
+              "range": {
+                "median_signed": -0.015625,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.140625,
+                "p99_absolute": 0.26875000000000016
+              }
+            }
+          }
+        }
+      }
+    ],
+    "magnitude": [
+      {
+        "sources": [
+          "t038_080975_iw1",
+          "t038_080976_iw1"
+        ],
+        "kind": "along_track",
+        "thresholds": {
+          "0": {
+            "n": 152,
+            "axes": {
+              "azimuth": {
+                "median_signed": -0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.04531250000000009,
+                "p99_absolute": 0.0625
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.09375
+              }
+            }
+          },
+          "0.3": {
+            "n": 145,
+            "axes": {
+              "azimuth": {
+                "median_signed": -0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.0625
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.09375
+              }
+            }
+          },
+          "0.5": {
+            "n": 74,
+            "axes": {
+              "azimuth": {
+                "median_signed": -0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.046875
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.046875
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080975_iw1",
+          "t038_080975_iw2"
+        ],
+        "kind": "cross_swath",
+        "thresholds": {
+          "0": {
+            "n": 56,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.046875,
+                "median_absolute": 0.046875,
+                "p90_absolute": 0.0625,
+                "p99_absolute": 0.078125
+              },
+              "range": {
+                "median_signed": -0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.0625
+              }
+            }
+          },
+          "0.3": {
+            "n": 56,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.046875,
+                "median_absolute": 0.046875,
+                "p90_absolute": 0.0625,
+                "p99_absolute": 0.078125
+              },
+              "range": {
+                "median_signed": -0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.0625
+              }
+            }
+          },
+          "0.5": {
+            "n": 56,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.046875,
+                "median_absolute": 0.046875,
+                "p90_absolute": 0.0625,
+                "p99_absolute": 0.078125
+              },
+              "range": {
+                "median_signed": -0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.0625
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080976_iw1",
+          "t038_080977_iw1"
+        ],
+        "kind": "along_track",
+        "thresholds": {
+          "0": {
+            "n": 152,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.17921875000000043
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.07781250000000028
+              }
+            }
+          },
+          "0.3": {
+            "n": 144,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.08031249999999979
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.046875
+              }
+            }
+          },
+          "0.5": {
+            "n": 62,
+            "axes": {
+              "azimuth": {
+                "median_signed": -0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.05296875000000001
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.03125
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080976_iw1",
+          "t038_080975_iw2"
+        ],
+        "kind": "cross_swath",
+        "thresholds": {
+          "0": {
+            "n": 32,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.0625
+              },
+              "range": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.029687500000000033,
+                "p99_absolute": 0.03125
+              }
+            }
+          },
+          "0.3": {
+            "n": 32,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.0625
+              },
+              "range": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.029687500000000033,
+                "p99_absolute": 0.03125
+              }
+            }
+          },
+          "0.5": {
+            "n": 32,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.0625
+              },
+              "range": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.029687500000000033,
+                "p99_absolute": 0.03125
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080976_iw1",
+          "t038_080976_iw2"
+        ],
+        "kind": "cross_swath",
+        "thresholds": {
+          "0": {
+            "n": 56,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.0625
+              },
+              "range": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.053906250000000044
+              }
+            }
+          },
+          "0.3": {
+            "n": 56,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.0625
+              },
+              "range": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.053906250000000044
+              }
+            }
+          },
+          "0.5": {
+            "n": 56,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.0625
+              },
+              "range": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.053906250000000044
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080977_iw1",
+          "t038_080978_iw1"
+        ],
+        "kind": "along_track",
+        "thresholds": {
+          "0": {
+            "n": 152,
+            "axes": {
+              "azimuth": {
+                "median_signed": -0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.0625
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.0625
+              }
+            }
+          },
+          "0.3": {
+            "n": 129,
+            "axes": {
+              "azimuth": {
+                "median_signed": -0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.0625
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.046875
+              }
+            }
+          },
+          "0.5": {
+            "n": 34,
+            "axes": {
+              "azimuth": {
+                "median_signed": -0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.03125
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.02656249999999999,
+                "p99_absolute": 0.04171875000000003
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080977_iw1",
+          "t038_080976_iw2"
+        ],
+        "kind": "cross_swath",
+        "thresholds": {
+          "0": {
+            "n": 32,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.046875,
+                "median_absolute": 0.046875,
+                "p90_absolute": 0.0625,
+                "p99_absolute": 0.0625
+              },
+              "range": {
+                "median_signed": 0.0390625,
+                "median_absolute": 0.0390625,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.07328125000000002
+              }
+            }
+          },
+          "0.3": {
+            "n": 32,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.046875,
+                "median_absolute": 0.046875,
+                "p90_absolute": 0.0625,
+                "p99_absolute": 0.0625
+              },
+              "range": {
+                "median_signed": 0.0390625,
+                "median_absolute": 0.0390625,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.07328125000000002
+              }
+            }
+          },
+          "0.5": {
+            "n": 31,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.046875,
+                "median_absolute": 0.046875,
+                "p90_absolute": 0.0625,
+                "p99_absolute": 0.0625
+              },
+              "range": {
+                "median_signed": 0.046875,
+                "median_absolute": 0.046875,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.07343749999999999
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080977_iw1",
+          "t038_080977_iw2"
+        ],
+        "kind": "cross_swath",
+        "thresholds": {
+          "0": {
+            "n": 56,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.0234375,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.053906250000000044
+              },
+              "range": {
+                "median_signed": 0.0390625,
+                "median_absolute": 0.0390625,
+                "p90_absolute": 0.078125,
+                "p99_absolute": 0.13203125000000004
+              }
+            }
+          },
+          "0.3": {
+            "n": 45,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.055625000000000036
+              },
+              "range": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.0625,
+                "p99_absolute": 0.07125000000000004
+              }
+            }
+          },
+          "0.5": {
+            "n": 5,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.040625,
+                "p99_absolute": 0.04625
+              },
+              "range": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.040625,
+                "p99_absolute": 0.04625
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080978_iw1",
+          "t038_080979_iw1"
+        ],
+        "kind": "along_track",
+        "thresholds": {
+          "0": {
+            "n": 151,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.078125,
+                "p99_absolute": 0.2109375
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.109375,
+                "p99_absolute": 0.203125
+              }
+            }
+          },
+          "0.3": {
+            "n": 110,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.07968750000000013,
+                "p99_absolute": 0.21734374999999995
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.109375,
+                "p99_absolute": 0.19890624999999984
+              }
+            }
+          },
+          "0.5": {
+            "n": 35,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.15000000000000002,
+                "p99_absolute": 0.22906249999999995
+              },
+              "range": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.125,
+                "p99_absolute": 0.22843749999999963
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080978_iw1",
+          "t038_080977_iw2"
+        ],
+        "kind": "cross_swath",
+        "thresholds": {
+          "0": {
+            "n": 30,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.05796875000000001
+              },
+              "range": {
+                "median_signed": -0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.05796875000000001
+              }
+            }
+          },
+          "0.3": {
+            "n": 30,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.05796875000000001
+              },
+              "range": {
+                "median_signed": -0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.05796875000000001
+              }
+            }
+          },
+          "0.5": {
+            "n": 30,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.05796875000000001
+              },
+              "range": {
+                "median_signed": -0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.05796875000000001
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080978_iw1",
+          "t038_080978_iw2"
+        ],
+        "kind": "cross_swath",
+        "thresholds": {
+          "0": {
+            "n": 58,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.13281250000000033,
+                "p99_absolute": 4.7678125
+              },
+              "range": {
+                "median_signed": -0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.11875000000000013,
+                "p99_absolute": 22.065937499999997
+              }
+            }
+          },
+          "0.3": {
+            "n": 44,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.08921875000000001
+              },
+              "range": {
+                "median_signed": -0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.07359375000000001
+              }
+            }
+          },
+          "0.5": {
+            "n": 37,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.05687500000000001
+              },
+              "range": {
+                "median_signed": -0.015625,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.03125
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080979_iw1",
+          "t038_080978_iw2"
+        ],
+        "kind": "cross_swath",
+        "thresholds": {
+          "0": {
+            "n": 30,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0078125,
+                "median_absolute": 0.046875,
+                "p90_absolute": 0.1312500000000001,
+                "p99_absolute": 0.1875
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.0546875,
+                "p90_absolute": 0.11250000000000004,
+                "p99_absolute": 0.16734375
+              }
+            }
+          },
+          "0.3": {
+            "n": 29,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.046875,
+                "p90_absolute": 0.13749999999999996,
+                "p99_absolute": 0.1875
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.0625,
+                "p90_absolute": 0.11562499999999998,
+                "p99_absolute": 0.16749999999999998
+              }
+            }
+          },
+          "0.5": {
+            "n": 22,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0078125,
+                "median_absolute": 0.046875,
+                "p90_absolute": 0.18125000000000013,
+                "p99_absolute": 0.1875
+              },
+              "range": {
+                "median_signed": -0.03125,
+                "median_absolute": 0.0625,
+                "p90_absolute": 0.13750000000000007,
+                "p99_absolute": 0.16859375
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080979_iw1",
+          "t038_080979_iw2"
+        ],
+        "kind": "cross_swath",
+        "thresholds": {
+          "0": {
+            "n": 29,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.046875,
+                "median_absolute": 0.046875,
+                "p90_absolute": 0.11874999999999997,
+                "p99_absolute": 0.20124999999999993
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.046875,
+                "p90_absolute": 0.09375,
+                "p99_absolute": 0.13187499999999996
+              }
+            }
+          },
+          "0.3": {
+            "n": 13,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.08750000000000002,
+                "p99_absolute": 0.14874999999999994
+              },
+              "range": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.078125,
+                "p90_absolute": 0.09062500000000001,
+                "p99_absolute": 0.13499999999999995
+              }
+            }
+          },
+          "0.5": {
+            "n": 4,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.03125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.12343750000000002,
+                "p99_absolute": 0.15296875
+              },
+              "range": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.0578125,
+                "p99_absolute": 0.062031249999999996
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080975_iw2",
+          "t038_080976_iw2"
+        ],
+        "kind": "along_track",
+        "thresholds": {
+          "0": {
+            "n": 181,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.0625,
+                "p99_absolute": 0.33124999999999805
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.0625,
+                "p99_absolute": 0.25624999999999964
+              }
+            }
+          },
+          "0.3": {
+            "n": 160,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03125,
+                "p99_absolute": 0.21390624999999952
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.2628124999999999
+              }
+            }
+          },
+          "0.5": {
+            "n": 127,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.015625,
+                "p99_absolute": 0.13656249999999992
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.03750000000000009,
+                "p99_absolute": 0.27312499999999984
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080976_iw2",
+          "t038_080977_iw2"
+        ],
+        "kind": "along_track",
+        "thresholds": {
+          "0": {
+            "n": 181,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.078125,
+                "p99_absolute": 0.26874999999999805
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.078125,
+                "p99_absolute": 0.22187499999999982
+              }
+            }
+          },
+          "0.3": {
+            "n": 142,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.0625,
+                "p99_absolute": 0.3357812500000006
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.1931250000000002
+              }
+            }
+          },
+          "0.5": {
+            "n": 106,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.0390625,
+                "p99_absolute": 0.3976562500000005
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.046875,
+                "p99_absolute": 0.21406250000000027
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080977_iw2",
+          "t038_080978_iw2"
+        ],
+        "kind": "along_track",
+        "thresholds": {
+          "0": {
+            "n": 181,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.046875,
+                "p90_absolute": 2.703125,
+                "p99_absolute": 9.25312499999998
+              },
+              "range": {
+                "median_signed": 0.0,
+                "median_absolute": 0.046875,
+                "p90_absolute": 3.53125,
+                "p99_absolute": 33.318749999999696
+              }
+            }
+          },
+          "0.3": {
+            "n": 98,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.0234375,
+                "p90_absolute": 0.11406249999999996,
+                "p99_absolute": 0.32953125000000005
+              },
+              "range": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.09375,
+                "p99_absolute": 0.24140625000000027
+              }
+            }
+          },
+          "0.5": {
+            "n": 46,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.0,
+                "median_absolute": 0.015625,
+                "p90_absolute": 0.09375,
+                "p99_absolute": 0.3398437499999998
+              },
+              "range": {
+                "median_signed": 0.0078125,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.0859375,
+                "p99_absolute": 0.1851562499999997
+              }
+            }
+          }
+        }
+      },
+      {
+        "sources": [
+          "t038_080978_iw2",
+          "t038_080979_iw2"
+        ],
+        "kind": "along_track",
+        "thresholds": {
+          "0": {
+            "n": 180,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.0625,
+                "p90_absolute": 1.1343749999999986,
+                "p99_absolute": 9.605625000000007
+              },
+              "range": {
+                "median_signed": -0.015625,
+                "median_absolute": 0.0546875,
+                "p90_absolute": 4.996874999999998,
+                "p99_absolute": 35.33281250000004
+              }
+            }
+          },
+          "0.3": {
+            "n": 95,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.125,
+                "p99_absolute": 0.27968750000000053
+              },
+              "range": {
+                "median_signed": -0.015625,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.171875,
+                "p99_absolute": 1.5759375000000082
+              }
+            }
+          },
+          "0.5": {
+            "n": 42,
+            "axes": {
+              "azimuth": {
+                "median_signed": 0.015625,
+                "median_absolute": 0.03125,
+                "p90_absolute": 0.10781249999999998,
+                "p99_absolute": 0.14984374999999994
+              },
+              "range": {
+                "median_signed": -0.015625,
+                "median_absolute": 0.0234375,
+                "p90_absolute": 0.1656249999999999,
+                "p99_absolute": 0.3329687499999995
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}

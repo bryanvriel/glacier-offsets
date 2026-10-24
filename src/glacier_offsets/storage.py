@@ -26,14 +26,14 @@ def released_files(manifest, key, fingerprint):
     return {}
 
 
-def products_valid(products, manifest, key, fingerprint, *, allow_released=False, hashes=True):
+def products_valid(products, manifest, key, fingerprint, *, allow_released=False, hashes=True, checksums=None):
     if manifest.get(key) != fingerprint or not products:
         return False
     released = released_files(manifest, key, fingerprint) if allow_released else {}
     for name, digest in products.items():
         path = Path(name)
         if path.is_file():
-            if hashes and checksum(path) != digest:
+            if hashes and (checksum if checksums is None else checksums)(path) != digest:
                 return False
         elif path.exists() or released.get(name) != digest:
             return False

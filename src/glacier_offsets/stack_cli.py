@@ -16,15 +16,20 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog='glacier-offsets stack',
         epilog='Use glacier-offsets stack init --help to initialize a stack YAML.')
     parser.add_argument('command', choices=['stages', 'status', 'plan', 'validate', 'coregister', 'assemble', 'match',
-                                           'geocode', 'diagnostics', 'run'])
+                                           'geocode', 'diagnostics', 'run', 'rebuild-layout'])
     parser.add_argument('config', nargs='?')
     parser.add_argument('--backend', choices=['cpu', 'gpu', 'auto'])
     parser.add_argument('--force', action='store_true')
+    parser.add_argument('--dry-run', action='store_true', help='Verify and preview rebuild-layout without changing files')
     parser.add_argument('--json', action='store_true', help='Machine-readable stack status')
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
     if args.json and args.command != 'status':
         parser.error('--json is supported by status')
+    if args.dry_run and args.command != 'rebuild-layout':
+        parser.error('--dry-run is supported by rebuild-layout')
+    if args.command == 'rebuild-layout' and args.force:
+        parser.error('rebuild-layout preserves coregistration; --force is not supported')
     if args.command in ('stages', 'status') and args.force:
         parser.error('--force is not supported by read-only inspection commands')
     if args.command == 'stages':
@@ -47,6 +52,10 @@ def main(argv=None):
         cfg = load_stack_config(args.config, discovery=args.command == 'plan')
         if args.backend:
             cfg['matching']['backend'] = args.backend
+        if args.command == 'rebuild-layout':
+            from .stack_rebuild import rebuild_layout
+            print(json.dumps(rebuild_layout(cfg, dry_run=args.dry_run), indent=2))
+            return 0
         if args.command in ('plan', 'validate'):
             plan = plan_stack(cfg)
             if args.command == 'validate':

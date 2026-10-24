@@ -133,6 +133,8 @@ def main():
             if not unchanged or max_difference>1/32:
                 raise AssertionError('Full-AOI unchanged-source controls failed')
             for cut in frame['ownership']['cuts']:
+                if 'cut_global_line' not in cut:
+                    continue  # This diagnostic measures along-track joins only.
                 lower=next(s for s in old['sources'] if s['burst_id']==cut['lower_burst_id'])
                 old_cut=lower['offset'][0]+lower['valid_window'][0]
                 # Read-only descriptive count: same-column neighbors agree on

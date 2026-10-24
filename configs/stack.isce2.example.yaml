@@ -1,0 +1,16 @@
+# Replace the inherited input paths and use an unused output root.
+extends: stack.example.yaml
+stack:
+  processing: isce3_merge_first
+  swath_merge: overwrite  # midpoint keeps burst overwrites but switches swaths inside the overlap.
+output:
+  directory: ../work/pig/stack-isce2-example
+matching:
+  engine: isce2  # Select isce3 here to keep this merge policy with ISCE3 Ampcor.
+  backend: cpu
+  zoom: 8  # DenseAmpcor's default refinement zoom; larger native values are also supported.
+  correlation_threshold: 0.0  # ISCE2 exposes SNR/covariance, not the refined peak.
+  isce2:
+    python: null  # Set a separate ISCE2 Python executable if needed.
+    packages: null  # Optional parent directory of the installed isce/isce2 package.
+    library_path: null  # Optional native-library directory; affects only the ISCE2 child.

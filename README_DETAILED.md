@@ -55,6 +55,15 @@ The inspected native **PyCPUAmpcor 0.25.21 does not parallelize its chunk loop**
 
 `--force` repeats the requested computation (`run --force` repeats all stages). Run identity includes inputs' SHA256 hashes, software versions, polarization, selected burst, matching parameters and gross mode/values. A change in matching/gross configuration invalidates matching and geocoding, while retaining geometric coregistration. Later stage commands reject stale preceding stages. Input hashes are checked even on restart; this takes time for large SAFE files. A failed stage clears its completion identity. A source SHA256 snapshot is recorded at validation; after editing workflow code, explicitly force the affected stages. Successful unchanged `run` reuses coregistration, matching and geocoding and refreshes diagnostics.
 
+Within a stack invocation, reference, alignment and assembly verification
+reuse SHA-256 digests for unchanged product files. Each lookup still checks file identity, size and
+modification/change timestamps; changed or replaced files are hashed again, and
+files changing during hashing are rejected. The cache is discarded between
+invocations, so restart still verifies existing products and raw inputs afresh.
+Verification logs identify the current acquisition, and the catalog's `metrics`
+record product files/bytes hashed and checksum-cache hits. This optimization
+does not invalidate existing products or require `--force`.
+
 ## Local inputs
 
 ### Download bursts for an AOI
@@ -181,6 +190,306 @@ invalid resulting footprints still fail validation. Downloaded XML and imagery
 remain unchanged; existing collections do not need downloading or preparation
 again for this correction. Regenerate saved stack plans to update coverage.
 
+### Merge-first stacks
+
+Set `stack.processing: isce3_merge_first` in a stack YAML to use stack-common
+valid rectangles and later-source overwrite merging, assembled by the
+ISCE3-backed compositor. This selector uses the ISCE3 matcher unless
+`matching.engine: isce2` is given explicitly. See
+[the example configuration](configs/stack.merge-first.example.yaml):
+
+```yaml
+stack:
+  processing: isce3_merge_first
+  swath_merge: midpoint
+matching:
+  engine: isce3
+  backend: cpu
+  deramp: 0
+  zoom: 16
+```
+
+`isce2_merge_first` is the earlier, deprecated name for the same merge policy;
+loading it logs a deprecation warning. Both selectors use the ISCE3
+compositor, which replaced the original GDAL merger after the Larsen parity
+gates (October 24). Omitting the engine under the deprecated name still
+selects the ISCE2 matcher. Both selectors share policy records and cache
+identities with stacks the GDAL merger produced, so those roots keep their
+geometry, aligned bursts, assemblies and pair products without `--force`;
+released merged SLCs are rebuilt by the ISCE3 compositor with identical pixels
+and masks. Manifests record `layout_implementation` and
+`assembly_implementation` for products the ISCE3 compositor wrote; these
+records enter no cache identity. The existing
+`stack.processing: isce3` interior-ownership policy is unchanged.
+
+The ISCE3 matcher needs no ISCE2 installation or runtime probe. The existing
+ISCE3 CPU worker scheduling and GPU selection still apply. Changing only the
+matcher preserves pinned geometry, common validity, and aligned acquisitions;
+it invalidates offsets, geocoding and diagnostics. Rerunning in the same root
+replaces those pair results. Released merged SLCs are reassembled from retained
+aligned bursts. Preserve the earlier pair outputs before comparing engines.
+
+To keep the common valid rectangles and later-burst overwrites but move the
+cross-swath switch into the overlap interior, add:
+
+```yaml
+stack:
+  processing: isce3_merge_first
+  swath_merge: midpoint
+matching:
+  engine: isce3
+  deramp: 0
+```
+
+`swath_merge` defaults to `overwrite`. The `midpoint` option resolves burst
+overwrites within each swath first, then cuts adjacent swath support at the
+range midpoint for each azimuth interval. It retains unshared coverage and
+requires at least 16 samples of overlap (eight per side). The same fixed owner
+supplies SLCs and geometry on every date; unavailable samples remain masked.
+
+For an existing common-valid stack, use the controlled rebuild before running:
+
+```bash
+glacier-offsets stack rebuild-layout configs/stack.swath-midpoint.yaml --dry-run
+glacier-offsets stack rebuild-layout configs/stack.swath-midpoint.yaml
+OMP_NUM_THREADS=8 glacier-offsets stack run configs/stack.swath-midpoint.yaml --backend cpu
+```
+
+This verifies and preserves COMPASS reference/aligned bursts, resampling offsets
+and per-date validity metadata. It replaces ownership geometry, deletes pair
+outputs and temporary assemblies, and journals the change for restart. Reference
+inputs, selection and software must match the existing stack. Switching back
+to `swath_merge: overwrite` uses the same rebuild command.
+
+For an isolated full-pair test that preserves the baseline, use a config with
+the settings above and a new comparison directory outside the source stack:
+
+```bash
+OMP_NUM_THREADS=8 python tools/compare_stack_engines.py configs/stack.isce3.yaml \
+  /path/to/stack/pairs/2017-01-01_2017-01-07 --output /path/to/comparison
+```
+
+The tool verifies retained aligned inputs, reconstructs the saved ownership,
+runs matching/geocoding/diagnostics, checks identical grid and input support,
+and writes `comparison.json` and `matcher_comparison.png`. It releases its
+temporary merged SLCs after completion. It requires a saved ISCE2 baseline
+with zero or constant gross offsets; velocity-prior comparisons are excluded.
+
+To compare ISCE3 `deramp: 0` and `deramp: 1` independently in IW1 and IW2,
+use the same-patch overlap diagnostic on a saved zero-gross, `deramp: 0` pair:
+
+```bash
+PYTHONPATH=src:.runtime/deps MPLCONFIGDIR=/tmp/glacier-mpl OMP_NUM_THREADS=4 \
+  /Users/briel/miniforge3/envs/isce3/bin/python tools/compare_swath_overlap.py \
+  /path/to/stack/pairs/2017-01-19_2017-01-25 \
+  --output /path/to/new-deramp-comparison --workers 4 --compare-deramp
+```
+
+The command verifies retained aligned burst SLCs, selects each swath's latest
+fully supported source before matching, and runs both modes at identical saved
+global centers. Both workers read unspliced aligned bursts. Chip/search sizes,
+stride, native refinement settings, thresholds, geometry and support are fixed;
+only `deramp` changes. Source data and production results remain read-only.
+For triangles or new date pairs in the same stack, add
+`--acquisition-dates 2017-05-31 2017-06-12 --compare-deramp`. This reads those
+aligned acquisitions directly on the saved grid, verifies their input checksums,
+and omits comparisons against the template pair's merged offsets. The template
+may use either deramp mode; both unspliced modes are run for the requested dates.
+No merged SLC assembly or full-field matching is needed for this diagnostic.
+The output must be a new directory outside the source stack; there is no resume
+mode. Omit `--compare-deramp` for the original magnitude-first diagnostic.
+
+`deramp-0/` and `deramp-1/` retain all per-burst raw observations, native files,
+quality/failure masks, effective parameters, combined `observations.npz`, reports
+and individual plots. The root `selection.npz` records source owners and support
+before either mode runs. Root `report.json`, `comparison_masks.npz` and
+`deramp_comparison.png` compare both offset components, with fixed-support,
+burst-interior, baseline-quality and common-quality groups. Inspect validity
+transitions and sample counts alongside disagreement statistics: a smaller
+disagreement on fewer observations does not establish improvement or accuracy.
+No observations are selected for agreement, and failed owners never fall back
+to another burst. Native job exceptions are retained in reports while independent
+jobs continue; incomplete comparisons exit 1. `progress.json` records completed
+jobs, including failures. Initial integrity checks can take time before matching
+workers start. This diagnostic does not change production defaults or establish
+absolute glacier-motion accuracy.
+
+To isolate range input preparation further, use a completed paired-deramp
+diagnostic as a read-only baseline:
+
+```bash
+PYTHONPATH=src:.runtime/deps MPLCONFIGDIR=/tmp/glacier-mpl OMP_NUM_THREADS=4 \
+  /Users/briel/miniforge3/envs/isce3/bin/python -m tools.compare_swath_range_oversampling \
+  /path/to/completed-deramp-comparison \
+  --output /path/to/new-range-control --workers 4
+```
+
+This verifies the exact aligned inputs used by the baseline, interpolates full
+complex rows at twice the range sampling, and retains only strips around the
+original matching patches. It performs no azimuth interpolation or deramping
+before native magnitude detection. A quarter-original-pixel origin adjustment
+keeps physical chip centers and pixel-cell footprints fixed as window, search
+and stride double in range. Offsets and covariance are converted back to original
+pixel units; original support and source ownership are retained without fallback.
+Native raw/refinement factors and zoom stay fixed, so range quantization is finer
+and the physical native range-refinement extent is smaller. These differences,
+SNR normalization and full-row periodic interpolation are explicit limitations
+of this control. Reports compare unchanged baseline-quality cohorts and include
+the earlier `deramp: 1` observations. `range_control.png`, `report.json`, per-burst
+NPZ/native files, and prepared strip TIFFs are retained in the new output root.
+
+For the full merged pair, compare both treatments against its saved magnitude
+baseline without writing to the production stack:
+
+```bash
+PYTHONPATH=src:.runtime/deps MPLCONFIGDIR=/tmp/glacier-mpl OMP_NUM_THREADS=4 \
+  /Users/briel/miniforge3/envs/isce3/bin/python -m tools.compare_merged_preprocessing \
+  configs/stack.larsen.swath-midpoint.yaml /path/to/stack/pairs/2017-01-19_2017-01-25 \
+  --output /path/to/new-full-merged-comparison --workers 4
+```
+
+The tool reconstructs both merged SLCs from retained aligned bursts using the
+saved layout and requires their checksums to match the baseline. Native workers
+read complete merged images across scheduling boundaries in both treatments.
+The range-2x adapter transforms each segment's coordinates and converts its
+results back to original units before normal offset publication, geocoding and
+diagnostics. Original input support, source ownership and seam flags must agree
+exactly. Both variants reuse saved center geometry and the pinned map grid.
+`comparison.json`, `radar_comparison.png`, `radar_changes.png`, and
+`geo_comparison.png` retain full-field results and common-valid comparisons,
+including seam/interior groups and quality attrition. Temporary merged and
+range-oversampled images are released only after a successful comparison;
+native results, radar offsets, maps, previews and provenance remain. Choose a
+new output directory; this utility has no resume option. The range-only control
+limitations above also apply to the full merged experiment.
+
+For a scalar refinement-zoom sensitivity experiment, add `--zoom 32` and
+`--zoom-baseline /path/to/completed-full-merged-comparison`, using another new
+output directory. Only zoom may differ from the saved treatment settings.
+Requested zooms that would be silently clipped by the native search cap are
+rejected. With raw oversampling two, zoom 16 gives refinement half-widths
+`[4, 4]` original pixels for native `deramp: 1` and `[4, 2]` for range-2x;
+zoom 32 gives `[8, 8]` and `[8, 4]`, respectively. Thus range-2x/zoom-32
+restores the range extent of native/zoom-16 while expanding azimuth extent.
+The tool verifies actual native zoom and writes `zoom_sensitivity.json`, shared
+four-treatment masks, `zoom_changes.png` and `zoom_field_comparison.png`.
+The report separates validity transitions, seam/interior changes, large tails,
+native pool wall time and maximum individual-worker RSS; that RSS excludes
+the parent and does not measure concurrent process-tree memory.
+
+This strategy retains COMPASS geometry-only coregistration. For each aligned
+secondary burst it reads the actual COMPASS azimuth/range offset extrema and
+ports ISCE2's `adjustValidSampleLine_V2` validity adjustment, including its
+four/eight-pixel interpolation margins and sign cases. COMPASS offsets already
+refer to secondary-local indices; ISCE2's separate relative-burst shift must
+not be added a second time. Rectangles are clipped to the physical raster.
+It then intersects reference and complete-date burst rectangles across all
+active dates before assembling any SLC. Partial dates are excluded from this
+intersection, following ISCE2's incomplete-acquisition handling, but retain
+their available imagery. A failed alignment blocks common-layout preparation
+instead of silently changing the inventory.
+
+With `swath_merge: overwrite`, SLCs are merged in ascending swath/time order:
+later valid rectangles overwrite earlier ones. With `midpoint`, this overwrite
+rule applies within each swath before the range cuts described above. Neither
+option interpolates, blends, or substitutes sources for missing imagery. Geometry and source indices use the same
+ownership.
+
+The compositor plans source placements, common validity and ownership once as
+an immutable plan. The categorical ownership raster, geometry VRTs, date SLCs
+and pair intervals all consume that plan. Placement uses ISCE3 radar grids with
+the same epoch reconciliation, rounding and 0.001-pixel tolerance as before;
+incompatible sampling and fractional placement are still rejected. Aligned
+bursts are read and `slc.tif`, its external mask and `valid.tif` are written in
+64-line `isce3.io.Raster` blocks, without a full-scene array. GDAL remains only
+for TIFF creation options, external masks, VRTs and ancillary-file lists. The
+frozen GDAL merger is kept only in `tools/reference_stack_merge.py`, for parity
+tests and the gate tool. To compare both on a saved stack without modifying it:
+
+```bash
+PYTHONPATH=src:.runtime/deps OMP_NUM_THREADS=8 \
+  /Users/briel/miniforge3/envs/isce3/bin/python -m tools.compare_stack_mosaic \
+  configs/stack.larsen.swath-midpoint.yaml --output /path/to/new-mosaic-parity
+```
+
+This verifies retained reference and aligned burst checksums, rebuilds both
+swath policies with each implementation, compares every layout and date raster
+block by block, and matches the selected pairs (`--pairs`, default January 1–7
+and 19–25) on each implementation's SLCs plus a reference replay control.
+`comparison.json` records per-field differences, validity transitions, wall
+time, block I/O, per-process peak RSS and production size/timestamp/checksum
+checks. Temporary SLCs are removed unless `--keep-slcs` is given. Matching workers always read these **merged** SLCs, including across
+worker boundaries. `OMP_NUM_THREADS` is the maximum number of independent CPU
+matching processes; date preparation and pairs remain sequential. Constant and
+velocity-guided gross offsets retain the existing sign convention and are
+subtracted from ISCE2's returned total to record the residual exactly once.
+
+The adapter calls `mroipac.ampcor.Ampcor`, the same Fortran kernel used by
+ISCE2 DenseAmpcor, with both input types set to `mag`. It preserves our explicit
+matching grid instead of DenseAmpcor's automatic grid and fork wrapper.
+Raw oversampling is fixed at two; `oversampling` and `zoom` map to ISCE2's native
+refinement settings. `deramp` and `batch` are ISCE3 settings and do not control
+this engine. Native covariance is converted from range/azimuth order into our
+azimuth/range convention. This implements ISCE2 validity/merge/matching on
+COMPASS-aligned inputs; it does not replace COMPASS with ISCE2 resampling or NESD.
+
+ISCE2 can run in a separate environment. All paths resolve relative to the
+YAML that declares them. For this machine's existing installation:
+
+```yaml
+stack:
+  processing: isce3_merge_first
+matching:
+  engine: isce2
+  backend: cpu
+  zoom: 8
+  correlation_threshold: 0.0
+  isce2:
+    python: /Users/briel/miniforge3/envs/isce/bin/python
+    packages: /Users/briel/apps/isce2/packages
+    library_path: /Users/briel/miniforge3/envs/gmt/lib
+output:
+  directory: /path/to/new/stack-isce2
+```
+
+`python: null` uses the workflow's interpreter when ISCE2 is installed there.
+`packages` and `library_path` are optional; the latter is needed only when the
+native installation needs additional library resolution. Environment overrides
+apply only to the child process. The local library path above supplies the GDAL
+ABI required by this particular ISCE2 build; it is not a general installation
+requirement. Runtime import errors fail before stack mutation. Engine version,
+native binary and Python wrapper checksums enter matching provenance and cache
+identities. There is no ISCE3 fallback for an ISCE2 request.
+
+ISCE2 does not expose a refined normalized correlation peak. That field and
+its geocoded raster are explicitly NaN; they do not reject otherwise accepted
+offsets. Use `snr_threshold` for additional quality selection and leave
+`correlation_threshold: 0`. GPU requests are rejected for this CPU engine.
+
+Use a new output root when switching an existing midpoint stack to common
+validity. `rebuild-layout` supports the earlier midpoint-policy repair and
+switches between the two common-valid swath merge policies described above.
+On an ISCE2 stack, extending/filtering the active date inventory recomputes
+common validity. Aligned burst products remain cached, but changed common
+validity invalidates affected assembly and pair identities. The map extent
+is retained from initial reference preparation. Completed merged SLCs retain
+the normal bounded-storage cleanup/rebuild behavior.
+
+```bash
+glacier-offsets stack validate configs/stack.isce2.example.yaml --backend cpu
+OMP_NUM_THREADS=4 glacier-offsets stack run configs/stack.isce2.example.yaml --backend cpu
+```
+
+Native integration tests can be enabled without installing ISCE2 into the
+COMPASS environment:
+
+```bash
+GLACIER_ISCE2_PYTHON=/Users/briel/miniforge3/envs/isce/bin/python \
+GLACIER_ISCE2_PACKAGES=/Users/briel/apps/isce2/packages \
+GLACIER_ISCE2_LIBRARY_PATH=/Users/briel/miniforge3/envs/gmt/lib \
+OMP_NUM_THREADS=2 python -m unittest discover -s tests -v
+```
+
 ### Reference-geometry stacks
 
 If you have only SAFE scenes, first use the [input preparation command](#prepare-orbits-and-a-dem).
@@ -272,9 +581,13 @@ available date/burst directly from its original SLC onto that reference grid.
 mask is stored externally as `slc.tif.msk` to keep SLC strips contiguous for
 native CPU Ampcor on macOS; keep this file beside `slc.tif`. Reference
 annotation and actual SLC support determine fixed overlap ownership. Shared
-regions switch at their azimuth midpoint, at least eight SLC lines inside both
-valid edges; overlaps narrower than 16 lines are rejected. Unshared coverage is
-preserved. The cut and its policy are recorded in the geometry and pair manifests.
+regions within a swath switch at their azimuth midpoint, at least eight SLC lines
+inside both valid edges; overlaps narrower than 16 lines are rejected. Between
+swaths, the switch lies at the range midpoint of their shared support, at least
+eight samples inside both valid edges; overlaps narrower than 16 samples are
+rejected. Along-track cuts are resolved first, then swath support is partitioned
+in range, preserving coverage at staggered burst junctions. Unshared coverage is
+preserved. Cuts and their policy are recorded in the geometry and pair manifests.
 Support uses the same connected-zero-fill
 policy as matching: isolated complex zeros remain valid observations, while
 explicit invalid masks, nonfinite samples and connected zero fill remain nodata.
@@ -307,10 +620,42 @@ radar grid; neither the matching template nor the source SLCs are cropped or
 shifted. Full chip/search support, exact burst intervals and seam flags retain
 their existing definitions. At most one native call per burst is in flight, and
 workers recycle after four native calls to bound unreleased Ampcor allocations.
+For full-grid zero/constant matching, raw results in unowned or unavailable
+regions are retained. These regions use a shared queue instead of one burst's
+lane, with tasks bounded to at most half the average worker window count. Idle
+workers can process them concurrently while each real burst still has at most
+one native call in flight. Scientific source ownership and masks are unchanged.
 The parent combines results and publishes the pair product only after all work
 succeeds. Worker limits, PIDs, thread limits, native timings and wall time are
 recorded in the matching metadata. Extra workers increase RAM and concurrent SLC
 reads; the limit is a CPU budget, not an automatic memory or storage tuner.
+CPU stack matching pins FFTW's measured plans. ISCE3's CPU Ampcor compiles in
+`FFTW_MEASURE`, so workers that start together otherwise time FFT algorithms
+independently and can choose plans that round differently. That moves
+near-tied, low-SNR correlation peaks by one oversampled sample (1/64 px with
+raw oversampling 2 and oversampling 32). The first match in a stack runs one
+quiet spawned process that plans every native chunk shape on synthetic rasters
+(about 5 s) and writes `<stack>/.cache/fftw/<key>.wisdom`, with the key
+inputs in a matching `.json`. The key covers the FFTW version and library
+checksum, the ISCE3 version, the machine and CPU model, and `window`,
+`search`, `batch`, `raw_oversampling`, `oversampling`, `zoom` and `deramp`.
+Workers import that file before planning and never rewrite it; a missing file
+is an error. Repeated matching of the same pair on the same host and build is
+then bit-identical at any worker count. Segment metadata records
+`fftw_wisdom_sha256` and `fftw_wisdom_extended` (true if a call still had to
+measure a plan), and `native_parameters.fftw_wisdom` records the file. The
+wisdom enters no cache identity, so completed pairs are not rematched; pairs
+matched before pinning can differ from new ones by 1/64 px in about 0.1% of
+valid windows. Wisdom is not portable across hosts or builds: compare such
+runs with a tolerance of 1/(raw_oversampling × oversampling) px in valid
+windows. Deleting `.cache/fftw` remeasures it on the next match. Standalone
+pair/AOI matching and tools that call the matcher directly keep the temporary
+per-invocation plan cache. GPU (cuFFT) matching is unaffected.
+
+Shared tasks record `work_kind: unowned_or_inactive` and a null
+`scheduling_burst_id`; each segment includes its native elapsed time. Scheduling
+strategy v2 preserves completed matching products. Restart a running process to
+use the new scheduler for remaining pairs; no `--force` is needed.
 
 GPU matching remains sequential on the selected GPU. `auto` uses the CPU worker
 policy when it selects CPU; a runtime GPU-to-CPU fallback remains sequential for
@@ -370,7 +715,45 @@ stage errors, elapsed time, storage and process memory high-water marks.
 
 Synthetic native and regression validation, plus the outstanding real-data
 gates, are recorded in [stack validation](docs/stack-processing/README.md).
-Stacks built with earlier ownership policies require a new output root.
+Stacks using `reference-overlap-midpoint-v1` can update ownership **in the same
+output directory**, retaining their verified COMPASS reference and aligned burst
+products. Stop any running stack process first, then use the same configuration:
+
+```bash
+glacier-offsets stack rebuild-layout configs/stack.generated.yaml --dry-run
+glacier-offsets stack rebuild-layout configs/stack.generated.yaml
+OMP_NUM_THREADS=4 glacier-offsets stack run configs/stack.generated.yaml --backend cpu
+```
+
+The dry run verifies retained-product checksums and reports reuse counts without
+writing files; verification can take time on a large stack. The rebuild permits
+only this ownership-policy update with unchanged reference inputs, selection and
+software. It replaces the ownership raster and geometry mosaic, removes date
+assemblies/previews and all registered pair directories (matching, geocoding and
+diagnostics), and updates cache identities for every saved date, including dates
+outside the current filters. The next `run` regenerates merged SLCs on demand and
+recomputes pair outputs. Completed COMPASS products are reused; missing or
+unfinished bursts are prepared normally. Use `run` without `--force`.
+
+Metadata backups and a resumable journal are stored under `.layout-rebuild/`.
+After an interrupted rebuild, rerun the same rebuild command; normal processing
+is blocked until it finishes. Writer locking prevents concurrent processing or
+rebuilds in the same root. Stop processes launched with older software too,
+because those processes do not acquire the lock. Other reference, software or
+support-policy changes still require a new output root.
+
+Retained aligned bursts can also be checked in isolation without rerunning
+COMPASS or modifying a production stack:
+
+```bash
+python tools/validate_swath_ownership.py /path/to/old-stack \
+  --pair 2017-01-01_2017-01-07 --output /path/to/new-validation \
+  --native-samples 19700 21100
+```
+
+The tool assembles both dates in the new directory, reports full chip/search
+support and optional native matching controls around the requested range strip.
+Its output is a validation artifact, not a resumable production stack.
 [stack.pig.interior.yaml](configs/stack.pig.interior.yaml) inherits the PIG
 configuration and uses `work/pig/stack-interior` for the interior-cut policy:
 

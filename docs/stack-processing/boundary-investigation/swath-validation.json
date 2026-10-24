@@ -1,0 +1,164 @@
+{
+  "dates": [
+    {
+      "date": "2017-01-01",
+      "supported_windows": 70052
+    },
+    {
+      "date": "2017-01-07",
+      "supported_windows": 69675
+    }
+  ],
+  "lost_windows": 0,
+  "native": {
+    "max_control_difference_px": 0.015625,
+    "new_valid": 2330,
+    "recovered_valid": 327,
+    "samples": [
+      19700,
+      21100
+    ],
+    "unchanged_controls": 1286,
+    "windows": 2497
+  },
+  "new_input_valid": 69675,
+  "old_input_valid": 69348,
+  "output": "/Users/briel/data/insar/glacier_offsets/seam_investigation/interior-swath-validation",
+  "ownership": {
+    "cuts": [
+      {
+        "cut_global_line": 1424,
+        "lower_burst_id": "t038_080976_iw1",
+        "overlap_global": [
+          1363,
+          1485,
+          870,
+          20567
+        ],
+        "upper_burst_id": "t038_080975_iw1"
+      },
+      {
+        "cut_global_line": 2765,
+        "lower_burst_id": "t038_080977_iw1",
+        "overlap_global": [
+          2703,
+          2827,
+          870,
+          20567
+        ],
+        "upper_burst_id": "t038_080976_iw1"
+      },
+      {
+        "cut_global_line": 4107,
+        "lower_burst_id": "t038_080978_iw1",
+        "overlap_global": [
+          4046,
+          4168,
+          870,
+          20567
+        ],
+        "upper_burst_id": "t038_080977_iw1"
+      },
+      {
+        "cut_global_line": 5449,
+        "lower_burst_id": "t038_080979_iw1",
+        "overlap_global": [
+          5388,
+          5511,
+          970,
+          20567
+        ],
+        "upper_burst_id": "t038_080978_iw1"
+      },
+      {
+        "cut_global_line": 1886,
+        "lower_burst_id": "t038_080976_iw2",
+        "overlap_global": [
+          1827,
+          1946,
+          20023,
+          43557
+        ],
+        "upper_burst_id": "t038_080975_iw2"
+      },
+      {
+        "cut_global_line": 3228,
+        "lower_burst_id": "t038_080977_iw2",
+        "overlap_global": [
+          3171,
+          3286,
+          20023,
+          43557
+        ],
+        "upper_burst_id": "t038_080976_iw2"
+      },
+      {
+        "cut_global_line": 4571,
+        "lower_burst_id": "t038_080978_iw2",
+        "overlap_global": [
+          4512,
+          4631,
+          20023,
+          43557
+        ],
+        "upper_burst_id": "t038_080977_iw2"
+      },
+      {
+        "cut_global_line": 5911,
+        "lower_burst_id": "t038_080979_iw2",
+        "overlap_global": [
+          5854,
+          5969,
+          20114,
+          43558
+        ],
+        "upper_burst_id": "t038_080978_iw2"
+      },
+      {
+        "cut_global_sample": 20295,
+        "far_swath": "iw2",
+        "near_swath": "iw1",
+        "overlap_global": [
+          485,
+          5388,
+          20023,
+          20567
+        ]
+      },
+      {
+        "cut_global_sample": 20344,
+        "far_swath": "iw2",
+        "near_swath": "iw1",
+        "overlap_global": [
+          5388,
+          5969,
+          20023,
+          20666
+        ]
+      },
+      {
+        "cut_global_sample": 20390,
+        "far_swath": "iw2",
+        "near_swath": "iw1",
+        "overlap_global": [
+          5969,
+          6854,
+          20114,
+          20666
+        ]
+      }
+    ],
+    "edge_margin_lines": 8,
+    "edge_margin_samples": 8,
+    "method": "reference-swath-interior-midpoint-v2",
+    "missing_support": "mask; no source substitution",
+    "narrow_overlap": "error"
+  },
+  "pair": "2017-01-01_2017-01-07",
+  "recovered_windows": 327,
+  "scope": "Retained aligned SLCs; support validation is not displacement accuracy validation.",
+  "source": "/Volumes/thinkplus/insar/glacier_offsets/work/larsen/stack",
+  "source_sizes_mtimes_unchanged": true,
+  "status": "complete",
+  "windows": 77634
+}

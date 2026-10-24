@@ -24,10 +24,20 @@
 !/configs/pair.pig.velocity.yaml
 !/configs/pair.pig.aoi.yaml
 !/configs/stack.example.yaml
+!/configs/stack.isce2.example.yaml
+!/configs/stack.merge-first.example.yaml
 !/configs/stack.pig.yaml
 !/configs/stack.pig.validity.yaml
 !/configs/stack.pig.interior.yaml
 !/docs/stack-processing/README.md
+!/docs/stack-processing/SWATH_CORRECTION_ENHANCEMENT.md
+!/docs/stack-processing/HANDOFF_2026-10-24.md
+!/docs/stack-processing/handoff-2026-10-24/state.json
+!/docs/stack-processing/handoff-2026-10-24/independent-swath-overlap.json
+!/docs/stack-processing/handoff-2026-10-24/independent-swath-differences.png
+!/docs/stack-processing/handoff-2026-10-24/hybrid-full-pair.json
+!/docs/stack-processing/handoff-2026-10-24/hybrid-production-review.json
+!/docs/stack-processing/mosaic-parity.json
 !/docs/stack-processing/validation.json
 !/docs/stack-processing/validity-audit.json
 !/docs/stack-processing/boundary-investigation/README.md
@@ -35,6 +45,12 @@
 !/docs/stack-processing/boundary-investigation/native-comparison/join-1-range-20000.png
 !/docs/stack-processing/boundary-investigation/interior-validation.json
 !/docs/stack-processing/boundary-investigation/interior-2020-01-18_2020-01-24.png
+!/docs/stack-processing/boundary-investigation/swath-validation.json
+!/docs/stack-processing/boundary-investigation/swath-support-comparison.png
+!/docs/stack-processing/boundary-investigation/larsen-march2017-comparison.json
+!/docs/stack-processing/boundary-investigation/larsen-march2017-azimuth-comparison.png
+!/docs/stack-processing/boundary-investigation/larsen-march2017-range-comparison.png
+!/docs/stack-processing/boundary-investigation/larsen-march2017-isce2-merge-audit.json
 
 # Exclude entire data/output/document/runtime trees, including the data symlink.
 /data

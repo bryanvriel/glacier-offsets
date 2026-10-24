@@ -1,5 +1,15 @@
 # Reference-geometry stack validation
 
+Start with the [October 24 hand-off](HANDOFF_2026-10-24.md) for the current
+Larsen configuration, selectable merge/matcher strategies, completed diagnostics,
+and unresolved range-swath differences. The sections below retain the earlier
+validation history; their dated production recommendations are historical.
+
+The [proposed swath-correction enhancement](SWATH_CORRECTION_ENHANCEMENT.md)
+records physical forward modeling and empirical overlap-network calibration as
+separate strategies, with application conventions, validation gates and an
+implementation sequence. It is a design note; no production correction is enabled.
+
 The [October 22 burst-boundary investigation](boundary-investigation/README.md)
 uses corrected real three-date products and controlled native matching to trace
 the January 18–24 stripes to edge-amplitude notches at the SLC ownership cuts.
@@ -7,6 +17,62 @@ Interior ownership is now the stack default, with a versioned pin and an
 [isolated full-AOI validation](boundary-investigation/interior-validation.json).
 The original stack remains unchanged. The historical input-access notes below
 describe earlier checks, not current local availability.
+
+## ISCE3 merge-first compositor parity (October 24)
+
+`stack.processing: isce3_merge_first` selects the ISCE3-backed compositor in
+`stack_mosaic`. It was checked against the frozen GDAL merger
+(`tools/reference_stack_merge.py`) on the six-date Larsen pilot using
+`tools.compare_stack_mosaic`. The production root was read only. Its layout
+checksums still match their records, and no watched file was modified. A
+compact record is in [mosaic-parity.json](mosaic-parity.json). The full report
+and retained layouts are in
+`/Volumes/thinkplus/insar/glacier_offsets/work/larsen/experiments/isce3-mosaic-parity-20261024/`.
+
+- **Layouts.** For both swath policies, source placements, ownership windows,
+  cuts, the radar grid, `source.tif` and all four geometry VRTs are identical.
+  The midpoint layout also reproduces production's ownership raster and
+  geometry exactly. The `source.tif` *bytes* differ even though the pixels are
+  equal. Existing layouts are reused, so their byte-based identities stay the
+  same; a newly written layout gets a new identity.
+- **Dates.** Under both policies, all 12 date compositions (7336 × 44088) have
+  zero differing complex samples, external-mask values or validity samples,
+  with identical counts, including unsupported regions. The midpoint SLCs from
+  both implementations are byte-identical to the checksums production recorded
+  before releasing its merged SLCs. Native CPU Ampcor can memory-map every
+  output.
+- **Matching.** Both pairs were matched with the unchanged ISCE3 matcher and the
+  production settings (8 workers, `deramp: 0`, zoom 16, zero gross). Input-
+  validity, validity, ownership, seam and center grids are identical.
+  - January 19–25: the reference, ISCE3 and replay runs are equal in every
+    dataset.
+  - January 1–7: the ISCE3 run equals the replay control bit for bit. Both
+    differ from the first reference run in 28 azimuth and 47 range windows of
+    77,634, each by exactly 1/64 pixel.
+- **Native run-to-run variation.** This is independent of the compositor. It
+  occurs on byte-identical inputs, in low-SNR windows (median SNR 2.3, against
+  10.5 for all valid windows). The saved production offsets differ from
+  today's runs in 45–138 windows per component, by up to 29 pixels where a
+  different near-tied peak is chosen; validity is unchanged. This existing
+  matcher behavior should be investigated separately; agreement filtering was
+  not applied.
+- **Cost.** Alternating controlled runs on one date, writing to the internal
+  disk: median 13.3 s for the reference and 13.9 s for ISCE3. Peak RSS was
+  1.13–1.23 GB for the reference and 1.28–1.30 GB for ISCE3, about 0.1 GB more
+  for the ISCE3 library. That is below the 2.6 GB of a single full-scene
+  complex array. Gate-run timings on the exFAT volume include write-back of
+  retained outputs. The first draft of the compositor kept an SLC and its
+  external `.msk` open as two writers, which made closing take about 260 s on
+  exFAT. It now writes the mask in a separate pass, and a regression test
+  guards against concurrent SLC/mask writers.
+
+After review, both merge-first selectors were cut over to the ISCE3
+compositor, with `isce2_merge_first` kept as a deprecated alias. The in-source
+GDAL merge-first path was removed; its frozen copy remains only in
+`tools/reference_stack_merge.py` for the parity tests and
+`tools.compare_stack_mosaic`. Policy records and cache identities are
+unchanged, so existing stacks need no rebuild. Production configurations and
+completed pair products were not changed.
 
 Implementation follows M9–M12 in `plans/stack-processing.md`. Existing pair
 configuration, output paths and scientific cache specifications remain intact.
@@ -122,14 +188,34 @@ glacier-offsets stack run configs/stack.pig.validity.yaml --backend cpu
 
 It writes to `work/pig/stack-validity` and preserves the old stack for comparison.
 
+## Restart verification
+
+Stack product verification shares an invocation-local checksum cache across
+reference, alignment and assembly checks. An unchanged file is hashed once even
+when it belongs to multiple manifests or is checked by both the workflow and
+its preparation functions. Every lookup checks device/inode, file type, size,
+mtime and ctime; changed files are rehashed and changes during hashing are
+rejected. Missing files still require a matching cleanup journal. The cache
+does not persist between commands, and directory hashes are not cached by parent
+timestamps. Raw input verification retains its existing behavior. Logs report
+acquisition progress; catalog metrics record product hash counts, bytes and hits.
+
 ## CPU burst matching workers
 
 Stack CPU matching now uses `OMP_NUM_THREADS` as its maximum spawned process
 count within a date pair, capped by bursts with shared eligible support. Each
 child has one OpenMP/BLAS thread and is replaced after four native calls. There
 is no nested process pool. Stages, dates and pairs stay sequential, and GPU
-matching retains its existing single-worker path. FFTW cache publication uses
-unique temporary files and atomic replacement across concurrent workers.
+matching retains its existing single-worker path. Workers import pinned FFTW
+wisdom from the stack; see below.
+
+Full-grid zero/constant matching retains raw invalid-window results. Unowned
+or unavailable regions use a shared queue of tasks, each with at most half the
+average worker window count. Idle workers consume this queue without assigning
+its workload to the first burst. Real bursts retain their individual lanes and
+one-call-at-a-time limit. Segment metadata identifies shared work separately and
+records native elapsed time. This scheduling-only change keeps completed offsets
+reusable and leaves scientific ownership, chip coordinates and masks unchanged.
 
 [Native scheduling tests](../../tests/test_stack_matching.py) compare zero and
 constant gross offsets, edge-bounded constant offsets, and fragmented varying
@@ -147,6 +233,34 @@ numerical equivalence.
 Stack matching uses the v8 implementation identity, refreshing older matching
 and downstream products while reusing valid reference geometry and acquisition
 SLCs. Completed products do not depend on the requested worker count.
+
+## Pinned FFTW wisdom (October 24)
+
+Repeated CPU matching of one pair on byte-identical merged SLCs differed by
+1/64 px in roughly 0.1% of valid, low-SNR windows; input-invalid windows could
+jump by up to about 33 px. The cause is ISCE3's compiled-in `FFTW_MEASURE`:
+concurrently started workers time FFT algorithms on a loaded machine and pick
+different, differently rounding plans. The investigation report and scripts
+are on branch `claude/quirky-solomon-762f26` (`docs/ampcor-determinism/`).
+
+Stack matching now measures every chunk shape once in a quiet process and
+pins the result in `<stack>/.cache/fftw/<key>.wisdom`, which workers import
+without republishing (see [README_DETAILED.md](../../README_DETAILED.md)).
+Real-data check on the Larsen 2017-01-01_2017-01-07 pair (77,634 windows,
+`deramp: 0`, zoom 16, zero gross, regenerated byte-identical merged SLCs),
+through the unchanged production scheduler with one stack wisdom file:
+
+| Run | Workers | Wall (s) | Equal to first run |
+| --- | ---: | ---: | --- |
+| pinned 1 (measures the file) | 8 | 96 | — |
+| pinned 2 | 8 | 93 | residual, SNR, peak, covariance, validity bitwise |
+| pinned 3 | 4 | 116 | residual, SNR, peak, covariance, validity bitwise |
+
+Every segment imported the file without measuring new plans. Against runs
+with other plans (the investigation's unpinned and separately pinned runs),
+70–78 valid windows differ, each by exactly 1/64 px. Wall times include a
+concurrent test run. The wisdom enters no cache identity, so completed pairs
+are kept.
 
 ## Disposable merged SLCs
 

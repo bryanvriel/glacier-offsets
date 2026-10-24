@@ -27,22 +27,33 @@ _plan_cache_directory = None
 _worker_plan_cache = None
 _worker_fftw = None
 _worker_fftw_initialized = False
+_worker_pinned = None
 
 
-def _initialize_native_worker(plan_cache):
+def _initialize_native_worker(plan_cache, pinned=None):
     from .raster_io import RASTER_CACHE_BYTES
-    global _worker_plan_cache
+    global _worker_plan_cache, _worker_pinned
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     gdal.SetCacheMax(min(gdal.GetCacheMax(), RASTER_CACHE_BYTES))
     _worker_plan_cache = plan_cache
+    _worker_pinned = pinned
 
 
 @contextmanager
-def _native_executor(processes=1, *, single_threaded=False):
+def _native_executor(processes=1, *, single_threaded=False, wisdom=None):
+    """Spawn recycled native workers.
+
+    With a pinned `wisdom` record (see `fftw_cache.pinned_wisdom`), workers
+    import that file before planning and never republish it; otherwise they
+    share a temporary per-invocation plan cache.
+    """
     global _plan_cache_directory
-    if _plan_cache_directory is None:
-        _plan_cache_directory = tempfile.TemporaryDirectory(prefix='glacier-offsets-fftw-')
-    plan_cache = str(Path(_plan_cache_directory.name) / 'wisdom')
+    if wisdom is not None:
+        plan_cache = wisdom['path']
+    else:
+        if _plan_cache_directory is None:
+            _plan_cache_directory = tempfile.TemporaryDirectory(prefix='glacier-offsets-fftw-')
+        plan_cache = str(Path(_plan_cache_directory.name) / 'wisdom')
     # Set limits before spawning/importing NumPy/ISCE3, and retain them while
     # replacement workers start. Restore the parent's environment afterwards.
     limits = ('OMP_NUM_THREADS', 'OMP_THREAD_LIMIT', 'OPENBLAS_NUM_THREADS',
@@ -54,7 +65,7 @@ def _native_executor(processes=1, *, single_threaded=False):
         # Spawn rather than fork: GDAL, FFTW and CUDA can own native thread state.
         with multiprocessing.get_context('spawn').Pool(
                 processes=processes, initializer=_initialize_native_worker,
-                initargs=(plan_cache,),
+                initargs=(plan_cache, wisdom),
                 maxtasksperchild=NATIVE_CALLS_PER_WORKER) as worker:
             yield worker
     finally:
@@ -66,16 +77,29 @@ def _native_executor(processes=1, *, single_threaded=False):
 
 
 def _native_worker(arguments):
-    from .fftw_cache import restore, save
+    from .fftw_cache import export, restore, save
     global _worker_fftw, _worker_fftw_initialized
     if not _worker_fftw_initialized:
+        if _worker_pinned is not None:
+            if not Path(_worker_plan_cache).is_file():
+                raise RuntimeError(f'Pinned FFTW wisdom is missing: {_worker_plan_cache}')
+            _worker_pinned['entries'] = set(Path(_worker_plan_cache).read_text().splitlines())
         _worker_fftw = restore(_worker_plan_cache)
         _worker_fftw_initialized = True
     args, kwargs = arguments
     result = _native_match(*args, **kwargs)
-    save(_worker_fftw, _worker_plan_cache)
+    pinned = {}
+    if _worker_pinned is None:
+        save(_worker_fftw, _worker_plan_cache)
+    else:
+        # New entries mean a chunk shape the pinned file lacks; it was measured
+        # here. Export order is not stable, so entries are compared as a set.
+        extended = not set(export(_worker_fftw).splitlines()) <= _worker_pinned['entries']
+        if extended:
+            logging.warning('Native call measured FFTW plans missing from pinned wisdom %s', _worker_plan_cache)
+        pinned = dict(fftw_wisdom_sha256=_worker_pinned['sha256'], fftw_wisdom_extended=extended)
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    result['effective_parameters'].update(worker_pid=os.getpid(),
+    result['effective_parameters'].update(worker_pid=os.getpid(), **pinned,
         fftw_plan_cache=_worker_fftw is not None,
         worker_omp_threads=os.environ.get('OMP_NUM_THREADS'),
         worker_blas_threads=os.environ.get('OPENBLAS_NUM_THREADS'),
@@ -84,6 +108,14 @@ def _native_worker(arguments):
 
 
 def native_match(reference: str | Path, secondary: str | Path, output: str | Path, params: dict, gross_cfg: dict, backend: str = 'cpu', *, prior=None, _grid=None, _gross=None, _valid_input=None, _worker=None) -> dict:
+    if params.get('engine') == 'isce2':
+        from .isce2_matching import match as isce2_match
+        if backend == 'gpu':
+            raise ValueError('ISCE2 magnitude Ampcor is a CPU engine')
+        if _gross is not None:
+            prior = {'grid': _grid, 'integer_px': _gross, 'valid': _valid_input}
+        return isce2_match(reference, secondary, output, params, dict(gross_cfg, matching=params),
+                           prior=prior, grid=_grid, valid_input=_valid_input)
     args = (reference, secondary, output, params, gross_cfg, backend)
     kwargs = dict(prior=prior, _grid=_grid, _gross=_gross, _valid_input=_valid_input)
     if prior is not None:
@@ -266,6 +298,8 @@ def write_offsets(path,result,metadata):
             h['seam_search_known'].attrs['meaning']='Finite gross offsets allow secondary-search classification; otherwise seam flag covers reference chip only'
         h['snr'].attrs['meaning']='coarse correlation squared peak / surrounding mean square'
         h['correlation_peak'].attrs['meaning']='refined normalized amplitude-correlation peak'
+        if metadata['matching'].get('engine') == 'isce2':
+            h['correlation_peak'].attrs['meaning']='unavailable from ISCE2 Ampcor; NaN, excluded from validity checks'
         h['covariance'].attrs['invalid_sentinel']='99,99,0 for coarse boundary or near-singular peak curvature'
         h['covariance'].attrs['component_order']='azimuth variance, range variance, azimuth-range covariance (native estimates)'
         h['covariance'].attrs['units']='reference SLC pixels squared; native formal estimates, not absolute accuracy'
@@ -298,11 +332,20 @@ def write_offsets(path,result,metadata):
         h.attrs['stride']=result['grid'].stride;h.attrs['window']=result['grid'].window
 
 
-def matching_specification(cfg,manifest):
-    spec={'coreg_identity':manifest['coreg_identity'],'matching':cfg['matching'],
+def matching_specification(cfg,manifest, *, native_engine=None):
+    parameters = dict(cfg['matching'])
+    if parameters.get('engine', 'isce3') == 'isce3':
+        # Newly optional ISCE2 settings must not stale existing ISCE3 results.
+        parameters.pop('engine', None)
+        parameters.pop('isce2', None)
+    spec={'coreg_identity':manifest['coreg_identity'],'matching':parameters,
             'gross_offsets':cfg.get('gross_offsets',{'mode':'zero'}),'implementation':'native-ampcor-v7-bounded-workers'}
     if 'stack_pair' in manifest:
         spec['implementation'] = 'native-ampcor-v8-stack-burst-workers'
+    if cfg['matching'].get('engine') == 'isce2':
+        from .isce2_matching import provenance
+        spec['implementation'] = 'isce2-magnitude-ampcor-v1'
+        spec['native_engine'] = provenance(cfg) if native_engine is None else native_engine
     if cfg['gross_offsets']['mode']=='velocity':
         from .velocity_prior import velocity_provenance
         spec['velocity_provenance']=(manifest['velocity_provenance'] if 'velocity_provenance' in manifest

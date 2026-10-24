@@ -129,6 +129,59 @@ class StackScienceTests(unittest.TestCase):
         self.assertEqual(self.geometry()['status'], 'complete')
         self.assertEqual(self.reference_call.call_count, 2)
 
+    def test_cross_swath_interior_recovers_both_dates_without_filling_real_holes(self):
+        from glacier_offsets.matching_grid import build_grid, valid_windows
+        rng = np.random.default_rng(217)
+        original = (rng.uniform(.1, 1, (192, 512))*np.exp(1j*rng.normal(0, .2, (192, 512)))).astype('complex64')
+        secondary = shift(original, (2, -3), order=0, mode='constant', cval=0)
+        sources, slcs = [], [{}, {}]
+        for key, dx in [('a_iw1', 0), ('a_iw2', 128)]:
+            coreg = deepcopy(self.sources[0][1]['coreg'])
+            coreg['reference_grid']['starting_range'] += dx*2
+            for date, data in enumerate((original, secondary)):
+                crop = data[:, dx:dx+384].copy()
+                if dx:
+                    # A fragile near-range edge on BOTH dates, still inside
+                    # the reference annotation rectangle. IW1 supports it.
+                    crop[:, 4:19] = 0
+                    if date == 0:
+                        crop[60:63, 192:195] = 0  # reference hole at x=320
+                    else:
+                        crop[100:103, 172:175] = 0  # secondary hole at x=300
+                path = self.root/f'swath-{date}-{key}.tif'
+                write_slc(path, crop)
+                slcs[date][key] = str(path)
+            coreg['slcs']['reference'] = slcs[0][key]
+            sources.append({'burst_id': key, 'coreg': coreg, 'valid_window': [4, 188, 4, 380]})
+        frame = write_reference_layout(self.root/'range-layout', sources)
+        frame['geometry_identity'] = frame['layout_identity']
+        dates = []
+        for i in range(2):
+            a = SimpleNamespace(date=f'2020-02-0{i+1}')
+            dates.append(assemble_date(self.cfg, a, frame,
+                {'slcs': slcs[i], 'alignment_identity': str(i)}))
+        owner = gdal.Open(frame['coreg']['source_index']).ReadAsArray()
+        self.assertEqual(owner[80, 255], 1)
+        self.assertEqual(owner[80, 256], 2)
+        self.assertEqual(owner[61, 321], 0)
+        for result in dates:
+            valid = gdal.Open(result['validity_mask']).ReadAsArray()
+            self.assertTrue(valid[4:188, 132:147].all())
+            self.assertFalse(valid[61, 321])
+        self.assertFalse(gdal.Open(dates[1]['validity_mask']).ReadAsArray()[101, 301])
+        ref, sec = (gdal.Open(d['slc']) for d in dates)
+        shape = ref.RasterYSize, ref.RasterXSize
+        p = self.cfg['matching']
+        grid = build_grid(shape, shape, p['window'], p['search'], p['stride'])
+        supported = valid_windows(ref, sec, grid, (0, 0))
+        y, x = grid.centers
+        seam = (abs(x-256) < 32) & supported
+        self.assertTrue(seam.any())
+        result = native_match(dates[0]['slc'], dates[1]['slc'], self.root/'range-native', p,
+                              self.cfg, _grid=grid, _valid_input=supported)
+        self.assertTrue(result['valid'][seam].all())
+        np.testing.assert_allclose(result['total'][seam], np.tile([2, -3], (int(seam.sum()), 1)), atol=.18)
+
     def test_reference_prepared_once_dates_before_reference_and_no_pair_duplication(self):
         frame = self.geometry(); dates = self.dates(frame)
         self.assertEqual(self.reference_call.call_count,2)

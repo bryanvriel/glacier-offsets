@@ -69,7 +69,9 @@ def diagnostics(cfg,root,manifest):
         for j,axis in enumerate(['range','azimuth']):
             image(axes[i,j],arrays[f'{field}/{axis}'],f'RAW {field} {axis} [SLC pixels]',cmap='RdBu_r')
     image(axes[0,2],arrays['snr'],'Coarse amplitude-correlation SNR')
-    image(axes[0,3],arrays['correlation_peak'],'Refined amplitude-correlation peak')
+    peak_title = ('Correlation peak unavailable (ISCE2)' if manifest['matching']['matching'].get('engine') == 'isce2'
+                  else 'Refined amplitude-correlation peak')
+    image(axes[0,3],arrays['correlation_peak'],peak_title)
     image(axes[1,2],arrays['input_valid'].astype(float),'Input-window validity',limits=(0,1))
     image(axes[1,3],arrays['valid'].astype(float),'Matching quality validity',limits=(0,1))
     for j,axis in enumerate(['range','azimuth']):
