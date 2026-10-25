@@ -206,8 +206,14 @@ matching:
   engine: isce3
   backend: cpu
   deramp: 0
+  range_oversampling: 2
   zoom: 16
 ```
+
+These are the recommended production settings. Leave `snr_threshold` and
+`correlation_threshold` at zero and filter afterwards, for example with
+`(peak >= 0.3 & SNR >= 8) | SNR >= 20`. `range_oversampling` is described in
+[Range-2x matching](#range-2x-matching) below.
 
 `isce2_merge_first` is the earlier, deprecated name for the same merge policy;
 loading it logs a deprecation warning. Both selectors use the ISCE3
@@ -240,6 +246,48 @@ matching:
   engine: isce3
   deramp: 0
 ```
+
+#### Range-2x matching
+
+Native magnitude matching (`deramp: 0`) detects amplitude at the original
+range sampling. Detection doubles the signal bandwidth, so the amplitude
+spectrum aliases and range offsets are pulled toward whole pixels. On a
+known-shift test with real Larsen speckle the bias amplitude was about 0.1 px
+in IW1 and 0.06 px in IW2, for ISCE2 and `deramp: 0` alike. `deramp: 1` removes
+it but adds burst-join artifacts in merged IW1. With
+`matching.range_oversampling: 2`, stack CPU matching interpolates both merged
+SLCs twice in range as complex data before native detection; that known-shift
+bias was then below 0.003 px, with no join artifacts.
+
+```yaml
+matching:
+  engine: isce3
+  backend: cpu      # required
+  deramp: 0         # required
+  range_oversampling: 2
+```
+
+For each pair, complete rows of both merged SLCs are Fourier-interpolated
+(periodic, no taper or fill) into temporary stripped TIFFs, about twice each
+merged SLC's size (about 10 GB per Larsen pair), and removed after matching.
+They go under `pairs/<pair>/radar/native/range2x/` unless
+`storage.scratch_directory` names an existing local directory. Use a fast
+local disk there: on the external Larsen volume, sustained writes of about
+20 MB/s made preparation take about 190 s per date, against about 16 s on the
+internal SSD. The scratch location enters no cache identity. Native Ampcor runs with window, search and stride
+doubled in range on those inputs; raw and correlation oversampling and zoom are
+unchanged, so the physical range refinement extent halves. Chip centers,
+input support, ownership and seam flags stay on the original grid, and gross,
+residual and total offsets and covariance are reported in original reference
+pixels. On the full Larsen 2017-01-19_2017-01-25 pair (8 workers, inputs on the
+internal SSD), range-2x took 164 s against 93 s for `deramp: 0`: 33 s of
+preparation and 131 s of matching. Peak worker RSS was 1.2 GB against 0.85 GB. Segment metadata and `native_parameters.range_oversampling`
+record the treatment.
+
+The default, 1, keeps existing matching identities, so completed pairs are not
+rematched. Setting 2 changes the matching identity: rerunning a root rematches
+its pairs, reusing geometry, aligned bursts and assemblies. Standalone pair/AOI
+matching, GPU matching and the ISCE2 engine reject `range_oversampling: 2`.
 
 `swath_merge` defaults to `overwrite`. The `midpoint` option resolves burst
 overwrites within each swath first, then cuts adjacent swath support at the

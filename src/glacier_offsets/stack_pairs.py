@@ -143,6 +143,8 @@ def match_prepared(cfg, manifest, directory, prior):
     if select_backend(cfg['matching']['backend'])[0] == 'cpu':
         from .stack_matching import match_bursts
         return match_bursts(cfg, manifest, directory, prior, full_grid=bounds)
+    if cfg['matching'].get('range_oversampling', 1) != 1:
+        raise ValueError('matching.range_oversampling=2 requires the CPU backend')
     if bounds:
         return native_match(slcs['reference'], slcs['secondary'], directory/'native', cfg['matching'],
                             cfg, cfg['matching']['backend'], _grid=grid, _valid_input=prior['valid'])

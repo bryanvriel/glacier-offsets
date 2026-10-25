@@ -338,10 +338,15 @@ def matching_specification(cfg,manifest, *, native_engine=None):
         # Newly optional ISCE2 settings must not stale existing ISCE3 results.
         parameters.pop('engine', None)
         parameters.pop('isce2', None)
+    if parameters.get('range_oversampling', 1) == 1:
+        parameters.pop('range_oversampling', None)
     spec={'coreg_identity':manifest['coreg_identity'],'matching':parameters,
             'gross_offsets':cfg.get('gross_offsets',{'mode':'zero'}),'implementation':'native-ampcor-v7-bounded-workers'}
     if 'stack_pair' in manifest:
         spec['implementation'] = 'native-ampcor-v8-stack-burst-workers'
+    if 'range_oversampling' in parameters:
+        from .range_oversampling import METHOD
+        spec['range_preparation'] = METHOD
     if cfg['matching'].get('engine') == 'isce2':
         from .isce2_matching import provenance
         spec['implementation'] = 'isce2-magnitude-ampcor-v1'
@@ -354,6 +359,8 @@ def matching_specification(cfg,manifest, *, native_engine=None):
 
 
 def match(cfg,root,manifest,force=False,native_pair=None):
+    if cfg['matching'].get('range_oversampling',1)!=1 and 'stack_pair' not in manifest:
+        raise ValueError('matching.range_oversampling=2 is available for stack matching only')
     spec=matching_specification(cfg,manifest)
     fingerprint=identity(spec)
     directory=root/'radar';directory.mkdir(exist_ok=True)

@@ -119,8 +119,11 @@ environment and a CUDA-enabled ISCE3 build.
 For merge-first stacks (stack-common validity, later-burst overwrites and the
 ISCE3-backed compositor), see the
 [configuration example](configs/stack.merge-first.example.yaml) and
-[details](README_DETAILED.md#merge-first-stacks). The optional ISCE2 matcher has
-its own [example](configs/stack.isce2.example.yaml).
+[details](README_DETAILED.md#merge-first-stacks). The example also enables
+`matching.range_oversampling: 2`, which interpolates the merged SLCs twice in
+range before matching and removes the whole-pixel range bias of magnitude
+matching ([details](README_DETAILED.md#range-2x-matching)). The optional ISCE2
+matcher has its own [example](configs/stack.isce2.example.yaml).
 
 ## Documentation
 

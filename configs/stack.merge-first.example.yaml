@@ -10,4 +10,8 @@ matching:
   engine: isce3  # Default for this selector; isce2 remains available as a separate matcher.
   backend: cpu
   deramp: 0
+  range_oversampling: 2  # Complex range-2x before detection removes the whole-pixel range bias.
   zoom: 16
+  # Keep thresholds at zero; filter afterwards, e.g. (peak >= 0.3 & SNR >= 8) | SNR >= 20.
+  snr_threshold: 0.0
+  correlation_threshold: 0.0
