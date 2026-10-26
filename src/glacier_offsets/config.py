@@ -16,6 +16,8 @@ PATH_FIELDS = (
     ('stack', 'safe_directory'),
     ('stack', 'orbit_directory'),
     ('stack', 'pairing', 'pairs_file'),
+    ('stack', 'swath_correction', 'calibration'),
+    ('stack', 'swath_correction', 'pairs_directory'),
     *(('matching', 'isce2', key) for key in ('python', 'packages', 'library_path')),
 )
 

@@ -116,6 +116,11 @@ def pair_status(cfg, manifest, root, upstream):
         except (KeyError, TypeError, ValueError, RuntimeError, OSError) as exc:
             upstream = state('unknown', f'Cannot compare saved metadata: {exc}')
         result[stage] = upstream
+    from .swath_correction_config import settings as correction_settings
+    if correction_settings(cfg)['enabled']:
+        from .swath_correction import correction_status
+        # Correction consumes completed matching/maps, independently of raw diagnostics.
+        result['correct-swaths'] = dependent(result['geocode'], lambda: correction_status(cfg, manifest, root.name))
     return result
 
 
@@ -183,6 +188,8 @@ def inspect_stack(cfg):
             upstream = state('unknown', err)
         report['pairs'][key] = pair_status(cfg, m, path, upstream)
     for stage in STAGES:
+        if stage == 'correct-swaths' and not cfg.get('stack', {}).get('swath_correction', {}).get('enabled', False):
+            continue
         group = report['acquisitions'] if stage in ('coregister', 'assemble') else report['pairs']
         units = [e[stage] for e in group.values()]
         if stage == 'coregister':

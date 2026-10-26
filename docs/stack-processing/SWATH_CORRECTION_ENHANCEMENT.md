@@ -2,7 +2,11 @@
 
 **Recorded:** 2026-10-24
 
-**Status:** design for later implementation; no production correction enabled.
+**Status (updated 2026-10-26):** the pinned spacecraft-only relative correction
+is implemented as the optional production `correct-swaths` stage, with outputs
+in a separate pairs directory (see README_DETAILED.md). Physical correction and
+the broader empirical extensions below remain proposals. The default production
+configuration keeps correction disabled.
 
 **Scope:** Sentinel-1 stack azimuth offsets, initially IW1/IW2. Range corrections require separate evidence.
 

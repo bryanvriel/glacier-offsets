@@ -538,6 +538,174 @@ GLACIER_ISCE2_LIBRARY_PATH=/Users/briel/miniforge3/envs/gmt/lib \
 OMP_NUM_THREADS=2 python -m unittest discover -s tests -v
 ```
 
+#### Optional production spacecraft swath correction
+
+Use `configs/stack.larsen.swath-corrected.yaml` to enable a separately published
+relative IW1/IW2 azimuth calibration. It inherits the unchanged production
+matching/geocoding configuration and pins the January–June 2017 spacecraft
+coefficient, **β = 0.0257650993 original reference azimuth pixels**, by SHA-256.
+There is no fitting, physical timing correction, or per-acquisition model in
+this production stage. The ordinary production config keeps it disabled.
+The Larsen YAML is local, like its production parent; the versioned generic
+template is `configs/stack.swath-corrected.example.yaml`. The calibration JSON
+is versioned separately from machine-specific configurations.
+
+```yaml
+stack:
+  swath_correction:
+    enabled: true
+    calibration: calibrations/larsen-2017h1-spacecraft.json
+    calibration_sha256: ed6ab421174d8941559b0fd2decc8ba43c318c28e1e79b568d8630b6420878dc
+    pairs_directory: ../work/larsen/stack/pairs_swath_corrected
+```
+
+Paths resolve relative to the YAML declaring them, including inherited paths.
+Omitting `pairs_directory` uses `<output.directory>/pairs_swath_corrected`.
+The corrected destination must be separate from raw pairs, geometry and
+acquisitions; symlinks cannot redirect publication into original products.
+
+For already completed production pairs, run only the new stage:
+
+```bash
+PYTHONPATH=src MPLCONFIGDIR=/tmp/glacier-mpl \
+  /Users/briel/miniforge3/envs/isce3/bin/python -m glacier_offsets.cli \
+  stack correct-swaths configs/stack.larsen.swath-corrected.yaml
+```
+
+Add `--pair 2017-01-19_2017-01-25` to process one saved active pair, repeating
+`--pair` to select several. This command uses saved metadata and completed
+offset/geometry products, without SAFE discovery, rematching or modifying raw
+pair manifests. The raw-data directories may be offline. An active writer or
+unfinished layout rebuild blocks it. Missing/stale prerequisites are reported
+per pair and never trigger upstream processing.
+
+`stack run` with the opt-in YAML applies the correction after its ordinary
+stages. `stack status` includes `correct-swaths` when enabled. A correction
+failure does not invalidate completed raw stages. `--force` on
+`correct-swaths` rebuilds only the derived products; as before, `--force` on
+`run` rebuilds the upstream workflow too.
+
+The coefficient gives `Δ = β × (is_B(later) − is_B(earlier))`. Subtract
+`−Δ/2` from IW1 and `+Δ/2` from IW2. Same-spacecraft pairs get zero correction.
+Complete chip/search footprints must belong to one swath; same-swath burst
+joins qualify. Mixed or unsupported footprints retain their **raw** values
+with `correction_available=0`. This is the continuous-footprint presentation
+used in the clean comparison maps, with no seam outlines, filling or smoothing.
+
+Each `<pairs_directory>/<earlier>_<later>/` contains:
+
+- `geo/azimuth_displacement_m.tif` and `azimuth_velocity_m_per_day.tif`:
+  corrected where supported, original observations elsewhere.
+- Raw azimuth comparison rasters, bias-to-subtract layers in m and m/day,
+  correction availability, cross-swath mixing, and same-swath join masks.
+- Unchanged range rasters, validity layers and native formal uncertainties.
+  Separate `azimuth_correction_std_*` layers describe calibration sensitivity;
+  they are shared across observations and exclude model error. They are not
+  added to native covariance as if independent pixel noise.
+- `radar/offsets.h5`: original gross/residual/total offsets and native covariance,
+  plus `corrected_total/*`, `bias_to_subtract/azimuth_px`, availability and
+  correction uncertainty arrays. **The original `total/*` datasets remain raw.**
+- `diagnostics/report.json`, a clean `diagnostics/comparison.png`, the exact
+  `calibration.json`, and a checksummed `manifest.json`.
+
+The stage converts pixel corrections using the retained local azimuth ground
+scale and exact per-source interval before applying the **same production
+nearest-source mapping and mask**. It verifies that the mapped raw field is
+bit-identical to production. Raw inputs are checksum/revision checked before
+and after use. Completed jobs are reused only when calibration, implementation,
+source identities/checksums and all output checksums match; failed jobs retry
+independently. The changing global progress catalog is not a cache dependency.
+`correction_status.json` in the corrected directory records the latest selected
+jobs; per-pair completion manifests are authoritative. Metadata-only `status`
+checks pins, identities, consumed-input revisions and output existence, while
+execution additionally verifies scientific checksums.
+macOS `._` sidecars are excluded from raster inputs and completion products.
+
+The shipped calibration is scoped to the pinned Larsen geometry, orbit 38,
+descending HH, midpoint ownership, matching treatment and calendar 2017. Its
+provenance distinguishes the January–June calibration period from July–December
+application, which is explicitly labelled **unvalidated** in the output.
+Unknown spacecraft, changed matching/geometry, invalid calibration or a checksum
+mismatch fail rather than becoming zero predictions. A new stack needs its own
+compatible, explicitly pinned calibration. The constant extension across each
+swath and the symmetric allocation remain relative-calibration assumptions;
+this stage does not establish absolute motion accuracy or fix noisy matching.
+
+#### Isolated half-year swath experiment
+
+The standalone experiment reads the retained **unspliced** IW1/IW2 bursts from
+`configs/stack.larsen.production.yaml`. It measures the production matching
+centers with the production complex range-2x kernel, then evaluates unfitted
+bistatic/FM-rate candidates before fitting two small models to raw azimuth
+contrasts: one spacecraft coefficient and one relative term per acquisition.
+It does not add production correction stages or modify the source stack.
+
+```bash
+PYTHONPATH=src:.runtime/deps MPLCONFIGDIR=/tmp/glacier-mpl OMP_NUM_THREADS=1 \
+  /Users/briel/miniforge3/envs/isce3/bin/python -m tools.swath_correction_experiment \
+  run configs/stack.larsen.production.yaml --output work/larsen/swath-experiment-2017h1
+```
+
+The 31-date January–June plan has 30 adjacent links plus 29 skip-one links.
+The first three dates form a pilot gate before full measurement expansion.
+`--pilot-only` stops after that triangle. `--workers` accepts 1–4; pairs remain
+sequential. Individual `plan`, `audit`, `measure`, `physics`, `fit`, `previews`
+and `report` stages use the same arguments. Rerunning stages verifies inputs
+and reuses current per-burst matching jobs and products. Changed stage code
+invalidates the affected artifacts; a changed frozen configuration or geometry
+requires a separate experiment directory. Missing or incomplete inputs are
+reported explicitly. No production processing is launched.
+
+Artifacts include a resolved plan, source/runconfig audit, per-link and per-burst
+NPZ observations, sparse physical predictions in seconds and original pixels,
+all quality/support counts, empirical parameter covariance, withheld-fold ledgers,
+raw same-owner triangle closures, analysis plots, `REPORT.md` and `summary.json`.
+Validation leaves out acquisitions, complete links, and burst groups (purging
+shared source bursts). A per-date model cannot predict an unseen date or a
+contrast across disconnected components. The 1,000 shared acquisition/source-burst
+multiplier refits describe dependence sensitivity rather than independent-window
+accuracy. No residual or agreement clipping is used.
+
+The physical audit records the executed COMPASS radar path, original-mid-burst
+coefficient selection, saved resampling offsets/Jacobians, native center/corner
+geometry checks and discrepancies from the installed full-burst-span LUT routine.
+Historical timing conventions remain explicitly unvalidated physical hypotheses;
+missing predictions are never replaced by zero.
+
+For completed production pairs, separate preview GeoTIFFs and derived radar arrays
+use leave-one-link-out empirical contrasts and the mean unfitted physical
+contrast. All use the same symmetric convention (subtract −Δ/2 from IW1 and
++Δ/2 from IW2) and explicitly assume a constant relative bias outside the measured
+overlap. Mixed-swath footprints are unavailable for correction; same-swath burst
+joins are marked separately. Common masks, the pinned map grid, local physical
+scales and exact source intervals are preserved. Native covariance and correction
+uncertainty remain separate. These are diagnostic relative previews, not calibrated
+production motion products or evidence of absolute accuracy.
+
+To evaluate the **mean swath mismatch per link**, run the separate post hoc stage:
+
+```bash
+PYTHONPATH=src:.runtime/deps MPLCONFIGDIR=/tmp/glacier-mpl OMP_NUM_THREADS=1 \
+  /Users/briel/miniforge3/envs/isce3/bin/python -m tools.swath_correction_experiment \
+  rescore configs/stack.larsen.production.yaml --output work/larsen/swath-experiment-2017h1
+```
+
+This reads the checksum-verified frozen analysis files without repeating matching,
+physics or geocoding. Outputs go under `rescoring/posthoc-link-means-v1/`; the
+original plan, estimates, reports and maps remain unchanged. The stage computes
+error **after** averaging burst-pair means within a link, and refits both empirical
+models for minimum supports of 0, 20, 30 and 50 selected windows/link. These thresholds
+were chosen after inspecting the data and are explicitly labeled sensitivity analyses.
+They use whole-link counts before withholding; actual held-out counts and coverage
+remain in the fold ledgers. Overlapping windows are not independent replicates.
+
+The new report includes spacecraft-order figures, support attrition, IPF-specific
+coefficients with jointly resampled regime differences, all three withheld protocols,
+and corrected displays of the original window-level scores. Every model is compared
+against its own baseline on identical samples. Native observations are diagnostic
+only, with no model-selection verdict. Spacecraft association and predictive error
+reduction are reported separately; rescoring itself enables no production correction.
+
 ### Reference-geometry stacks
 
 If you have only SAFE scenes, first use the [input preparation command](#prepare-orbits-and-a-dem).

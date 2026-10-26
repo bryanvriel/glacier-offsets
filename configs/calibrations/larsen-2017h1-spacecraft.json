@@ -1,0 +1,92 @@
+{
+  "allocation": "symmetric",
+  "beta_px": 0.0257650993016379,
+  "beta_std_px": 0.00940420293560128,
+  "method": "spacecraft-swath-azimuth-v1",
+  "provenance": {
+    "application_scope": "Same pinned Larsen geometry and production matching for calendar 2017. July-December is outside the calibration period and remains unvalidated.",
+    "estimate": "all-data descriptive coefficient; model evaluated with held-out acquisitions, links and source-burst groups",
+    "label": "Larsen 2017H1 spacecraft-order empirical relative azimuth calibration",
+    "physical_cause": "unidentified; empirical calibration, not a validated timing correction",
+    "population": "primary; no minimum-link-support threshold; equal weight per link and burst-pair group",
+    "source_analysis_sha256": "aec23a73dbc2b2b4a2e7bfb529dca3f7a3dd140422bb2494f4d4662d05d81b00",
+    "source_experiment_identity": "dd849e5ec410d2eb0c59eda896e8c2928b28e9006dc1a7aadf4f63ea190029af",
+    "source_fit_sha256": "2be2e972541e6c33ceec687b3ff47e7d770e882bfe2aab7e0fd0599d1aef3503",
+    "training_dates": [
+      "2017-01-01",
+      "2017-01-07",
+      "2017-01-13",
+      "2017-01-19",
+      "2017-01-25",
+      "2017-01-31",
+      "2017-02-06",
+      "2017-02-12",
+      "2017-02-18",
+      "2017-02-24",
+      "2017-03-02",
+      "2017-03-08",
+      "2017-03-14",
+      "2017-03-20",
+      "2017-03-26",
+      "2017-04-01",
+      "2017-04-07",
+      "2017-04-13",
+      "2017-04-19",
+      "2017-04-25",
+      "2017-05-01",
+      "2017-05-07",
+      "2017-05-13",
+      "2017-05-19",
+      "2017-05-25",
+      "2017-05-31",
+      "2017-06-06",
+      "2017-06-12",
+      "2017-06-18",
+      "2017-06-24",
+      "2017-06-30"
+    ],
+    "training_ipf_versions": [
+      "002.72",
+      "002.82"
+    ],
+    "uncertainty": "Shared acquisition/source-burst multiplier descriptive standard deviation; excludes model error and absolute/common motion bias"
+  },
+  "reference_prf_hz": 486.48631029955294,
+  "scope": {
+    "direction": "DESCENDING",
+    "end_date": "2017-12-31",
+    "geometry_identity": "b4aede8ca76255e257738311514495b24a60c377ccdb9f0a475f417812dd8bc1",
+    "matching": {
+      "backend": "cpu",
+      "deramp": 0,
+      "engine": "isce3",
+      "first_center": null,
+      "oversampling": 32,
+      "range_oversampling": 2,
+      "raw_oversampling": 2,
+      "search": [
+        10,
+        40
+      ],
+      "stride": [
+        32,
+        128
+      ],
+      "window": [
+        64,
+        256
+      ],
+      "zoom": 16
+    },
+    "polarization": "HH",
+    "processing": "isce3_merge_first",
+    "relative_orbit": 38,
+    "start_date": "2017-01-01",
+    "swath_merge": "midpoint"
+  },
+  "swaths": [
+    1,
+    2
+  ],
+  "units": "original_reference_azimuth_pixels"
+}

@@ -1,0 +1,10 @@
+# Template: replace the calibration path/pin with an applicable, validated artifact.
+# The Larsen calibration is scoped to its own geometry; it is not a global preset.
+extends: stack.merge-first.example.yaml
+stack:
+  swath_correction:
+    enabled: true
+    calibration: /path/to/calibration.json
+    calibration_sha256: REPLACE_WITH_64_CHARACTER_SHA256
+    # null uses <output.directory>/pairs_swath_corrected automatically.
+    pairs_directory: null

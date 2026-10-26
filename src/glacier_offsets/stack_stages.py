@@ -6,5 +6,6 @@ STAGE_DESCRIPTIONS = {
     'match': 'Measure offsets for active pairs',
     'geocode': 'Map offsets, velocities, masks and uncertainties',
     'diagnostics': 'Generate pair quality reports and figures',
+    'correct-swaths': 'Apply optional pinned spacecraft calibration to separate pair products',
 }
 STAGES = tuple(STAGE_DESCRIPTIONS)

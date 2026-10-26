@@ -50,8 +50,20 @@ def invalidate_date(root, alignment=False):
 
 
 def execute_stack(cfg, command, force=False):
+    from .swath_correction_config import settings as correction_settings
+    if command == 'correct-swaths':
+        from .swath_correction import execute_corrections
+        return execute_corrections(cfg, force=force)
+    enabled_correction = command == 'run' and correction_settings(cfg)['enabled']
+    if enabled_correction:
+        from .swath_correction_config import load_calibration
+        load_calibration(cfg)  # Reject a missing/changed pin before upstream work, including --force.
     with stack_lock(cfg['output']['directory'], create=True):
-        return _execute_stack(cfg, command, force=force)
+        result = _execute_stack(cfg, command, force=force)
+    if enabled_correction:
+        from .swath_correction import execute_corrections
+        result = max(result, execute_corrections(cfg, force=force))
+    return result
 
 
 def _execute_stack(cfg, command, force=False):

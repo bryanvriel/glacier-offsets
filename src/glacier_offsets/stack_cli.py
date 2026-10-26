@@ -16,13 +16,16 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog='glacier-offsets stack',
         epilog='Use glacier-offsets stack init --help to initialize a stack YAML.')
     parser.add_argument('command', choices=['stages', 'status', 'plan', 'validate', 'coregister', 'assemble', 'match',
-                                           'geocode', 'diagnostics', 'run', 'rebuild-layout'])
+                                           'geocode', 'diagnostics', 'correct-swaths', 'run', 'rebuild-layout'])
     parser.add_argument('config', nargs='?')
     parser.add_argument('--backend', choices=['cpu', 'gpu', 'auto'])
     parser.add_argument('--force', action='store_true')
     parser.add_argument('--dry-run', action='store_true', help='Verify and preview rebuild-layout without changing files')
     parser.add_argument('--json', action='store_true', help='Machine-readable stack status')
+    parser.add_argument('--pair', action='append', help='Saved pair to correct (repeatable; correct-swaths only)')
     args = parser.parse_args(argv)
+    if args.pair and args.command != 'correct-swaths':
+        parser.error('--pair is supported by correct-swaths')
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
     if args.json and args.command != 'status':
         parser.error('--json is supported by status')
@@ -49,6 +52,12 @@ def main(argv=None):
             report = inspect_stack(cfg)
             print(json.dumps(report, indent=2) if args.json else format_status(report))
             return 0
+        if args.command == 'correct-swaths':
+            from .swath_correction import execute_corrections
+            cfg = load_status_config(args.config)
+            if args.backend:
+                cfg['matching']['backend'] = args.backend
+            return execute_corrections(cfg, force=args.force, pairs=args.pair)
         cfg = load_stack_config(args.config, discovery=args.command == 'plan')
         if args.backend:
             cfg['matching']['backend'] = args.backend

@@ -5,6 +5,7 @@ import math
 from pathlib import Path
 
 from .config import _load_overrides, load_defaults, merge_config, validate_common
+from .swath_correction_config import settings as correction_settings
 
 STACK_DEFAULTS = {'start_date': None, 'end_date': None, 'reference_date': None, 'processing': 'isce3',
                   'swath_merge': 'overwrite',
@@ -61,6 +62,7 @@ def load_status_config(path):
     output = cfg.get('output', {}).get('directory')
     if not isinstance(output, str) or not Path(output).is_absolute():
         raise ValueError('output.directory must be a nonempty local path')
+    correction_settings(cfg)
     return cfg
 
 
@@ -68,7 +70,7 @@ def validate_stack_config(cfg, discovery=False):
     stack = cfg.get('stack')
     if not isinstance(stack, dict):
         raise ValueError('stack must be a YAML mapping')
-    unknown = set(stack) - set(STACK_DEFAULTS) - {'safe_directory', 'orbit_directory'}
+    unknown = set(stack) - set(STACK_DEFAULTS) - {'safe_directory', 'orbit_directory', 'swath_correction'}
     if unknown:
         raise ValueError(f'Unknown stack options: {sorted(unknown)}')
     stack = merge_config(STACK_DEFAULTS, stack)
@@ -102,4 +104,5 @@ def validate_stack_config(cfg, discovery=False):
     if (not isinstance(output, dict) or not isinstance(output.get('directory'), str)
             or not Path(output['directory']).is_absolute()):
         raise ValueError('output.directory must be a nonempty local path')
+    correction_settings(cfg)
     return validate_common(cfg, discovery=discovery)
