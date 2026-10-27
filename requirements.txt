@@ -16,6 +16,7 @@ numpy=1.26.4
 scipy=1.12.0
 gdal=3.13.3
 h5py=3.16.0
+h5netcdf>=1.3
 pyyaml=6.0.3
 pyproj=3.8.0
 shapely>=2.0

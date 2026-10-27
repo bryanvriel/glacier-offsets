@@ -108,6 +108,19 @@ class GeocodeTests(unittest.TestCase):
             # A geocoding-only change/restart never needs matching or recomputes geometry.
             with patch('glacier_offsets.geocode.center_geometry',side_effect=RuntimeError('cached')) as geometry_call:
                 geocode(cfg,root,manifest);geometry_call.assert_not_called()
+            # Explicit regeneration of legacy stack maps upgrades only the
+            # inventory; physical displacements and their identity stay intact.
+            old_identity = manifest['geocode_identity']
+            old_displacement = gdal.Open(str(root/'geo/range_displacement_m.tif')).ReadAsArray()
+            manifest['stack_pair'] = {'geometry_reference_date': '2020-01-01',
+                'geometry_reference_burst_times': {}, 'geometry_reference_inputs': {},
+                'acquisition_dates': ['2020-01-01', '2020-01-03']}
+            with patch('glacier_offsets.geocode.center_geometry',return_value=(lon,lat,np.zeros((5,5)),np.full((5,5),3.),geometry)):
+                geocode(cfg,root,manifest,force=True)
+            self.assertEqual(old_identity, manifest['geocode_identity'])
+            self.assertEqual(manifest['geocoding']['product_profile'], 'displacement-v1')
+            self.assertFalse(list((root/'geo').glob('*velocity*.tif')))
+            np.testing.assert_array_equal(gdal.Open(str(root/'geo/range_displacement_m.tif')).ReadAsArray(), old_displacement)
 
     def test_nearest_missing_geometry_column_remains_nodata(self):
         x,y=np.meshgrid(np.arange(5)*100.,np.arange(4)*100.)

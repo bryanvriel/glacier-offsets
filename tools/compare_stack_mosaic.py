@@ -39,7 +39,7 @@ POLICIES = {'overwrite': mosaic.POLICY, 'midpoint': mosaic.SWATH_MIDPOINT_POLICY
 IMPLEMENTATIONS = ('reference', 'isce3')
 REFINEMENT_STEP_PX = 1/64
 BLOCK = 64
-GEO_FIELDS = ('azimuth_velocity_m_per_day.tif', 'range_velocity_m_per_day.tif', 'valid_mask.tif',
+GEO_FIELDS = ('azimuth_displacement_m.tif', 'range_displacement_m.tif', 'valid_mask.tif',
               'quality_valid_mask.tif', 'source_burst_index.tif')
 
 

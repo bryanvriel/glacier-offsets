@@ -60,17 +60,19 @@ def center_geometry(coreg,line,sample):
     return lon,lat,z,scale,valid
 
 
-def physical_fields(total_range,total_azimuth,range_spacing,azimuth_scale,interval_seconds):
+def physical_fields(total_range,total_azimuth,range_spacing,azimuth_scale,interval_seconds, *, velocities=True):
     interval_seconds=np.asarray(interval_seconds)
     if range_spacing<=0 or np.any(interval_seconds<=0) or np.isinf(interval_seconds).any() or (interval_seconds.ndim==0 and not np.isfinite(interval_seconds)):
         raise ValueError('Positive reference range spacing and exact pair interval required')
     days=interval_seconds/86400
     rg=total_range*range_spacing;az=total_azimuth*azimuth_scale
-    return {'range_displacement_m':rg,'azimuth_displacement_m':az,
-            'range_velocity_m_per_day':rg/days,'azimuth_velocity_m_per_day':az/days}
+    fields = {'range_displacement_m':rg,'azimuth_displacement_m':az}
+    if velocities:
+        fields.update(range_velocity_m_per_day=rg/days, azimuth_velocity_m_per_day=az/days)
+    return fields
 
 
-def formal_uncertainties(covariance, range_spacing, azimuth_scale, interval_seconds, mapper):
+def formal_uncertainties(covariance, range_spacing, azimuth_scale, interval_seconds, mapper, *, velocities=True):
     """Convert native variances, then interpolate with squared independent-vertex weights.
 
     The caller excludes invalid/sentinel covariance vertices in mapper. Native
@@ -86,8 +88,9 @@ def formal_uncertainties(covariance, range_spacing, azimuth_scale, interval_seco
         fields[f'{axis}_displacement_sigma_m'] = sigma
         # Preserve the established scalar path. Variable source intervals must
         # scale each variance BEFORE interpolation, like the velocity itself.
-        fields[f'{axis}_velocity_sigma_m_per_day'] = (sigma / (interval_seconds / 86400) if interval_seconds.ndim==0
-            else np.sqrt(mapper.map(covariance[..., k] * scale**2 / (interval_seconds / 86400)**2, variance=True)))
+        if velocities:
+            fields[f'{axis}_velocity_sigma_m_per_day'] = (sigma / (interval_seconds / 86400) if interval_seconds.ndim==0
+                else np.sqrt(mapper.map(covariance[..., k] * scale**2 / (interval_seconds / 86400)**2, variance=True)))
     return fields
 
 
@@ -231,6 +234,7 @@ def geocode(cfg: dict,root: Path,manifest: dict,force: bool = False):
     settings=merge_config(load_defaults()['geocoding'],cfg.get('geocoding',{}))
     epsg,spacing=validate_geocoding(settings)
     resampling=settings['resampling'];mask_policy=settings['mask']
+    velocities = 'stack_pair' not in manifest
     fingerprint=identity(geocoding_specification(cfg,manifest))
     directory=root/'geo';directory.mkdir(exist_ok=True)
     if not force and manifest.get('geocode_identity')==fingerprint and (directory/'geocoding.json').is_file():return
@@ -250,7 +254,8 @@ def geocode(cfg: dict,root: Path,manifest: dict,force: bool = False):
         interval=h['interval_seconds'][:] if 'interval_seconds' in h else manifest['interval_seconds']
         assembled = ({name:h[name][:] for name in ('source_burst_index','seam_crossing')}
                      if 'source_burst_index' in h else None)
-        fields=physical_fields(total_range,total_az,manifest['coreg']['reference_grid']['range_pixel_spacing'],azscale,interval)
+        fields=physical_fields(total_range,total_az,manifest['coreg']['reference_grid']['range_pixel_spacing'],azscale,interval,
+                               velocities=velocities)
         covariance=h['covariance'][:]
         qa={'snr':h['snr'][:],'correlation_peak':h['correlation_peak'][:]}
     x,y=Transformer.from_crs(4326,epsg,always_xy=True).transform(lon,lat)
@@ -299,7 +304,7 @@ def geocode(cfg: dict,root: Path,manifest: dict,force: bool = False):
     uncertainty_valid=valid&np.all(np.isfinite(covariance[...,:2])&(covariance[...,:2]>=0)&(covariance[...,:2]<99),axis=-1)
     umapper=make_mapper(x,y,uncertainty_valid,spacing,resampling,target_grid=target_grid)
     uncertainty_fields = formal_uncertainties(covariance, manifest['coreg']['reference_grid']['range_pixel_spacing'],
-                                            azscale, interval, umapper)
+                                            azscale, interval, umapper, velocities=velocities)
     for name, array in uncertainty_fields.items():
         write_geotiff(directory/f'{name}.tif',array,umapper.transform,epsg,
                       metadata|{'quantity':name, 'units':'m/day' if 'velocity' in name else 'm',
@@ -337,7 +342,12 @@ def geocode(cfg: dict,root: Path,manifest: dict,force: bool = False):
     if assembled is not None:
         summary.update(source_burst_ids=manifest['assembly']['source_burst_ids'],
                        seam_crossing_source_centers=int((valid&assembled['seam_crossing']).sum()),
-                       interval_policy='per-center source interval; physical velocity calculated before mapping')
+                       interval_policy='exact per-source burst-start interval; see pair_interval_seconds.tif')
+    summary['product_profile'] = 'displacement-and-velocity-v1' if velocities else 'displacement-v1'
+    if not velocities:
+        for axis in ('range', 'azimuth'):
+            for quantity in ('velocity_m_per_day', 'velocity_sigma_m_per_day'):
+                (directory / f'{axis}_{quantity}.tif').unlink(missing_ok=True)
     write_json(directory/'geocoding.json',summary)
     manifest['geocode_identity']=fingerprint;manifest['geocoding']=summary;manifest['stages']['geocode']='complete'
     write_json(root/'manifest.json',manifest)

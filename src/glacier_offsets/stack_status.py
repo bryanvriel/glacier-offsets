@@ -103,7 +103,6 @@ def pair_status(cfg, manifest, root, upstream):
         'match': lambda: matching_status(cfg, manifest, root),
         'geocode': lambda: recorded(manifest, 'geocode_identity', [root/'geo'/p for p in
             ('geocoding.json', 'range_displacement_m.tif', 'azimuth_displacement_m.tif',
-             'range_velocity_m_per_day.tif', 'azimuth_velocity_m_per_day.tif',
              'valid_mask.tif', 'quality_valid_mask.tif', 'center_geometry.h5')],
             identity(geocoding_specification(cfg, manifest))),
         'diagnostics': lambda: recorded(manifest, 'diagnostics_identity', [root/'diagnostics/report.json'],

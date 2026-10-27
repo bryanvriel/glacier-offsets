@@ -7,7 +7,8 @@ one geographic burst or complete bursts intersecting a polygon area of interest.
 The workflow uses COMPASS for geometry-only coregistration and native ISCE3
 Ampcor for amplitude matching. An optional ISCE2-style stack strategy uses common-valid
 overwrite merging with either ISCE3 Ampcor or the ISCE2 CPU magnitude kernel. It produces radar offsets, geocoded displacement
-and velocity GeoTIFFs, quality metrics, and diagnostic plots. Range and azimuth
+GeoTIFFs, quality metrics, and diagnostic plots. Standalone pairs also include
+velocity GeoTIFFs. Range and azimuth
 motion are reported in radar directions; they are not east/north components.
 
 **[Getting started](GETTING_STARTED.md)** ·
@@ -26,6 +27,8 @@ motion are reported in radar directions; they are not east/north components.
   CUDA build of ISCE3.
 - Checkpointed processing, input checksums, stage status, and network plots for
   inspecting planned pair coverage and connectivity.
+- Self-contained displacement netCDF stacks compatible with `iceutils.Stack`,
+  with raw or swath-corrected observations, quality metrics, timing and LOS geometry.
 
 ## Installation
 
@@ -77,6 +80,7 @@ glacier-offsets stack init \
 glacier-offsets stack plan configs/stack.generated.yaml
 OMP_NUM_THREADS=4 glacier-offsets stack run configs/stack.generated.yaml --backend cpu
 glacier-offsets stack status configs/stack.generated.yaml --backend cpu
+glacier-offsets package configs/stack.generated.yaml
 ```
 
 The default plan pairs each date with its next neighbor when the exact separation
@@ -102,6 +106,7 @@ work/stack/
   acquisitions/<date>/          # Aligned bursts, masks and temporary merged SLCs
   pairs/<earlier>_<later>/       # Radar offsets, geocoded maps and diagnostics
   stack_manifest.json           # Plan, provenance and processing status
+  packages/displacements_raw.nc # Created independently by glacier-offsets package
 ```
 
 Rerun the same `run` command after an interruption to reuse completed products.
@@ -110,6 +115,11 @@ aligned SLCs, coregistration offset rasters and reference geometry remain on dis
 so storage still grows with acquisition count. See the
 [storage policy](README_DETAILED.md#reference-geometry-stacks) before planning
 a large stack.
+
+New stack maps contain displacements without velocities. The independent
+`package` command preserves the common grid and packages completed active pairs,
+recording omissions. Set `packaging.source: swath_corrected` to use completed
+corrected products. See the [netCDF schema and examples](README_DETAILED.md#package-displacement-stacks-as-netcdf).
 
 Default ISCE3 stack CPU matching uses up to `OMP_NUM_THREADS` separate burst workers within
 each date pair. Acquisition preparation and date pairs run sequentially; more

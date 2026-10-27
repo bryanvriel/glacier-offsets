@@ -106,6 +106,13 @@ class StackStatusTests(unittest.TestCase):
             self.assertEqual(main(['stack','status',str(self.config)]),0)
         self.assertIn('✓ match',out.getvalue())
 
+    def test_displacement_only_products_are_complete_without_velocity_files(self):
+        pair = self.prepare()
+        for path in (pair/'geo').glob('*velocity*.tif'):
+            path.unlink()
+        report = inspect_stack(self.cfg)
+        self.assertEqual(report['pairs'][self.pair]['geocode']['status'], 'complete')
+
     def test_absent_output_is_pending_without_creating_it(self):
         report = inspect_stack(load_status_config(self.config))
         self.assertTrue(all(e['status']=='pending' for e in report['stages'].values()))

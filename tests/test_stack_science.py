@@ -441,15 +441,16 @@ class StackScienceTests(unittest.TestCase):
                 for k,axis in enumerate(('azimuth','range')):
                     np.testing.assert_allclose(h[f'total/{axis}_px'][:][good],control['total'][...,k][good],atol=1e-5)
             geocode(cfg,directory,m)
-            ds=gdal.Open(str(directory/'geo/range_velocity_m_per_day.tif'))
+            ds=gdal.Open(str(directory/'geo/range_displacement_m.tif'))
             map_grids.append((ds.RasterYSize,ds.RasterXSize,ds.GetGeoTransform()))
             interval=gdal.Open(str(directory/'geo/pair_interval_seconds.tif')).ReadAsArray()
             displacement=gdal.Open(str(directory/'geo/range_displacement_m.tif')).ReadAsArray()
-            velocity=ds.ReadAsArray()
-            np.testing.assert_allclose(velocity,displacement/(interval/86400),rtol=2e-6,equal_nan=True)
+            self.assertTrue(np.all(interval[np.isfinite(displacement)] > 0))
+            self.assertFalse(list((directory/'geo').glob('*velocity*.tif')))
+            self.assertEqual(m['geocoding']['product_profile'], 'displacement-v1')
             sigma=gdal.Open(str(directory/'geo/range_displacement_sigma_m.tif')).ReadAsArray()
             self.assertTrue(np.isfinite(sigma).any())
-            paths=[directory/'radar/offsets.h5',directory/'geo/range_velocity_m_per_day.tif']
+            paths=[directory/'radar/offsets.h5',directory/'geo/range_displacement_m.tif']
             before={p:(checksum(p),p.stat().st_mtime_ns) for p in paths}
             _,again=prepared_pair(cfg,self.plan,frame,a,b,dates,target)
             with patch('glacier_offsets.ampcor.native_match',side_effect=AssertionError('cache missed')):
@@ -537,7 +538,7 @@ class StackScienceTests(unittest.TestCase):
                 self.assertEqual(execute_stack(self.cfg,stage),0)
             root=Path(self.cfg['output']['directory'])
             old_pair=root/'pairs/2020-01-04_2020-01-09'
-            paths=[old_pair/'radar/offsets.h5',old_pair/'geo/range_velocity_m_per_day.tif',
+            paths=[old_pair/'radar/offsets.h5',old_pair/'geo/range_displacement_m.tif',
                    root/'acquisitions/2020-01-04/slc.tif',root/'acquisitions/2020-01-09/slc.tif']
             before={p:(checksum(p),p.stat().st_mtime_ns) for p in paths}
             self.acquisitions[0].bursts.pop(list(self.reference.bursts)[1])
