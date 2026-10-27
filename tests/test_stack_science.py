@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from threading import current_thread, main_thread
 import unittest
 from unittest.mock import patch
 
@@ -92,6 +93,44 @@ class StackScienceTests(unittest.TestCase):
     def effective(self):
         cfg = deepcopy(self.cfg); cfg.pop('aoi',None); cfg['inputs']['burst_id']='stack'
         return cfg
+
+    def test_parallel_restart_preserves_products_and_retries_failed_checks(self):
+        self.cfg['stack']['verification_workers'] = 1
+        from glacier_offsets.stack_storage import checksum as source_checksum
+
+        def prepare(*args, **kwargs):
+            self.assertIs(current_thread(), main_thread())
+            return prepare_date(*args, **kwargs)
+
+        with patch('glacier_offsets.stack_workflow.plan_stack', return_value=self.plan), \
+                patch('glacier_offsets.stack_workflow.validate_stack'), \
+                patch('glacier_offsets.stack_workflow.inspect_environment', return_value=self.software), \
+                patch('glacier_offsets.stack_workflow.prepare_date', side_effect=prepare):
+            self.assertEqual(execute_stack(self.cfg, 'coregister'), 0)
+            root = Path(self.cfg['output']['directory'])
+            paths = [p for section in ('geometry', 'acquisitions')
+                     for p in (root/section).rglob('*') if p.is_file()]
+            before = {p: (checksum(p), p.stat().st_mtime_ns) for p in paths}
+            calls = self.align_call.call_count
+            self.cfg['stack']['verification_workers'] = 4
+            self.assertEqual(execute_stack(self.cfg, 'coregister'), 0)
+            self.assertEqual(self.align_call.call_count, calls)
+            self.assertEqual(before, {p: (checksum(p), p.stat().st_mtime_ns) for p in paths})
+
+            bad = self.acquisitions[0]
+            def read(path):
+                if Path(path) == bad.scene.path.resolve():
+                    raise OSError('injected source read failure')
+                return source_checksum(path)
+            with patch('glacier_offsets.stack_storage.checksum', side_effect=read):
+                self.assertEqual(execute_stack(self.cfg, 'coregister'), 1)
+            report = json.loads((root/'stack_manifest.json').read_text())
+            self.assertEqual(report['acquisitions'][bad.date]['status'], 'failed')
+            self.assertTrue(all(report['acquisitions'][a.date]['status'] == 'complete'
+                                for a in self.acquisitions if a is not bad))
+            self.assertEqual(execute_stack(self.cfg, 'coregister'), 0)
+            self.assertEqual(self.align_call.call_count, calls)
+            self.assertEqual(before, {p: (checksum(p), p.stat().st_mtime_ns) for p in paths})
 
     def test_swath_major_reference_layout_keeps_slc_and_geometry_source_indices(self):
         sources = []

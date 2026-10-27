@@ -6,6 +6,7 @@ stack:
   start_date: null
   end_date: null
   reference_date: null  # Earliest eligible acquisition; pinned after preparation.
+  verification_workers: 4  # Read-only restart checks; 1 for sequential I/O.
   pairing:
     neighbors: 1
     max_separation_days: 12  # Exact scene-start separation; null disables the cap.

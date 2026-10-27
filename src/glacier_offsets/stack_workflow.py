@@ -1,4 +1,4 @@
-"""Sequential, resumable stack stages with independent acquisition/pair failures."""
+"""Resumable stack stages with parallel checks and sequential scientific writes."""
 from copy import deepcopy
 from collections import Counter
 import gc
@@ -17,10 +17,12 @@ from .geocode import geocode, geocoding_specification
 from .inputs import select_pair
 from .products import ChecksumCache, identity, write_json
 from .stack import plan_stack, read_catalog, validate_stack
+from .stack_config import verification_workers
+from .stack_verification import acquisition_checks
 from .stack_pairs import common_map_grid, matching_template, prepared_pair
 from .stack_stages import STAGES
 from .stack_lock import stack_lock
-from .stack_storage import (SourceHashes, alignment_verified, assemble_date, assembly_specification, date_specification, prepare_date,
+from .stack_storage import (SourceHashes, alignment_verified, assemble_date, assembly_specification, prepare_date,
                             prepare_geometry, read_manifest, reference_specification, release_date, verified)
 from .storage import keep_merged_slcs, released_files
 
@@ -70,6 +72,7 @@ def _execute_stack(cfg, command, force=False):
     from .stack_mosaic import enabled, prepare_common_layout
     isce2 = enabled(cfg)
     invocation_started = time.perf_counter()
+    check_workers = verification_workers(cfg)
     if command not in (*STAGES, 'run'):
         raise ValueError(f'Unknown stack stage {command}')
     root = Path(cfg['output']['directory'])
@@ -114,6 +117,7 @@ def _execute_stack(cfg, command, force=False):
     def finish():
         scale = 1 if sys.platform == 'darwin' else 1024
         report['metrics'] = {'elapsed_seconds': time.perf_counter()-invocation_started,
+            'verification_workers': check_workers,
             'product_checksum_files_hashed': checksums.files_hashed,
             'product_checksum_bytes_hashed': checksums.bytes_hashed,
             'product_checksum_cache_hits': checksums.hits,
@@ -181,76 +185,76 @@ def _execute_stack(cfg, command, force=False):
 
     dates = {}
     reference_bursts = {b.id: b for b in plan.bursts}
-    for acquisition_number, acquisition in enumerate(plan.acquisitions, 1):
-        started = time.perf_counter()
-        entry = report['acquisitions'][acquisition.date]
-        entry.update(status='running', directory=str(root/'acquisitions'/acquisition.date))
-        entry.pop('error', None)
-        save()
-        try:
-            logging.info('Checking stack acquisition %s (%d/%d)', acquisition.date,
-                         acquisition_number, len(plan.acquisitions))
-            if acquisition.error:
-                raise ValueError(acquisition.error)
-            for key in reference_bursts.keys() & acquisition.bursts.keys():
-                effective = deepcopy(cfg)
-                effective['inputs']['burst_id'] = key
-                select_pair(effective, [(reference_bursts[key], acquisition.bursts[key])])
-            specification = date_specification(acquisition, frame, hashes)
-            previous = read_manifest(root/'acquisitions'/acquisition.date)
-            if not alignment_verified(previous, identity(specification), checksums=checksums):
-                invalidate_pairs(acquisition.date)
-                save()
-            elif previous.get('assembly_identity') and not verified(previous, 'assembly_identity', previous['assembly_identity'],
-                                                                   allow_released=True, checksums=checksums):
-                invalidate_pairs(acquisition.date)
-                invalidate_date(root/'acquisitions'/acquisition.date)
-                save()
-            aligned = prepare_date(cfg, plan, acquisition, frame, specification,
-                                   force=force and command in ('coregister', 'run'),
-                                   process=command in ('coregister', 'run'), checksums=checksums)
-            if isce2:
-                dates[acquisition.date] = aligned
-            if command != 'coregister' and not isce2:
-                assembly_identity = identity(assembly_specification(frame, aligned))
-                logical = verified(aligned, 'assembly_identity', assembly_identity, allow_released=True, checksums=checksums)
-                if not logical:
+    with acquisition_checks(cfg, plan.acquisitions, frame, hashes, checksums) as checking:
+        for acquisition, checked in checking:
+            started = time.perf_counter()
+            entry = report['acquisitions'][acquisition.date]
+            entry.update(status='running', directory=str(root/'acquisitions'/acquisition.date))
+            entry.pop('error', None)
+            save()
+            try:
+                logging.debug('Preparing checked stack acquisition %s', acquisition.date)
+                if acquisition.error:
+                    raise ValueError(acquisition.error)
+                for key in reference_bursts.keys() & acquisition.bursts.keys():
+                    effective = deepcopy(cfg)
+                    effective['inputs']['burst_id'] = key
+                    select_pair(effective, [(reference_bursts[key], acquisition.bursts[key])])
+                specification = checked.result()
+                previous = read_manifest(root/'acquisitions'/acquisition.date)
+                if not alignment_verified(previous, identity(specification), checksums=checksums):
                     invalidate_pairs(acquisition.date)
                     save()
-                need_slc = command == 'assemble' or (retain_slcs and command in ('match', 'run'))
-                if logical and not (force and command in ('assemble', 'run')) and not need_slc:
+                elif previous.get('assembly_identity') and not verified(previous, 'assembly_identity', previous['assembly_identity'],
+                                                                       allow_released=True, checksums=checksums):
+                    invalidate_pairs(acquisition.date)
+                    invalidate_date(root/'acquisitions'/acquisition.date)
+                    save()
+                aligned = prepare_date(cfg, plan, acquisition, frame, specification,
+                                       force=force and command in ('coregister', 'run'),
+                                       process=command in ('coregister', 'run'), checksums=checksums)
+                if isce2:
                     dates[acquisition.date] = aligned
-                elif command == 'run' and not retain_slcs:
-                    # Only materialize a new/rebuilt merged date when a pair
-                    # actually needs matching. This bounds the working set by
-                    # the active pair graph instead of all acquisitions.
-                    dates[acquisition.date] = deepcopy(aligned) | {
-                        'assembly_identity': assembly_identity, 'assembly_pending': True, 'products': {},
-                        'slc': str((root/'acquisitions'/acquisition.date/'slc.tif').resolve())}
-                else:
-                    dates[acquisition.date] = assemble_date(cfg, acquisition, frame, aligned,
-                        force=force and command in ('assemble', 'run'),
-                        process=command in ('assemble', 'run') or (logical and need_slc), checksums=checksums)
-                entry.update(assembly_identity=dates[acquisition.date]['assembly_identity'],
-                             valid_samples=dates[acquisition.date].get('valid_samples'),
-                             coverage_fraction=dates[acquisition.date].get('coverage_fraction'))
-            entry.update(status='complete', alignment_identity=aligned['alignment_identity'],
-                         completed_stage='coregister' if command == 'coregister' or isce2 else 'assemble')
-        except KeyboardInterrupt:
-            invalidate_pairs(acquisition.date)
-            entry['status'] = 'interrupted'
-            report['outcome'] = 'interrupted'
-            finish()
-            raise
-        except Exception as exc:
-            failed = True
-            invalidate_pairs(acquisition.date)
-            entry.update(status='failed', error=f'{type(exc).__name__}: {exc}')
-            logging.error('Stack date %s: %s', acquisition.date, exc)
-        finally:
-            entry['elapsed_seconds'] = time.perf_counter()-started
-            save()
-            gc.collect()
+                if command != 'coregister' and not isce2:
+                    assembly_identity = identity(assembly_specification(frame, aligned))
+                    logical = verified(aligned, 'assembly_identity', assembly_identity, allow_released=True, checksums=checksums)
+                    if not logical:
+                        invalidate_pairs(acquisition.date)
+                        save()
+                    need_slc = command == 'assemble' or (retain_slcs and command in ('match', 'run'))
+                    if logical and not (force and command in ('assemble', 'run')) and not need_slc:
+                        dates[acquisition.date] = aligned
+                    elif command == 'run' and not retain_slcs:
+                        # Only materialize a new/rebuilt merged date when a pair
+                        # actually needs matching. This bounds the working set by
+                        # the active pair graph instead of all acquisitions.
+                        dates[acquisition.date] = deepcopy(aligned) | {
+                            'assembly_identity': assembly_identity, 'assembly_pending': True, 'products': {},
+                            'slc': str((root/'acquisitions'/acquisition.date/'slc.tif').resolve())}
+                    else:
+                        dates[acquisition.date] = assemble_date(cfg, acquisition, frame, aligned,
+                            force=force and command in ('assemble', 'run'),
+                            process=command in ('assemble', 'run') or (logical and need_slc), checksums=checksums)
+                    entry.update(assembly_identity=dates[acquisition.date]['assembly_identity'],
+                                 valid_samples=dates[acquisition.date].get('valid_samples'),
+                                 coverage_fraction=dates[acquisition.date].get('coverage_fraction'))
+                entry.update(status='complete', alignment_identity=aligned['alignment_identity'],
+                             completed_stage='coregister' if command == 'coregister' or isce2 else 'assemble')
+            except KeyboardInterrupt:
+                invalidate_pairs(acquisition.date)
+                entry['status'] = 'interrupted'
+                report['outcome'] = 'interrupted'
+                finish()
+                raise
+            except Exception as exc:
+                failed = True
+                invalidate_pairs(acquisition.date)
+                entry.update(status='failed', error=f'{type(exc).__name__}: {exc}')
+                logging.error('Stack date %s: %s', acquisition.date, exc)
+            finally:
+                entry['elapsed_seconds'] = time.perf_counter()-started
+                save()
+                gc.collect()
     if isce2:
         # All aligned dates must be inspected before any date is merged. Never
         # silently shrink the common-validity inventory to successful dates.

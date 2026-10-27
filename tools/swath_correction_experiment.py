@@ -24,7 +24,11 @@ def main(argv=None):
                         default=Path(__file__).resolve().parents[1]/'work/larsen/swath-experiment-2017h1')
     parser.add_argument('--workers', type=int, default=4)
     parser.add_argument('--pilot-only', action='store_true', help='Measure only the first three-date triangle')
+    parser.add_argument('--retained-previews', action='store_true',
+                        help='Refresh previews from verified retained radar arrays and frozen fit; no SLC reads')
     args = parser.parse_args(argv)
+    if args.retained_previews and args.stage != 'previews':
+        parser.error('--retained-previews requires the previews stage')
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
     os.environ.setdefault('MPLCONFIGDIR', str(args.output.resolve()/'.cache/matplotlib'))
     # Pyre interprets --config-like options during native initialization.
@@ -33,7 +37,7 @@ def main(argv=None):
     from glacier_offsets.products import write_json
     experiment = Experiment(args.config, args.output, args.workers)
     with experiment.lock():
-        if args.stage != 'rescore':
+        if args.stage != 'rescore' and not args.retained_previews:
             experiment.plan()
         stages = RUN_STAGES if args.stage == 'run' else (args.stage,)
         result = None
@@ -57,7 +61,7 @@ def main(argv=None):
                 result = fit(experiment)
             elif stage == 'previews':
                 from tools.swath_experiment_previews import previews
-                result = previews(experiment)
+                result = previews(experiment, retained=args.retained_previews)
             elif stage == 'rescore':
                 from tools.swath_experiment_rescore import rescore
                 result = rescore(experiment)

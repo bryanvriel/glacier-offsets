@@ -200,13 +200,23 @@ does not persist between commands, and directory hashes are not cached by parent
 timestamps. Raw input verification retains its existing behavior. Logs report
 acquisition progress; catalog metrics record product hash counts, bytes and hits.
 
+Acquisition checks use four read-only threads by default, controlled by the
+positive integer `stack.verification_workers` (use `1` for sequential checks).
+Prefetch is bounded by that count. Raw source digests and product checksum
+lookups serialize shared paths while different dates can hash concurrently;
+product revisions are rechecked before reuse. All native validation and
+scientific processing, invalidation and manifest writes stay on the main
+thread. This setting is independent of `OMP_NUM_THREADS`, changes no scientific
+identities, and takes effect on the next invocation without `--force`. Actual
+speedup depends on storage bandwidth.
+
 ## CPU burst matching workers
 
 Stack CPU matching now uses `OMP_NUM_THREADS` as its maximum spawned process
 count within a date pair, capped by bursts with shared eligible support. Each
 child has one OpenMP/BLAS thread and is replaced after four native calls. There
-is no nested process pool. Stages, dates and pairs stay sequential, and GPU
-matching retains its existing single-worker path. Workers import pinned FFTW
+is no nested process pool. Scientific processing of dates and pairs stays
+sequential, and GPU matching retains its existing single-worker path. Workers import pinned FFTW
 wisdom from the stack; see below.
 
 Full-grid zero/constant matching retains raw invalid-window results. Unowned

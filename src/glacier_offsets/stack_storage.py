@@ -3,6 +3,7 @@ from copy import deepcopy
 import json
 from pathlib import Path
 import tempfile
+from threading import Lock
 
 import numpy as np
 from osgeo import gdal
@@ -24,12 +25,17 @@ class SourceHashes:
     """Hash each distinct immutable input only once during an invocation."""
     def __init__(self):
         self.hashes = {}
+        self._locks = {}
+        self._guard = Lock()
 
     def __call__(self, path):
         path = str(Path(path).resolve())
-        if path not in self.hashes:
-            self.hashes[path] = checksum(path)
-        return {'path': path, 'sha256': self.hashes[path]}
+        with self._guard:
+            lock = self._locks.setdefault(path, Lock())
+        with lock:
+            if path not in self.hashes:
+                self.hashes[path] = checksum(path)
+            return {'path': path, 'sha256': self.hashes[path]}
 
 
 def read_manifest(root):

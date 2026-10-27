@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import stat
+from threading import Lock
 
 
 def checksum(path):
@@ -31,6 +32,8 @@ class ChecksumCache:
     """
     def __init__(self):
         self._files = {}
+        self._locks = {}
+        self._guard = Lock()
         self.hits = 0
         self.files_hashed = 0
         self.bytes_hashed = 0
@@ -42,21 +45,30 @@ class ChecksumCache:
 
     def __call__(self, path):
         path = Path(path).resolve()
+        with self._guard:
+            lock = self._locks.setdefault(path, Lock())
+        # Serialize aliases of one file, while hashing different files concurrently.
+        with lock:
+            return self._digest(path)
+
+    def _digest(self, path):
         before = path.stat()
         if not stat.S_ISREG(before.st_mode):
             return checksum(path)
         revision = self._revision(before)
         saved = self._files.get(path)
         if saved is not None and saved[0] == revision:
-            self.hits += 1
+            with self._guard:
+                self.hits += 1
             return saved[1]
         digest = checksum(path)
         if self._revision(path.stat()) != revision:
             self._files.pop(path, None)
             raise ValueError(f'File changed while computing checksum: {path}')
         self._files[path] = (revision, digest)
-        self.files_hashed += 1
-        self.bytes_hashed += before.st_size
+        with self._guard:
+            self.files_hashed += 1
+            self.bytes_hashed += before.st_size
         return digest
 
 

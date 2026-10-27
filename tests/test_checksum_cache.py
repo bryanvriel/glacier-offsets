@@ -1,7 +1,9 @@
 """Invocation-local digest reuse must never bypass manifest or file checks."""
 import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import tempfile
+from threading import Barrier
 import unittest
 from unittest.mock import patch
 
@@ -71,6 +73,26 @@ class ChecksumCacheTests(unittest.TestCase):
                 cache(self.path)
         self.assertEqual(cache(self.path), checksum(self.path))
         self.assertEqual(cache.hits, 0)
+
+    def test_parallel_distinct_files_and_shared_aliases_hash_once_each(self):
+        other = self.root/'other.tif'; other.write_bytes(b'other')
+        alias = self.root/'alias.tif'; alias.symlink_to(self.path)
+        barrier = Barrier(2)
+        cache = ChecksumCache()
+
+        def read(path):
+            barrier.wait(timeout=5)  # Different files must not share a hashing lock.
+            return checksum(path)
+
+        paths = [self.path, other, alias, other, self.path, other]
+        with patch('glacier_offsets.products.checksum', side_effect=read) as digest, \
+                ThreadPoolExecutor(max_workers=6) as pool:
+            results = list(pool.map(cache, paths))
+        self.assertEqual(results, [checksum(p) for p in paths])
+        self.assertEqual(digest.call_count, 2)
+        self.assertEqual(cache.files_hashed, 2)
+        self.assertEqual(cache.hits, 4)
+        self.assertEqual(cache.bytes_hashed, len(b'originalother'))
 
     def test_directory_children_are_not_hidden_by_cached_parent_metadata(self):
         cache = ChecksumCache()

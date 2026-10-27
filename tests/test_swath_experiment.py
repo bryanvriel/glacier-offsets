@@ -23,7 +23,8 @@ from glacier_offsets.swath_physics import apparent_bias, bistatic_seconds, mappi
 from glacier_offsets.swath_physics import fm_rate_seconds
 from glacier_offsets.swath_physics import native_input_products
 from tools.swath_experiment_io import Inputs, Experiment, save_npz, load_npz, cohorts
-from tools.swath_experiment_previews import symmetric_bias, pure_swath_footprints, preview_predictions
+from tools.swath_experiment_previews import (symmetric_bias, pure_swath_footprints,
+    preview_predictions, corrected_preview, write_previews)
 from test_range_oversampling import PARAMS
 from test_swath_overlap import write_raster
 from test_swath_overlap import make_pair
@@ -237,6 +238,53 @@ class PhysicalContractTests(unittest.TestCase):
 
 
 class InputAndPreviewTests(unittest.TestCase):
+    def test_clean_maps_retain_raw_mixed_and_unavailable_values_on_the_production_grid(self):
+        from glacier_offsets.geocode import make_mapper
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot  # Initialize pyplot before intercepting contour.
+        from matplotlib.axes import Axes
+        x, y = np.meshgrid(np.arange(4)*200., -np.arange(3)*200.)
+        valid = np.ones(x.shape, bool); valid[0, 0] = False
+        mapper = make_mapper(x, y, valid, 200., 'nearest')
+        total = np.arange(12).reshape(3, 4)*.02
+        scale = 14.+total
+        owner = np.where(x < 400, 1, 2)
+        mixed = x == 200
+        available = valid & ~mixed
+        arrays = {'raw_total_azimuth_px': total, 'azimuth_scale_m_per_px': scale,
+            'interval_seconds': np.full(x.shape, 6*86400.), 'cross_swath_mixed': mixed,
+            'same_swath_burst_join': np.zeros(x.shape, bool), 'measured_overlap': mixed,
+            'comparison_available': np.zeros(x.shape, bool)}
+        predictions = {'physical': 0., 'spacecraft': .04, 'per_acquisition': np.nan}
+        availability = {'physical': available, 'spacecraft': available,
+                        'per_acquisition': np.zeros(x.shape, bool)}
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch.object(Axes, 'contour', side_effect=AssertionError('Overlap outline added')):
+            out = Path(tmp)
+            write_previews(out, arrays, predictions, {k: None for k in predictions}, {},
+                           mapper, {'epsg': 3031}, owner, availability, 'a_b')
+            def raster(name):
+                return gdal.Open(str(out/(name+'.tif'))).ReadAsArray()
+            raw = raster('raw_azimuth_displacement')
+            corrected = raster('spacecraft_corrected_azimuth_displacement')
+            np.testing.assert_array_equal(raw, mapper.map(total*scale))
+            np.testing.assert_array_equal(np.isfinite(corrected), np.isfinite(raw))
+            unchanged = mapper.map(mixed.astype(float)) == 1
+            np.testing.assert_array_equal(corrected[unchanged], raw[unchanged])
+            expected, applied = corrected_preview(total, symmetric_bias(.04, owner), available)
+            np.testing.assert_array_equal(corrected, mapper.map(expected*scale))
+            np.testing.assert_array_equal(raster('per_acquisition_corrected_azimuth_displacement'), raw)
+            np.testing.assert_allclose(raster('spacecraft_corrected_azimuth_velocity'),
+                                       mapper.map(expected*scale/6), equal_nan=True)
+            np.testing.assert_array_equal(raster('spacecraft_bias_to_subtract_azimuth_displacement'),
+                                           mapper.map(applied*scale))
+            # A model with no common scientific support must not blank other panels.
+            self.assertFalse(np.any(raster('comparison_available') == 1))
+            self.assertTrue(np.isnan(arrays['per_acquisition_corrected_total_azimuth_px']).all())
+            for name in ('comparison.png', 'comparison_clean.png', 'corrected_clean.png'):
+                self.assertTrue((out/name).is_file())
+
     def test_unmeasured_link_can_use_an_alternative_path_but_not_a_disconnected_component(self):
         dates = ['a', 'b', 'c']
         rows = [row('a', 'b', .1), row('b', 'c', .2)]

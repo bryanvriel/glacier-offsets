@@ -17,7 +17,7 @@ from glacier_offsets.cli import main
 from glacier_offsets.config import load_defaults
 from glacier_offsets.inputs import Burst
 from glacier_offsets.stack import StackPreflightError, pair_graph, plan_stack, scan_safes
-from glacier_offsets.stack_config import load_stack_config, load_status_config
+from glacier_offsets.stack_config import load_stack_config, load_status_config, verification_workers
 from test_initialization import manifest, orbit, scene
 
 
@@ -49,6 +49,19 @@ class StackPlanningTests(unittest.TestCase):
         i = self.paths.index(Path(safe))
         native = SimpleNamespace(border=[box(-100, -76, -98, -74)])
         return [Burst('burst', 2, self.times[i], native)]
+
+    def test_verification_workers_default_inheritance_and_validation(self):
+        self.assertEqual(verification_workers(self.cfg), 4)
+        self.assertNotIn('verification_workers', self.cfg['stack'])
+        child = self.root/'parallel.yaml'
+        child.write_text('extends: stack.yaml\nstack:\n  verification_workers: 2\n')
+        for loader in (load_stack_config, load_status_config):
+            self.assertEqual(verification_workers(loader(child)), 2)
+            for invalid in ('true', '0', '-1', '1.5', 'null', '"4"'):
+                child.write_text(f'extends: stack.yaml\nstack:\n  verification_workers: {invalid}\n')
+                with self.assertRaisesRegex(ValueError, 'verification_workers must be a positive integer'):
+                    loader(child)
+            child.write_text('extends: stack.yaml\nstack:\n  verification_workers: 2\n')
 
     def test_merge_policy_honors_explicit_and_inherited_matching_engine(self):
         cfg = deepcopy(self.cfg)

@@ -64,6 +64,23 @@ Verification logs identify the current acquisition, and the catalog's `metrics`
 record product files/bytes hashed and checksum-cache hits. This optimization
 does not invalidate existing products or require `--force`.
 
+Stack acquisition restart checks use four read-only threads by default. They
+hash different dates' raw inputs and saved products concurrently; native
+validation, alignment, assembly and catalog updates remain sequential. Set the
+limit independently of matching's `OMP_NUM_THREADS` in any stack YAML:
+
+```yaml
+stack:
+  verification_workers: 4  # Positive integer; 1 restores sequential checking.
+```
+
+Checks are prefetched at most this many dates ahead. Shared files are hashed
+once, and product revisions are checked again before reuse. This changes no
+scientific identities or products and needs no `--force`. Concurrent reads may
+help an SSD, but the speedup is limited by drive bandwidth; try 2 or 1 if the
+drive slows down under concurrent reads. An already-running process keeps its
+existing behavior until the next invocation.
+
 ## Local inputs
 
 ### Download bursts for an AOI
@@ -677,10 +694,24 @@ use leave-one-link-out empirical contrasts and the mean unfitted physical
 contrast. All use the same symmetric convention (subtract −Δ/2 from IW1 and
 +Δ/2 from IW2) and explicitly assume a constant relative bias outside the measured
 overlap. Mixed-swath footprints are unavailable for correction; same-swath burst
-joins are marked separately. Common masks, the pinned map grid, local physical
+joins are marked separately. Maps retain raw observations wherever a correction
+is unsupported, using the same production nearest-source mapping for every
+panel. Common scientific availability remains a separate diagnostic mask.
+Plots have no overlap outline or artificial masked strip; displacement color
+limits are ±5 m. `comparison_clean.png` and `corrected_clean.png` provide the
+clean spacecraft comparison and single corrected map. The pinned map grid, local physical
 scales and exact source intervals are preserved. Native covariance and correction
 uncertainty remain separate. These are diagnostic relative previews, not calibrated
 production motion products or evidence of absolute accuracy.
+
+To refresh existing previews from checksum-verified retained radar arrays and
+production center geometry, without reading aligned SLCs or refitting models:
+
+```bash
+python -m tools.swath_correction_experiment previews configs/stack.larsen.production.yaml \
+  --output /Volumes/thinkplus/insar/glacier_offsets/work/larsen/swath-experiment-2017full \
+  --retained-previews
+```
 
 To evaluate the **mean swath mismatch per link**, run the separate post hoc stage:
 

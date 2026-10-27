@@ -14,6 +14,14 @@ STACK_DEFAULTS = {'start_date': None, 'end_date': None, 'reference_date': None, 
 MERGE_FIRST = ('isce3_merge_first', 'isce2_merge_first')
 
 
+def verification_workers(cfg):
+    """Operational setting: do not insert defaults into scientific configurations."""
+    value = cfg['stack'].get('verification_workers', 4)
+    if type(value) is not int or value < 1:
+        raise ValueError('stack.verification_workers must be a positive integer')
+    return value
+
+
 def iso_date(value, label):
     # PyYAML decodes unquoted ISO dates as date objects.
     if type(value) is date:
@@ -63,6 +71,7 @@ def load_status_config(path):
     if not isinstance(output, str) or not Path(output).is_absolute():
         raise ValueError('output.directory must be a nonempty local path')
     correction_settings(cfg)
+    verification_workers(cfg)
     return cfg
 
 
@@ -70,7 +79,8 @@ def validate_stack_config(cfg, discovery=False):
     stack = cfg.get('stack')
     if not isinstance(stack, dict):
         raise ValueError('stack must be a YAML mapping')
-    unknown = set(stack) - set(STACK_DEFAULTS) - {'safe_directory', 'orbit_directory', 'swath_correction'}
+    unknown = set(stack) - set(STACK_DEFAULTS) - {'safe_directory', 'orbit_directory', 'swath_correction',
+                                              'verification_workers'}
     if unknown:
         raise ValueError(f'Unknown stack options: {sorted(unknown)}')
     stack = merge_config(STACK_DEFAULTS, stack)
@@ -100,6 +110,7 @@ def validate_stack_config(cfg, discovery=False):
     if pairing['pairs_file'] is not None and not Path(pairing['pairs_file']).is_file():
         raise ValueError('stack.pairing.pairs_file must be an existing CSV')
     cfg['stack'] = stack
+    verification_workers(cfg)
     output = cfg.get('output')
     if (not isinstance(output, dict) or not isinstance(output.get('directory'), str)
             or not Path(output['directory']).is_absolute()):
