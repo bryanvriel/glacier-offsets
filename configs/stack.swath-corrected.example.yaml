@@ -8,3 +8,5 @@ stack:
     calibration_sha256: REPLACE_WITH_64_CHARACTER_SHA256
     # null uses <output.directory>/pairs_swath_corrected automatically.
     pairs_directory: null
+packaging:
+  source: swath_corrected

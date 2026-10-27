@@ -10,6 +10,7 @@ PATH_FIELDS = (
     *(('inputs', key) for key in ('reference_safe', 'secondary_safe',
                                  'reference_orbit', 'secondary_orbit', 'dem')),
     ('output', 'directory'),
+    ('packaging', 'output'),
     ('aoi', 'path'),
     ('gross_offsets', 'velocity', 'vx', 'path'),
     ('gross_offsets', 'velocity', 'vy', 'path'),

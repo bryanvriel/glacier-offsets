@@ -185,11 +185,13 @@ class ProductionSwathCorrectionTests(unittest.TestCase):
             self.assertTrue(available[1, 0])  # Same-swath source joins are supported.
             self.assertFalse(available[2, 3])  # Full search straddles IW1/IW2.
             np.testing.assert_allclose(h['correction_std/azimuth_px'][:][available], .0045)
-        for name in ('range_displacement_m.tif', 'range_velocity_m_per_day.tif', 'azimuth_displacement_sigma_m.tif'):
+        for name in ('range_displacement_m.tif', 'azimuth_displacement_sigma_m.tif'):
             self.assertEqual(checksum(self.corrected() / 'geo' / name), checksum(self.raw / 'geo' / name))
-        path = self.corrected() / 'geo/azimuth_velocity_m_per_day.tif'
+        self.assertFalse(list((self.corrected() / 'geo').glob('*velocity*.tif')))
+        self.assertFalse(list((self.corrected() / 'geo').glob('*m_per_day.tif')))
+        path = self.corrected() / 'geo/azimuth_displacement_m.tif'
         actual = gdal.Open(str(path)).ReadAsArray()
-        expected = self.mapper.map(corrected * self.scale / (self.interval / 86400))
+        expected = self.mapper.map(corrected * self.scale)
         np.testing.assert_array_equal(actual, expected)
         displacement = gdal.Open(str(self.corrected() / 'geo/azimuth_displacement_m.tif')).ReadAsArray()
         self.assertTrue(np.isnan(displacement).any())  # Input holes remain holes.

@@ -611,9 +611,9 @@ used in the clean comparison maps, with no seam outlines, filling or smoothing.
 
 Each `<pairs_directory>/<earlier>_<later>/` contains:
 
-- `geo/azimuth_displacement_m.tif` and `azimuth_velocity_m_per_day.tif`:
+- `geo/azimuth_displacement_m.tif`:
   corrected where supported, original observations elsewhere.
-- Raw azimuth comparison rasters, bias-to-subtract layers in m and m/day,
+- Raw azimuth comparison rasters, bias-to-subtract layers in m,
   correction availability, cross-swath mixing, and same-swath join masks.
 - Unchanged range rasters, validity layers and native formal uncertainties.
   Separate `azimuth_correction_std_*` layers describe calibration sensitivity;
@@ -1008,8 +1008,147 @@ configuration and uses `work/pig/stack-interior` for the interior-cut policy:
 glacier-offsets stack run configs/stack.pig.interior.yaml --backend cpu
 ```
 
-Multi-slice assembly, NESD, time-series inversion, raster cubes, concurrent date
+Multi-slice assembly, NESD, time-series inversion, concurrent date
 preparation/pairs and fractional alignment of reference bursts remain outside V1.
+
+### Package displacement stacks as netCDF
+
+Package the **saved active pair catalog**, independently of `stack run`:
+
+```bash
+glacier-offsets package configs/stack.generated.yaml
+glacier-offsets package configs/stack.generated.yaml --output /path/displacements.nc
+glacier-offsets package configs/stack.generated.yaml --force
+```
+
+```yaml
+packaging:
+  source: raw  # raw | swath_corrected; independent of whether correction is enabled
+  output: null # default: <output.directory>/packages/displacements_<source>.nc
+```
+
+Output paths follow the usual YAML-relative inheritance rules; `--output` is
+relative to the current directory and overrides the YAML. Packaging uses
+`h5netcdf` (included in the environment specifications), without requiring
+iceutils in the processing environment. It never runs upstream processing or
+discovers newly downloaded acquisitions. Rerun the upstream workflow first to
+change the saved active catalog.
+Packaging validates the saved matching backend without probing CPU/CUDA; a
+processing-time `--backend` override need not be written back into the YAML.
+
+Every newly generated **stack** geocode has the `displacement-v1` product
+profile: displacements, displacement uncertainties, SNR/peak metrics, masks,
+timing and geometry. It produces no velocity, velocity uncertainty, or swath
+correction field in m/day. Stack diagnostics show displacements. Existing
+completed maps remain reusable and their velocity files are ignored by
+packaging; explicit geocoding regeneration removes the four workflow-owned
+velocity rasters. Standalone pair/AOI commands retain their existing products.
+Product inventory versions do not change unchanged displacement identities.
+
+Only complete, compatible active pairs enter the package. Missing, stale,
+damaged or incompatible pairs are listed with reasons in the command report
+and `omitted_pairs_json`; inactive pairs are excluded. Empty completed pairs
+remain as all-invalid slices. At least one eligible pair gives exit 0, including
+partial packages; no eligible pairs or invalid shared prerequisites give exit 2.
+Interruption gives 130 and preserves any previous complete package. The command
+holds the stack writer lock and rejects unfinished layout rebuilds.
+
+`source: swath_corrected` requires an enabled correction configuration and
+already completed corrected products matching its pinned calibration and raw
+identities. It accepts checksum-verified legacy corrections with their recorded
+implementation provenance. Missing corrected pairs are omitted; they never
+fall back to raw pairs. Unsupported **pixels** within a completed correction
+retain raw values, as before, and are identified by `correction_available=0`.
+
+Packaging preserves the common projected grid without resampling. The initial
+release requires `geocoding.resampling: nearest`. For a linear stack, change
+that setting and run `stack geocode`; matching need not be repeated. The chosen
+`geocoding.mask` and original matching thresholds are retained without new
+filtering. Unavailable quality metrics, including ISCE2 correlation peaks, stay
+NaN without removing otherwise valid observations.
+
+The file uses schema `glacier-offsets-displacements-v1`, dimensions
+`(time, y, x)`, CF time/CRS metadata and a global `EPSG` recognized by iceutils.
+Its five primary variables are:
+
+| Variable | Type | Units/convention |
+| --- | --- | --- |
+| `range_displacement_m` | float32 | metres, positive away from sensor |
+| `azimuth_displacement_m` | float32 | metres, positive increasing reference sensing time |
+| `snr` | float32 | dimensionless, original matcher SNR |
+| `correlation_peak` | float32 | dimensionless, original peak or NaN if unavailable |
+| `valid_mask` | uint8 | 0 invalid, 1 valid; no `_FillValue` |
+
+Floating variables are NaN outside valid support. Variables are losslessly
+compressed with chunks no larger than `(1, 256, 256)`. `time` labels pair
+midpoints, sorted with pair ID as a tie-breaker; duplicate midpoint labels are
+allowed. `pair_id` and `names` uniquely identify each slice. These are pair
+observations, not cumulative displacements from a common acquisition.
+
+Auxiliary variables keep the file self-contained:
+
+- `earlier_time`, `later_time`, `time_bounds`, spacecraft/orbit metadata and
+  exact `earlier_burst_time`, `later_burst_time`, `pair_interval_seconds`
+  tables indexed by `(time, burst)`. Durations retain the existing exact
+  **burst-start** convention, not a rounded day count or a claim of per-pixel
+  secondary sensing times.
+- `source_burst_index(y,x)` is 1-based into `burst_id`; zero means no source.
+  `source_observation_index` records the zero-based flattened sparse observation
+  copied to each cell, with -1 outside geometry. Multiple map cells can therefore
+  be recognized as one measurement rather than independent observations.
+- `observation_longitude`, `observation_latitude`, `height_m` (WGS84 ellipsoid),
+  `reference_center_line`, `reference_center_sample`, local azimuth ground scale,
+  per-burst reference radar grids and `source_radar_offset`. Observation positions
+  are the original chip centers; `x/y` are output cell centers.
+- `reference_los_enu(enu,y,x)` is the unit vector **ground to reference sensor**
+  in local east/north/up coordinates. `range_sensitivity_enu` and
+  `azimuth_sensitivity_enu` are observable displacement metres per metre of ENU
+  motion, evaluated by native reference geo2rdr with symmetric ±1 m ECEF
+  perturbations. Azimuth sensitivity uses the saved local ground scale and
+  reference PRF; it is not an assumed horizontal unit heading vector.
+- `reference_orbit_time/position/velocity` preserve the pinned ECEF state vectors.
+  Provenance includes input checksums, matching/geocoding settings, software,
+  geometry/layout identities and, for corrected products, complete calibration,
+  application scope and per-pixel correction availability/mixing/join flags.
+
+New reference preparation retains a separately checksummed
+`geometry/reference_orbit.h5` snapshot. Existing stacks need their **pinned
+reference EOF** connected once for enrichment; its SHA-256 must match the saved
+reference specification. No SAFE, original DEM or velocity-prior file is read.
+Supplemental sparse viewing geometry is cached separately beneath `geometry/`,
+without changing coregistration/matching identities or raw pair manifests.
+Later packaging can reuse those snapshots offline. Existing saved outputs must
+still be available to build a new package.
+
+The package is atomically published only after validation and input revision
+checks. Unchanged packages are verified and reused; changed sources or omissions
+rebuild them. `--force` affects packaging only. Internal variable checksums and
+`validate_package(path)` allow standalone integrity checks without opening any
+stack outputs. Future tide correction and ENU/projected-velocity tools can use
+this file alone, plus external model inputs such as CATS2008; those processors
+are not implemented by the packaging command.
+
+```python
+import iceutils as ice
+
+stack = ice.Stack('/path/displacements.nc')
+displacement = stack.slice(0, key='range_displacement_m')
+mask = stack.slice(0, key='valid_mask')  # remains uint8
+print(stack.names, stack.hdr.epsg)
+stack.close()
+```
+
+There is no duplicate `data` variable: pass the desired measurement name as
+`key=`. Use `stack.ds` for timing tables, geometry and provenance. Mean fields
+or inversions must explicitly account for each pair's endpoints and duration.
+
+For an exact comparison against all source rasters and an independent iceutils
+check on a standalone copy, use:
+
+```bash
+python tools/validate_packaging.py configs/stack.generated.yaml /path/displacements.nc \
+  --ice-python /path/to/ice/bin/python
+```
 
 ### Prepare orbits and a DEM
 

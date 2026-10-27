@@ -94,9 +94,10 @@ def diagnostics(cfg,root,manifest):
         fig,axes=plt.subplots(2,3,figsize=(15,8),layout='constrained')
         for ax,key,title in zip(axes[0],['longitude_deg','latitude_deg','azimuth_ground_spacing_m_per_slc_line'],['Center longitude [deg]','Center latitude [deg]','Local azimuth ground scale [m/SLC line]']):
             image(ax,geo[key],title,mask=geo['geometry_valid'])
+        quantity, units = ('displacement_m', 'm') if 'stack_pair' in manifest else ('velocity_m_per_day', 'm/day')
         for j,axis in enumerate(['range','azimuth']):
-            path=root/'geo'/f'{axis}_velocity_m_per_day.tif';ds=gdal.Open(str(path));a=ds.ReadAsArray();gt=ds.GetGeoTransform()
-            image(axes[1,j],a,f'TOTAL {axis} velocity [m/day]',cmap='RdBu_r',extent=[gt[0],gt[0]+gt[1]*a.shape[1],gt[3]+gt[5]*a.shape[0],gt[3]])
+            path=root/'geo'/f'{axis}_{quantity}.tif';ds=gdal.Open(str(path));a=ds.ReadAsArray();gt=ds.GetGeoTransform()
+            image(axes[1,j],a,f'TOTAL {axis} {quantity.split("_")[0]} [{units}]',cmap='RdBu_r',extent=[gt[0],gt[0]+gt[1]*a.shape[1],gt[3]+gt[5]*a.shape[0],gt[3]])
             axes[1,j].set_xlabel('Projected x [m]');axes[1,j].set_ylabel('Projected y [m]')
         quality_path=root/'geo/quality_valid_mask.tif'
         if quality_path.is_file():
@@ -109,10 +110,11 @@ def diagnostics(cfg,root,manifest):
         fig.suptitle(f"Radar observables; absolute accuracy unverified. Source mask: {manifest.get('geocoding',{}).get('source_mask','quality')}")
         fig.savefig(directory/'geometry_checks.png',dpi=140,bbox_inches='tight');plt.close(fig)
     uncertainty_summary={}
-    uncertainty_paths=[root/'geo'/f'{axis}_{quantity}.tif' for quantity in ['displacement_sigma_m','velocity_sigma_m_per_day']
+    quantities = ['displacement_sigma_m'] if 'stack_pair' in manifest else ['displacement_sigma_m','velocity_sigma_m_per_day']
+    uncertainty_paths=[root/'geo'/f'{axis}_{quantity}.tif' for quantity in quantities
                        for axis in ['range','azimuth']]
     if all(path.is_file() for path in uncertainty_paths):
-        fig,axes=plt.subplots(2,2,figsize=(13,8),layout='constrained')
+        fig,axes=plt.subplots(len(quantities),2,figsize=(13,4*len(quantities)),layout='constrained',squeeze=False)
         for ax,path in zip(axes.ravel(),uncertainty_paths):
             ds=gdal.Open(str(path));data=ds.ReadAsArray();gt=ds.GetGeoTransform()
             finite=data[np.isfinite(data)];units=ds.GetMetadataItem('units')

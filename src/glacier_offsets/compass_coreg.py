@@ -94,6 +94,11 @@ def run_compass(cfg, pair, side, root, reference_directory=None):
 def prepare_reference(cfg, burst, root):
     """Generate topology and reference SLC exactly once for a stack burst."""
     run_compass(cfg, (burst, burst), 'reference', root)
+    from .package_geometry import retain_reference_orbit
+    from .products import checksum
+    orbit = cfg['inputs']['reference_orbit']
+    retain_reference_orbit(Path(cfg['output']['directory']) / 'geometry',
+                           {'path': orbit, 'sha256': checksum(orbit)})
     directory = root / 'coreg/reference' / burst.id / burst.start.strftime('%Y%m%d')
     slc = directory / f'{burst.id}_{burst.start:%Y%m%d}_{cfg["inputs"]["polarization"]}.slc.tif'
     return inspect_pair(slc, slc, directory)

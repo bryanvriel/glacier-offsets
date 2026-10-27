@@ -153,19 +153,19 @@ def main():
     cmap.set_bad('white')
     line, sample = baseline['center_line'][:, 0], baseline['center_sample'][0]
     extent = [sample[0]-64, sample[-1]+64, line[-1]+16, line[0]-16]
-    for axis, bound, speedbound in [('azimuth', .4, 1.), ('range', 1.2, .5)]:
+    for axis, bound, mapbound in [('azimuth', .4, 6.), ('range', 1.2, 3.)]:
         fig, axes = plt.subplots(2, 4, figsize=(19, 10), layout='constrained')
         for col, (name, data) in enumerate(arrays.items()):
             im = axes[0, col].imshow(np.where(data['valid'], data[f'total/{axis}_px'], np.nan), extent=extent,
                                      aspect='auto', cmap=cmap, vmin=-bound, vmax=bound, interpolation='nearest')
             axes[0, col].set(title=LABELS[name], xlabel='Range sample', ylabel='Azimuth line')
             directory = pair if name == 'baseline' else out/name
-            raster = ice.Raster(rasterfile=str(directory/'geo'/f'{axis}_velocity_m_per_day.tif'))
+            raster = ice.Raster(rasterfile=str(directory/'geo'/f'{axis}_displacement_m.tif'))
             geo_im = axes[1, col].imshow(raster.data, extent=np.array(raster.hdr.extent)/1000,
-                                         cmap=cmap, vmin=-speedbound, vmax=speedbound, interpolation='nearest')
+                                         cmap=cmap, vmin=-mapbound, vmax=mapbound, interpolation='nearest')
             axes[1, col].set(xlabel='EPSG:3031 x [km]', ylabel='EPSG:3031 y [km]')
         fig.colorbar(im, ax=axes[0, :], label=f'{axis.capitalize()} offset [SLC pixels]', shrink=.8, extend='both')
-        fig.colorbar(geo_im, ax=axes[1, :], label=f'{axis.capitalize()} velocity [m/day]', shrink=.8, extend='both')
+        fig.colorbar(geo_im, ax=axes[1, :], label=f'{axis.capitalize()} displacement [m]', shrink=.8, extend='both')
         fig.suptitle(f'{pair.name}: {axis} — full radar grid and saved common map grid\nRaw native observations with unchanged quality checks; no smoothing or gap filling.')
         fig.savefig(out/f'{axis}_comparison.png', dpi=150)
         plt.close(fig)

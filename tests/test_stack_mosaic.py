@@ -490,7 +490,7 @@ class MergeFirstWorkflowTests(unittest.TestCase):
                     np.testing.assert_array_equal(total, gross+g[f'residual/{axis}_px'][:])
                     np.testing.assert_array_equal(gross[good], (1, -1)[k])
                     np.testing.assert_allclose(total[good], expected[k], atol=.2)
-            for name in ('range_velocity_m_per_day.tif', 'azimuth_velocity_m_per_day.tif', 'valid_mask.tif'):
+            for name in ('range_displacement_m.tif', 'azimuth_displacement_m.tif', 'valid_mask.tif'):
                 np.testing.assert_array_equal(read(new/'pairs'/pair/'geo'/name), read(reference/'pairs'/pair/'geo'/name))
 
     def test_range2x_stack_matching_recovers_known_translations_in_original_units(self):

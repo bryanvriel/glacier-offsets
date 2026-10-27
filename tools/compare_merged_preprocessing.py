@@ -122,8 +122,8 @@ def compare_outputs(pair,out,variants):
                 if kind=='radar':image=np.where(common,data[name][f'total/{axis}_px'],np.nan)
                 else:
                     directory=pair if name=='baseline_deramp0' else variants[name]
-                    ds=gdal.Open(str(directory/'geo'/f'{axis}_velocity_m_per_day.tif'))
-                    reference=gdal.Open(str(pair/'geo'/f'{axis}_velocity_m_per_day.tif'))
+                    ds=gdal.Open(str(directory/'geo'/f'{axis}_displacement_m.tif'))
+                    reference=gdal.Open(str(pair/'geo'/f'{axis}_displacement_m.tif'))
                     if ds.GetGeoTransform()!=reference.GetGeoTransform() or ds.GetProjection()!=reference.GetProjection():
                         raise ValueError('Changed map geometry')
                     image=ds.ReadAsArray();np.testing.assert_array_equal(image.shape,reference.ReadAsArray().shape)
@@ -132,7 +132,7 @@ def compare_outputs(pair,out,variants):
             limit=max(float(np.quantile(abs(finite),.95)),.1) if finite.size else .1
             for col,(name,image) in enumerate(zip(labels,images)):
                 artist=axes[row,col].imshow(image,aspect='auto',cmap='RdBu_r',vmin=-limit,vmax=limit)
-                axes[row,col].set_title(f'{name}: {axis} [{"original px" if kind=="radar" else "m/day"}]')
+                axes[row,col].set_title(f'{name}: {axis} [{"original px" if kind=="radar" else "m"}]')
                 axes[row,col].set(xlabel='Matching range column' if kind=='radar' else 'Map column',
                                   ylabel='Matching azimuth row' if kind=='radar' else 'Map row')
                 fig.colorbar(artist,ax=axes[row,col],shrink=.7)

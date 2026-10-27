@@ -247,7 +247,8 @@ class StackStorageTests(unittest.TestCase):
         self.f.plan = self.f.make_plan(self.f.acquisitions[:2])
         self.assertEqual(execute_stack(self.cfg, 'run'), 0)
         pair = next(self.root.glob('pairs/*/manifest.json')).parent
-        self.assertTrue((pair/'geo/range_velocity_m_per_day.tif').is_file())
+        self.assertTrue((pair/'geo/range_displacement_m.tif').is_file())
+        self.assertFalse((pair/'geo/range_velocity_m_per_day.tif').exists())
         self.assertTrue((pair/'diagnostics/overview.png').is_file())
         self.assertTrue((pair/'diagnostics/window_locations.png').is_file())
         self.assertFalse(any(self.root.glob('acquisitions/*/slc.tif')))

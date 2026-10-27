@@ -36,3 +36,6 @@ geocoding:
   spacing_m: 200
   resampling: nearest
   mask: input
+packaging:
+  source: raw  # raw | swath_corrected; package existing completed active pairs only.
+  output: null  # null uses <output.directory>/packages/displacements_<source>.nc.

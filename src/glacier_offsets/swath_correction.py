@@ -54,7 +54,8 @@ def revision(path):
 
 def raster_files(directory):
     """AppleDouble files match '*.tif' too; they are never scientific rasters."""
-    return sorted(p for p in directory.glob('*.tif') if not p.name.startswith('.'))
+    return sorted(p for p in directory.glob('*.tif') if not p.name.startswith('.')
+                  and 'velocity' not in p.name and not p.stem.endswith('_m_per_day'))
 
 
 def product_files(directory):
@@ -166,8 +167,7 @@ def correct_pair(cfg, pair, frame, scenes, cal, cal_hash, checksums, force=False
     inputs.file(raw / 'radar/offsets.h5')
     inputs.file(raw / 'geo/center_geometry.h5')
     for axis in ('range', 'azimuth'):
-        for quantity in ('displacement_m', 'velocity_m_per_day'):
-            inputs.file(raw / 'geo' / f'{axis}_{quantity}.tif')
+        inputs.file(raw / 'geo' / f'{axis}_displacement_m.tif')
     owner_path = manifest['coreg']['source_index']
     if owner_path not in frame.get('products', {}):
         raise ValueError('Reference ownership product has no completion checksum')
@@ -229,9 +229,7 @@ def correct_pair(cfg, pair, frame, scenes, cal, cal_hash, checksums, force=False
     mapped_raw, mapped_corrected = mapper.map(total * scale), mapper.map(corrected * scale)
     raw_range_m = rg * manifest['coreg']['reference_grid']['range_pixel_spacing']
     raw_maps = {'azimuth_displacement_m': mapped_raw,
-                'azimuth_velocity_m_per_day': mapper.map(total * scale / (interval / 86400)),
-                'range_displacement_m': mapper.map(raw_range_m),
-                'range_velocity_m_per_day': mapper.map(raw_range_m / (interval / 86400))}
+                'range_displacement_m': mapper.map(raw_range_m)}
     for name, value in raw_maps.items():
         ds = gdal.Open(str(raw / 'geo' / (name + '.tif')))
         np.testing.assert_array_equal(value, ds.ReadAsArray())
@@ -274,13 +272,9 @@ def correct_pair(cfg, pair, frame, scenes, cal, cal_hash, checksums, force=False
         for p in raster_files(raw / 'geo'):
             shutil.copyfile(p, stage / 'geo' / p.name)
         shutil.copyfile(raw / 'geo/azimuth_displacement_m.tif', stage / 'geo/raw_azimuth_displacement_m.tif')
-        shutil.copyfile(raw / 'geo/azimuth_velocity_m_per_day.tif', stage / 'geo/raw_azimuth_velocity_m_per_day.tif')
         fields = {'azimuth_displacement_m': mapped_corrected,
-                  'azimuth_velocity_m_per_day': mapper.map(corrected * scale / (interval / 86400)),
                   'azimuth_bias_to_subtract_m': mapper.map(bias * scale),
-                  'azimuth_bias_to_subtract_m_per_day': mapper.map(bias * scale / (interval / 86400)),
                   'azimuth_correction_std_m': mapper.map(sigma * scale),
-                  'azimuth_correction_std_m_per_day': mapper.map(sigma * scale / (interval / 86400)),
                   'correction_available': mapped_available,
                   'cross_swath_mixed': mapper.map(mixed.astype('float32')),
                   'same_swath_burst_join': mapper.map((seam & ~mixed).astype('float32'))}
@@ -289,6 +283,7 @@ def correct_pair(cfg, pair, frame, scenes, cal, cal_hash, checksums, force=False
             write_geotiff(stage / 'geo' / (name + '.tif'), value, mapper.transform, grid['epsg'],
                           metadata | {'units': units, 'quantity': name})
         write_json(stage / 'geo/geocoding.json', {'target_grid': grid, 'resampling': 'nearest',
+                   'product_profile': 'displacement-v1',
                    'source_mask': cfg['geocoding']['mask'], 'raw_geocode_identity': manifest['geocode_identity'],
                    'correction': metadata})
         counts = {'map_pixels': int(np.isfinite(mapped_raw).sum()),
@@ -324,6 +319,11 @@ def correct_pair(cfg, pair, frame, scenes, cal, cal_hash, checksums, force=False
             target = destination / p.relative_to(stage)
             target.parent.mkdir(parents=True, exist_ok=True)
             os.replace(p, target)
+        obsolete = [f'{axis}_{quantity}' for axis in ('range', 'azimuth')
+                    for quantity in ('velocity_m_per_day', 'velocity_sigma_m_per_day')]
+        obsolete += ['raw_azimuth_velocity_m_per_day', 'azimuth_bias_to_subtract_m_per_day', 'azimuth_correction_std_m_per_day']
+        for name in obsolete:
+            (destination / 'geo' / f'{name}.tif').unlink(missing_ok=True)
         inputs.unchanged()
         write_json(destination / 'manifest.json', completed)
     return completed | {'reused': False}
