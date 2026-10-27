@@ -9,6 +9,9 @@ from .inputs import discover, select_pair
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == 'correct-tides':
+        from .tides import main as tide_main
+        return tide_main(argv[1:])
     if argv and argv[0] == 'package':
         from .packaging import main as package_main
         return package_main(argv[1:])
@@ -25,7 +28,8 @@ def main(argv=None):
     parser.epilog = ('Stack workflows: glacier-offsets stack --help. '
                      'Download bursts: glacier-offsets download-bursts --help. '
                      'Prepare inputs: glacier-offsets prepare-inputs --help. '
-                     'Package displacements: glacier-offsets package --help')
+                     'Package displacements: glacier-offsets package --help. '
+                     'Correct ocean tides: glacier-offsets correct-tides --help')
     parser.add_argument("command", choices=["list-bursts", "validate", "coregister", "assemble", "match", "geocode", "diagnostics", "run"])
     parser.add_argument("config")
     parser.add_argument("--backend", choices=["cpu", "gpu", "auto"])

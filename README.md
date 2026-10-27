@@ -29,6 +29,8 @@ motion are reported in radar directions; they are not east/north components.
   inspecting planned pair coverage and connectivity.
 - Self-contained displacement netCDF stacks compatible with `iceutils.Stack`,
   with raw or swath-corrected observations, quality metrics, timing and LOS geometry.
+- CATS2008-v2023 vertical ocean-tide correction directly from a netCDF stack,
+  retaining the model's flexure response and writing a separate corrected stack.
 
 ## Installation
 
@@ -120,6 +122,18 @@ New stack maps contain displacements without velocities. The independent
 `package` command preserves the common grid and packages completed active pairs,
 recording omissions. Set `packaging.source: swath_corrected` to use completed
 corrected products. See the [netCDF schema and examples](README_DETAILED.md#package-displacement-stacks-as-netcdf).
+
+To remove vertical ocean tides using the model's embedded grounding/flexure response:
+
+```bash
+python -m pip install -e '.[tides]'
+glacier-offsets correct-tides /path/displacements.nc \
+  --model /path/CATS2008_v2023.nc --output /path/displacements_tide_corrected.nc
+```
+
+The corrected primary range remains in slant-range metres. This command needs
+the input netCDF and local tide model, and reads no other processing outputs.
+See [tidal correction conventions](README_DETAILED.md#correct-vertical-ocean-tides).
 
 Default ISCE3 stack CPU matching uses up to `OMP_NUM_THREADS` separate burst workers within
 each date pair. Acquisition preparation and date pairs run sequentially; more

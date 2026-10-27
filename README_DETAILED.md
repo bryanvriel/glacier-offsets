@@ -1124,9 +1124,8 @@ The package is atomically published only after validation and input revision
 checks. Unchanged packages are verified and reused; changed sources or omissions
 rebuild them. `--force` affects packaging only. Internal variable checksums and
 `validate_package(path)` allow standalone integrity checks without opening any
-stack outputs. Future tide correction and ENU/projected-velocity tools can use
-this file alone, plus external model inputs such as CATS2008; those processors
-are not implemented by the packaging command.
+stack outputs. `correct-tides` consumes this file plus a local CATS2008 model.
+Future ENU/projected-velocity tools can also use this self-contained format.
 
 ```python
 import iceutils as ice
@@ -1148,6 +1147,107 @@ check on a standalone copy, use:
 ```bash
 python tools/validate_packaging.py configs/stack.generated.yaml /path/displacements.nc \
   --ice-python /path/to/ice/bin/python
+```
+
+### Correct vertical ocean tides
+
+Install the optional predictor in the processing environment, preserving the
+project's NumPy/ISCE3 constraints:
+
+```bash
+python -m pip install -e '.[tides]'
+glacier-offsets correct-tides /path/displacements.nc \
+  --model /path/CATS2008_v2023.nc \
+  --output /path/displacements_tide_corrected.nc
+```
+
+This is a standalone **netCDF-to-netCDF** operation. It reads no stack YAML,
+SAFE, orbit, DEM, GeoTIFF, pair manifest or acquisition directory. All observation
+locations, burst acquisition times, associations and viewing geometry come from
+the input displacement package; the only external scientific input is the local
+CATS2008-v2023 model. Raw and swath-corrected packages are both accepted.
+The default output is `INPUT_tide_corrected.nc` beside the source. Inputs and
+the model are never modified. The command is independent of `stack run` and
+`package` and never downloads model files.
+
+The vertical-motion term follows Sun, Riel and Minchew (2023), *Disintegration
+and Buttressing Effect of the Landfast Sea Ice in the Larsen B Embayment,
+Antarctic Peninsula*, Supporting Information Text S1, equation (1). For each
+source observation, predict upward-positive heights at its exact earlier/later
+**burst-start** times and compute:
+
+```text
+delta_z = eta(later) - eta(earlier)
+range_bias = delta_z * range_sensitivity_enu[up]
+range_corrected = range_input - range_bias
+```
+
+With positive range away from the sensor, the up sensitivity is approximately
+`-cos(incidence)`, giving `range_corrected = range_input + delta_z*cos(incidence)`.
+The primary range stays in **slant-range metres**. The paper's additional
+division by `sin(incidence)` is deferred to a future horizontal-velocity step.
+Azimuth is unchanged. This corrects modeled vertical ocean-tide motion only;
+it does not remove horizontal tidal flow or add solid-Earth/load-tide terms.
+
+The first implementation supports the local **CATS2008-v2023 TMD3 netCDF**
+(`CATS2008_v2023.nc`), not the older OTIS binary distribution. Default
+`--response model` uses its embedded BedMachine-v2-based flexure/grounding
+response: constituent fields are multiplied by the flexure percentage divided
+by 100 **before spatial interpolation**, as in pyTMD. The small modeled
+overshoots above 100% are retained. Zero-response grounded cells get a known
+zero correction. A missing flexure field is an error, without a freely-floating
+fallback. `--response floating` is an explicit alternative for full ocean-tide
+response, restricted to cells with ocean-model support.
+
+Coordinates are transformed into the model's own polar stereographic grid
+(including its kilometre units and central meridian). Only the required height
+constituent window is read; Antarctic current fields are not loaded. Complex
+harmonics are linearly interpolated at actual chip-center locations, without
+extrapolation or hole filling. Predictions use pyTMD's TMD3 nodal corrections,
+minor-constituent inference, UTC days since 1992-01-01 and zero delta-T according
+to the OTIS/TMD3 convention. Repeated map cells sharing one radar observation
+reuse the same prediction, with a bounded cache of burst/endpoint results.
+
+The output retains the five primary variables, original map grid, pair labels,
+timing, metadata, integer `valid_mask`, SNR, correlation peak, azimuth and
+reference geometry. It adds:
+
+- `range_displacement_before_tides_m(time,y,x)`: exact input range for audit.
+- `tide_height_earlier_m`, `tide_height_later_m`,
+  `tidal_vertical_displacement_m` and `tidal_range_bias_m`, all in metres.
+- `tidal_correction_available(time,y,x)`: uint8 0/1, without a fill value.
+- `tidal_response_factor(y,x)` and `tidal_model_ocean_mask(y,x)` for spatial
+  provenance. The response is informational; it must not be multiplied into
+  the already corrected observations a second time.
+- `tidal_correction_provenance_json` and a processing-history entry containing
+  input/model checksums, method, software version, response policy and counts.
+
+Unavailable model predictions retain the original displacement and validity,
+with correction availability zero and auxiliary tide fields NaN. The measurement
+mask and tide availability therefore answer different questions. Counts include
+known zero-response cells; map cells copied from one observation remain dependent.
+The processing uses the package's existing burst-start timing convention, not
+scene midpoints or a claim of exact per-pixel secondary sensing times.
+
+Outputs are verified and atomically replaced after input/model revision checks.
+An unchanged result is reused. A different recipe at the same output path needs
+`--force`, which rebuilds from the uncorrected source. Already tide-corrected
+inputs are rejected even with `--force`, preventing double application. An
+interruption preserves both the source and any previously completed output.
+Exit codes are 0 successful/reused, 2 invalid prerequisites or processing failure,
+and 130 interrupted. `validate_tidal_stack(path)` validates the output in
+isolation, including its checksums, availability and projection arithmetic.
+
+Model/predictor references:
+[CATS2008-v2023](https://doi.org/10.15784/601772) and
+[pyTMD ocean/load-tide prediction](https://pytmd.readthedocs.io/en/stable/getting_started/Getting-Started.html).
+
+For an audit using only the two netCDF files, optionally including an independent
+pyTMD model-driver comparison and iceutils read of a standalone copy:
+
+```bash
+PYTHONPATH=src:. python tools/validate_tidal_stack.py INPUT.nc CORRECTED.nc \
+  --model /path/CATS2008_v2023.nc --ice-python /path/to/ice/bin/python
 ```
 
 ### Prepare orbits and a DEM
