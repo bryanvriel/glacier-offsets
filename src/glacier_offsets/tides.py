@@ -225,6 +225,8 @@ def correct_tides(source, model_path, *, output=None, response='model', force=Fa
     validate_package(source)
     with h5netcdf.File(source, 'r') as h:
         spec = json_scalar(h, 'provenance_json')
+        if h.attrs.get('horizontal_conversion_method'):
+            raise ValueError('Correct tides on the radar-component parent before horizontal conversion')
         if h.attrs.get('tidal_correction_method') or any(s.get('method') == METHOD for s in spec.get('postprocessing', [])):
             raise ValueError('Input already has an ocean-tide correction; use the uncorrected parent stack')
         for key in ('earlier_burst_time', 'later_burst_time'):

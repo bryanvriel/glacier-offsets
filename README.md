@@ -135,6 +135,18 @@ The corrected primary range remains in slant-range metres. This command needs
 the input netCDF and local tide model, and reads no other processing outputs.
 See [tidal correction conventions](README_DETAILED.md#correct-vertical-ocean-tides).
 
+To convert the supplied radar components to local east/north displacements:
+
+```bash
+glacier-offsets to-horizontal /path/displacements_tide_corrected.nc \
+  --vertical-motion zero --output /path/displacements_horizontal.nc
+```
+
+This uses only the input netCDF, preserves the spatial grid and pair endpoints,
+and writes displacements in metres. Azimuth tidal correction remains disabled.
+Use `horizontal_valid_mask` for the converted fields. See
+[horizontal conversion assumptions and geometry checks](README_DETAILED.md#convert-to-local-eastnorth-displacements).
+
 Default ISCE3 stack CPU matching uses up to `OMP_NUM_THREADS` separate burst workers within
 each date pair. Acquisition preparation and date pairs run sequentially; more
 matching workers require more RAM. GPU matching requires a supported Linux/NVIDIA

@@ -9,6 +9,9 @@ from .inputs import discover, select_pair
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == 'to-horizontal':
+        from .horizontal import main as horizontal_main
+        return horizontal_main(argv[1:])
     if argv and argv[0] == 'correct-tides':
         from .tides import main as tide_main
         return tide_main(argv[1:])
@@ -29,7 +32,8 @@ def main(argv=None):
                      'Download bursts: glacier-offsets download-bursts --help. '
                      'Prepare inputs: glacier-offsets prepare-inputs --help. '
                      'Package displacements: glacier-offsets package --help. '
-                     'Correct ocean tides: glacier-offsets correct-tides --help')
+                     'Correct ocean tides: glacier-offsets correct-tides --help. '
+                     'Convert to east/north displacements: glacier-offsets to-horizontal --help')
     parser.add_argument("command", choices=["list-bursts", "validate", "coregister", "assemble", "match", "geocode", "diagnostics", "run"])
     parser.add_argument("config")
     parser.add_argument("--backend", choices=["cpu", "gpu", "auto"])

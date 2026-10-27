@@ -1250,6 +1250,181 @@ PYTHONPATH=src:. python tools/validate_tidal_stack.py INPUT.nc CORRECTED.nc \
   --model /path/CATS2008_v2023.nc --ice-python /path/to/ice/bin/python
 ```
 
+### Convert to local east/north displacements
+
+```bash
+glacier-offsets to-horizontal /path/displacements_tide_corrected.nc \
+  --vertical-motion zero --output /path/displacements_horizontal.nc
+```
+
+`to-horizontal` is an independently invoked netCDF-to-netCDF operation. Raw,
+swath-corrected and range-tide-corrected displacement packages are accepted.
+It needs no model, orbit file, DEM, SAFE, YAML or other stack outputs. Default
+output is `INPUT_horizontal.nc`; `--force` rebuilds conversion from the radar
+parent. It does not modify the input. Identical recipes reuse a validated output;
+changed inputs/settings need a new output path or `--force`. Writers share the
+derived-output directory lock. Temporary outputs are validated, source revisions
+checked again, and published by atomic replacement.
+
+For each reference observation, the stored horizontal sensitivities define:
+
+```text
+range_displacement   = g_range_east * east  + g_range_north * north
+azimuth_displacement = g_azimuth_east * east + g_azimuth_north * north
+```
+
+The converter solves this linearized 2x2 system in double precision and stores
+`east_displacement_m(time,y,x)` and `north_displacement_m(time,y,x)` as float32
+metres. Positive values mean eastward/northward, later minus earlier. It uses
+the native reference-geometry sensitivities and existing azimuth scale, without
+an extra incidence correction or division by pair duration. Geometry is evaluated
+at the pinned reference observation, not recomputed along the displaced trajectory.
+
+`--vertical-motion zero` (the only currently supported constraint) assumes zero
+residual vertical displacement in the supplied radar observations. Two radar
+components cannot resolve unconstrained 3D motion. Surface-parallel motion and
+other vertical-motion constraints are not implemented. Apply range tidal
+correction **before** conversion. **Azimuth tidal correction remains disabled**:
+azimuth is used exactly as supplied, including any residual apparent azimuth
+motion from vertical tides. No azimuth tidal term is subtracted inside conversion.
+For tide-corrected inputs, cells without an available range tide correction are
+excluded from horizontal valid support. Known grounded zero corrections remain
+available. Swath-correction fallback flags and all existing correction history
+are retained.
+
+The existing map CRS, shape, transform, pixel-center coordinates and source
+observation associations are unchanged. No reprojection or interpolation occurs.
+The new components are physical **local geographic east/north**, even when stored
+on an EPSG:3031 grid; they are not projected grid-x/grid-y coordinate differences.
+All original radar variables and masks remain available unchanged.
+
+Geometry checks are separate from the original measurement mask. Defaults are:
+
+- `--max-condition 3`: maximum 2-norm condition number of the horizontal matrix.
+  A minimum singular value of `1e-6` m/m also excludes effectively zero sensitivity.
+- `--max-azimuth-scale-ratio 2`: local azimuth scale must lie between one half
+  and twice its burst's median. Each unique source observation contributes once
+  to that median, regardless of how many map cells copy it. This conservative
+  check excludes all 226 Larsen outliers identified in the audit below; it does
+  not repair retained geometry or establish DEM accuracy.
+
+These settings and medians are recorded in the conversion recipe. Raising the
+limits changes the recipe and admits more geometry. Additional variables are:
+
+- `horizontal_geometry_flags(y,x)`: uint8 bits 1 missing geometry, 2 ill-conditioned
+  or weak sensitivity, 4 azimuth-scale outlier; zero means accepted.
+- `horizontal_geometry_valid_mask(y,x)`, `horizontal_condition_number(y,x)` and
+  `horizontal_azimuth_scale_ratio(y,x)`: static diagnostics.
+- `horizontal_valid_mask(time,y,x)`: uint8 1 for a usable horizontal observation.
+- `horizontal_validity_flags(time,y,x)`: uint8 bits 1 input invalid, 2 geometry
+  rejected, 4 requested range tide correction unavailable, 8 numerical overflow.
+  Reasons can overlap. Floating horizontal measurements are NaN wherever this
+  flag is nonzero. All integer masks/flags have no fill value, preserving zeros.
+- `horizontal_uncertainty_available(time,y,x)`: uint8 0/1, independent of the
+  measurement mask. SNR and correlation peak are never treated as uncertainties.
+- `horizontal_conversion_provenance_json`: input checksum/identity, software,
+  settings, assumptions, preserved-variable hashes and coverage counts.
+
+If the input supplies a complete formal covariance via
+`range_displacement_sigma_m`, `azimuth_displacement_sigma_m` (metres), and
+`range_azimuth_displacement_covariance_m2` (m2), all with `(time,y,x)` dimensions,
+the converter propagates `C_EN = inverse(A) C_RA inverse(A).T`. It writes
+`east_displacement_sigma_m`, `north_displacement_sigma_m` and
+`east_north_displacement_covariance_m2`. Invalid/non-PSD covariance produces
+unavailable uncertainty without discarding the displacement. Existing packages
+without the complete triplet have unavailable uncertainty; no zero cross
+covariance is assumed. This propagation covers formal matching uncertainty only,
+excluding tide-model/calibration errors and correlations between shared acquisitions.
+
+Empty completed slices remain in the output. A nonempty input with no usable
+horizontal observations is an error; partial coverage succeeds and is reported.
+`validate_horizontal_stack(path)` checks hashes, masks, inversion/forward
+equations and optional covariance using the output file alone. For a separate
+closed-form check of every accepted slice and an optional standalone iceutils read:
+
+```bash
+PYTHONPATH=src:. python tools/validate_horizontal_stack.py RADAR.nc HORIZONTAL.nc \
+  --ice-python /path/to/ice/bin/python
+```
+
+```python
+import iceutils as ice
+stack = ice.Stack('/path/displacements_horizontal.nc')
+east = stack.slice(0, key='east_displacement_m')
+valid = stack.slice(0, key='horizontal_valid_mask').astype(bool)
+early = stack.ds['earlier_burst_time']  # (time, burst), exact UTC endpoints
+late = stack.ds['later_burst_time']
+stack.close()
+```
+
+The output contains pair displacements, not a velocity fit. For a later fit with
+displacement basis `B_j(t)`, use rows `B_j(later) - B_j(earlier)` at each pixel's
+source-burst endpoints and differentiate the fitted displacement function to
+obtain velocity. Alternatively, integrate velocity basis functions over each
+pair interval. Midpoints are labels, not instantaneous observations. The constant
+displacement term is unobservable and must be omitted or anchored. Temporal gaps,
+shared-acquisition correlations, regularization and fit diagnostics remain the
+responsibility of that future fitting step.
+
+The 2026-10-27 Larsen check converted all 60 slices (`60 x 873 x 978`). It retained
+23,000,167 of 23,094,016 source-valid observations; 93,849 were excluded by the
+geometry checks. Every accepted observation agreed with a separate closed-form
+inversion within `7.63e-6` m, consistent with float32 storage precision. All source
+variable values were preserved. A standalone copy opened in the installed
+iceutils with uint8 horizontal masks and burst endpoints intact; unchanged reuse
+also passed. The input had no full formal covariance, so horizontal uncertainty
+was explicitly unavailable.
+
+### Audit ENU coefficient stability
+
+Before extending tidal correction to azimuth or converting radar offsets to
+horizontal components, audit the packaged coefficients in the ISCE3 environment:
+
+```bash
+PYTHONPATH=src:. python tools/audit_enu_geometry.py /path/displacements.nc \
+  --output .runtime/enu-geometry-audit/coefficients.json
+```
+
+This read-only tool reconstructs the pinned orbit from the netCDF alone. It
+tests central differences at 0.01–30 m perturbations, geo2rdr time tolerances
+of `1e-6`–`1e-12` seconds, and additional iteration/Doppler-derivative settings.
+An independent derivative of the zero-Doppler equation checks both radar
+components; a one-sided 3 m vertical move checks the finite tidal response.
+The selection includes every declared condition/scale/vertical-response outlier,
+spatial samples from every burst, and neighbors of the strongest outliers.
+JSON records errors and solver failures; the companion NPZ retains all tested
+coefficients. The original acceptance window is 0.1–10 m and `1e-8`–`1e-10`
+seconds with an absolute coefficient error budget of `1e-5` m/m. A narrower
+0.3–10 m practical plateau is reported separately. Exit status 1 means the
+original window did not pass; it does not discard the report or stress failures.
+
+Numerical convergence does not establish the accuracy of the retained local
+azimuth scale. An optional independent check reads the retained reference
+manifest and its checksum-pinned DEM, tests every declared outlier plus a
+typical observation from each burst, and varies the native rdr2geo line span
+and solver tolerance:
+
+```bash
+PYTHONPATH=src:. python tools/audit_azimuth_scale.py /path/displacements.nc \
+  /path/stack/geometry/manifest.json \
+  --output .runtime/enu-geometry-audit/scales.json
+```
+
+The Larsen audit on 2026-10-27 tested 1,069 unique observations, including all
+226 declared outliers across ten bursts. The stored production coefficients
+(±1 m, `1e-8` seconds) matched the independent derivatives within `5.13e-7`
+m/m. The 0.3–10 m practical plateau passed; the 0.1 m extreme narrowly exceeded
+the original error budget, centimetre perturbations lost precision, and
+`1e-12` seconds sometimes failed to converge even with more iterations.
+The separate DEM check tested 236 observations. All ten typical scales agreed
+within 0.02 m/line plus 1%, but only 16 of the 226 outlier scales did. At the
+largest outlier, source observation 61479, the retained scale was 332.48 m/line
+and fresh native intersections gave 14.59 m/line. Some terrain intersections
+also failed or depended strongly on line span. These discrepancies require
+investigating the retained geometry and scale before enabling azimuth tidal
+correction. Neither audit changes geometry, displacements, or correction policy;
+`correct-tides` continues to change range only.
+
 ### Prepare orbits and a DEM
 
 Install optional preparation dependencies in the existing ISCE3 environment:
