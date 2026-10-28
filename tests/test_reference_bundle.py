@@ -136,6 +136,49 @@ class ReferenceBundleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'immutable'):
             rebuild_layout(cfg)
 
+    def test_swath_physics_uses_managed_dem_with_original_paths_offline(self):
+        from glacier_offsets.swath_physics import native_input_products
+        from tools.swath_experiment_io import Inputs
+
+        self.export()
+        cfg = self.destination()
+        with stack_lock(Path(cfg['output']['directory']), create=True):
+            install(cfg)
+        frame = runtime_frame(cfg)
+        original_spec = deepcopy(frame['specification'])
+        local_dem = Path(cfg['inputs']['dem'])
+        expected_dem_hash = checksum(local_dem)
+        shutil.rmtree(self.bundle)
+        shutil.rmtree(self.source)
+        self.safe.unlink(); self.orbit.unlink(); self.dem.unlink()
+        cfg = configure(cfg)
+
+        # Acquisition inputs belong to the new stack, independent of the old
+        # reference's SAFE, orbit and DEM provenance.
+        safe, orbit_path = self.root/'2018.SAFE.zip', self.root/'2018.EOF'
+        safe.write_bytes(b'2018 acquisition')
+        orbit_path.write_bytes(b'2018 precise orbit')
+        acq = {'specification': {
+            'safe': {'path': str(safe), 'sha256': checksum(safe)},
+            'orbit': {'path': str(orbit_path), 'sha256': checksum(orbit_path)}}}
+        experiment = SimpleNamespace(cfg=cfg, frame=frame, inputs=Inputs(), acquisition=lambda _: acq)
+        products = native_input_products(experiment, '2018-01-02')
+        self.assertEqual(products[str(local_dem)], expected_dem_hash)
+        self.assertEqual(set(products), {str(local_dem), str(safe), str(orbit_path)})
+        self.assertEqual(frame['specification'], original_spec)
+        experiment.inputs.unchanged()
+
+        # Relocation must not weaken scientific identity verification or fall
+        # back to a different DEM when the managed asset is damaged or missing.
+        local_dem.write_bytes(b'changed DEM')
+        experiment.inputs = Inputs()
+        with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
+            native_input_products(experiment, '2018-01-02')
+        local_dem.unlink()
+        experiment.inputs = Inputs()
+        with self.assertRaises(FileNotFoundError):
+            native_input_products(experiment, '2018-01-02')
+
     def test_source_stack_can_be_addressed_through_a_directory_symlink(self):
         alias = self.root/'source-link'
         alias.symlink_to(self.source, target_is_directory=True)

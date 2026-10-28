@@ -567,6 +567,79 @@ The Larsen YAML is local, like its production parent; the versioned generic
 template is `configs/stack.swath-corrected.example.yaml`. The calibration JSON
 is versioned separately from machine-specific configurations.
 
+##### Estimate swath calibration factors
+
+Run the independent overlap experiment from the repository root in the ISCE3
+environment. Use the YAML for the processed stack with
+`stack.swath_correction.enabled: false` during estimation:
+
+```bash
+python -m tools.swath_correction_experiment run configs/stack.yaml \
+  --output /path/to/swath-calibration-experiment --workers 4
+```
+
+Unlike `glacier-offsets`, this experiment's `tools` modules are not installed
+with the Python package. From outside the checkout, use the same ISCE3
+environment and explicitly expose the source directories:
+
+```bash
+GLACIER_OFFSETS_SOURCE=/path/to/glacier_offsets
+PYTHONPATH="$GLACIER_OFFSETS_SOURCE:$GLACIER_OFFSETS_SOURCE/src${PYTHONPATH:+:$PYTHONPATH}" \
+  python -m tools.swath_correction_experiment run /path/to/configs/stack.yaml \
+  --output /path/to/swath-calibration-experiment --workers 4
+```
+
+The checkout must remain available. Config and experiment output paths here are
+absolute; paths declared inside YAML still resolve relative to the declaring
+YAML. Running the script by its absolute filename alone does not expose its
+other `tools.*` imports.
+
+The output directory must be outside the production stack and its ancestors.
+The experiment uses eligible acquisitions in the saved stack catalog and builds
+links between each date and its next two neighbors. It needs completed reference
+geometry, retained aligned per-burst SLCs and alignment products, SAFE inputs,
+precise orbits and the configured DEM. It requires ISCE3 CPU matching,
+`deramp: 0`, `range_oversampling: 2`, zero gross offsets and nearest geocoding.
+It performs additional unspliced overlap matching and physical comparisons,
+then fits and validates empirical models; production pair outputs are unchanged.
+Rerunning the same command reuses verified experiment products.
+
+With an imported reference, the experiment uses the local bundled DEM resolved
+by `stack.reference_directory` and verifies its checksum against the original
+reference identity. Laptop paths retained in reference provenance need not
+exist; leave that provenance unchanged and use `inputs.dem: null` to select
+the bundled DEM.
+
+Review `REPORT.md`, `summary.json` and `analysis/primary.json` in that directory.
+In `analysis/primary.json`, `models.spacecraft.parameters[0]` is the estimated
+`beta_px` in original reference azimuth pixels. The square root of
+`models.spacecraft.covariance[0][0]` gives `beta_std_px` when covariance is
+available. Inspect held-out acquisition, link and burst-group results before
+adopting the estimate; an unidentifiable coefficient or unavailable covariance
+does not supply a usable production calibration.
+
+The experiment currently writes estimates and reports, **not** the calibration
+JSON consumed by `correct-swaths`. Publish a separate JSON following
+[`configs/calibrations/larsen-2017h1-spacecraft.json`](configs/calibrations/larsen-2017h1-spacecraft.json):
+record the fitted coefficient and uncertainty, actual reference PRF, matching
+and geometry scope, justified application dates, training dates and source
+experiment/analysis checksums. Use the new stack's scope and evidence; the
+shipped 2017 coefficient is not automatically applicable to 2018. The
+[method description](docs/stack-processing/SWATH_CORRECTION_METHOD.md) defines
+the signs, weights and symmetric allocation.
+
+On Linux, calculate the published JSON's pin with:
+
+```bash
+sha256sum /path/to/calibration.json
+```
+
+On macOS, use `shasum -a 256 /path/to/calibration.json`. Set the YAML's
+`calibration` path and `calibration_sha256` to this file and digest, enable
+correction, and run the application step below.
+
+##### Apply a published swath calibration
+
 ```yaml
 stack:
   swath_correction:
@@ -584,9 +657,7 @@ acquisitions; symlinks cannot redirect publication into original products.
 For already completed production pairs, run only the new stage:
 
 ```bash
-PYTHONPATH=src MPLCONFIGDIR=/tmp/glacier-mpl \
-  /Users/briel/miniforge3/envs/isce3/bin/python -m glacier_offsets.cli \
-  stack correct-swaths configs/stack.larsen.swath-corrected.yaml
+glacier-offsets stack correct-swaths configs/stack.yaml
 ```
 
 Add `--pair 2017-01-19_2017-01-25` to process one saved active pair, repeating

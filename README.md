@@ -111,6 +111,46 @@ glacier-offsets stack plan configs/stack.generated.yaml > plan.json
 python tools/plot_stack_plan.py plan.json
 ```
 
+### Estimate and apply swath calibration after processing
+
+First estimate the factors from independently matched IW1/IW2 overlaps. Run from
+the repository root in the ISCE3 environment, using your processed stack YAML
+with swath correction disabled and a separate experiment output directory:
+
+```bash
+python -m tools.swath_correction_experiment run configs/stack.yaml \
+  --output /path/to/swath-calibration-experiment --workers 4
+```
+
+The `tools` directory is not installed with the package. To run from another
+directory, add the checkout root and its `src` directory to `PYTHONPATH` and use
+an absolute config path; see the [outside-the-checkout example](README_DETAILED.md#estimate-swath-calibration-factors).
+
+This requires retained aligned burst SLCs, reference geometry, SAFE inputs and
+orbits. The current estimator supports ISCE3 CPU matching with `deramp: 0`,
+`range_oversampling: 2`, zero gross offsets and nearest geocoding. Review
+`REPORT.md` and `analysis/primary.json` in the experiment directory. The tool
+estimates coefficients but does not export a production calibration JSON;
+see the [estimation and publication steps](README_DETAILED.md#estimate-swath-calibration-factors).
+
+Then apply the reviewed, published calibration to the completed stack:
+
+```bash
+glacier-offsets stack correct-swaths configs/stack.yaml
+```
+
+Use your stack YAML with `stack.swath_correction.enabled: true`, `calibration`
+pointing to the applicable calibration JSON, and `calibration_sha256` set to its
+SHA-256 checksum. See the [configuration template](configs/stack.swath-corrected.example.yaml)
+and [swath correction details](README_DETAILED.md#optional-production-spacecraft-swath-correction).
+This writes separate corrected pair products using the completed offsets. It
+does not estimate calibration factors or rerun matching. To package them, set
+`packaging.source: swath_corrected` and run:
+
+```bash
+glacier-offsets package configs/stack.yaml
+```
+
 ## Outputs and storage
 
 A stack writes:

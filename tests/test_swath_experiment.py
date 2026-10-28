@@ -164,6 +164,7 @@ class PhysicalContractTests(unittest.TestCase):
             acq = {'specification': {'safe': {'path': str(root/'safe')},
                                     'orbit': {'path': str(orbit), 'sha256': checksum(orbit)}}}
             experiment = SimpleNamespace(inputs=Inputs(), acquisition=lambda _: acq,
+                cfg={'inputs': {'dem': str(dem)}},
                 frame={'specification': {'inputs': {'dem': {'path': str(dem), 'sha256': checksum(dem)}}}})
             first = native_input_products(experiment, 'date')
             annotation.write_text('<coefficients>2</coefficients>')

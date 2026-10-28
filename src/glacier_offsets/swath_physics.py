@@ -290,8 +290,12 @@ def native_input_products(experiment, day):
     result = {str(p.resolve()): experiment.inputs.file(p) for p in paths}
     orbit = acq['specification']['orbit']
     result[orbit['path']] = experiment.inputs.file(orbit['path'], orbit['sha256'])
+    # The pinned specification retains original provenance paths after importing
+    # a reference bundle. Verify the relocated DEM actually used by physics
+    # against that immutable identity, without opening the original path.
     dem = experiment.frame['specification']['inputs']['dem']
-    result[dem['path']] = experiment.inputs.file(dem['path'], dem['sha256'])
+    dem_path = str(Path(experiment.cfg['inputs']['dem']).resolve(strict=True))
+    result[dem_path] = experiment.inputs.file(dem_path, dem['sha256'])
     return result
 
 
