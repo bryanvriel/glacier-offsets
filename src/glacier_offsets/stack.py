@@ -191,7 +191,28 @@ def plan_stack(cfg, previous=None):
         if requested and requested != pin['reference_date']:
             errors.append('Reference is pinned; changing it requires a new output root (including with --force)')
         requested = pin['reference_date']
-    reference = next((a for a in eligible if a.date == requested), None) if requested else next(iter(eligible), None)
+    imported = cfg.get('_reference_bundle')
+    if imported:
+        bundled = imported['resolved']['inputs']
+        scene = read_scene(Path(bundled['safe']))
+        from .initialization import read_precise_orbit
+        orbit = read_precise_orbit(Path(bundled['orbit']))
+        if orbit is None:
+            raise ValueError('Reference bundle orbit must be a precise AUX_POEORB file')
+        if not eligible:
+            errors.append('No eligible processing acquisitions')
+        indexed = {b.id: b for b in inventory(scene.path, orbit.path, inp['polarization'], inp['subswaths'])}
+        reference = Acquisition(scene, orbit, indexed)
+        coincident = next((a for a in eligible if a.date == reference.date), None)
+        if coincident is not None:
+            from .products import checksum
+            expected = imported['data']['frame']['specification']['inputs']['safe']['sha256']
+            if checksum(coincident.scene.path) != expected:
+                errors.append('Selected acquisition on reference date differs from bundled reference SAFE')
+        if groups and groups != {(scene.relative_orbit, scene.direction)}:
+            errors.append('Acquisition orbit/direction conflicts with reference bundle')
+    else:
+        reference = next((a for a in eligible if a.date == requested), None) if requested else next(iter(eligible), None)
     if reference is None:
         errors.append(f'No eligible reference acquisition{": " + requested if requested else ""}')
     if errors:
@@ -211,6 +232,10 @@ def plan_stack(cfg, previous=None):
     anchor = {'reference_date': reference.date, 'reference_safe': str(reference.scene.path),
               'reference_orbit': str(reference.orbit.path), 'dem': inp.get('dem'), 'selection': selection,
               'alignment_tolerance_px': .001}
+    if imported:
+        anchor = imported['data']['frame']['specification']['anchor']
+        if ids != anchor['selection']['selected_ids']:
+            raise StackPreflightError('Selected bursts conflict with reference bundle', report)
     if pin and pin != anchor:
         raise StackPreflightError('Pinned reference inputs/selection changed; use a new output root', report)
     try:
@@ -236,6 +261,9 @@ def plan_stack(cfg, previous=None):
                                      'interval_seconds': ((b.bursts[key].start-a.bursts[key].start).total_seconds()
                                                           if a.bursts[key].start and b.bursts[key].start else None)}
                                 for key in shared}}
+    if imported:
+        report['reference_bundle'] = {'fingerprint': imported['data']['fingerprint'],
+                                      'origin': imported['data']['origin']}
     report['plan_identity'] = identity(report)
     return StackPlan(tuple(candidates), reference, bursts, pairs, report, anchor)
 

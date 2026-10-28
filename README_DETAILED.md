@@ -783,6 +783,95 @@ pair graph, omitted links and disconnected dates. `validate` additionally checks
 native metadata, reference-grid placement, DEM coverage and processing settings.
 Both commands are read-only and avoid complete SAFE hashing.
 
+#### Transfer a prepared reference to another computer
+
+Export the reference from a completed stack before transferring it:
+
+```bash
+glacier-offsets stack export-reference configs/stack.larsen.production.yaml \
+  --output /data/references/larsen-20170101
+```
+
+The export takes the existing stack lock, verifies its recorded products and
+reference inputs, and publishes a new directory atomically. The output directory
+must not exist and must be outside the source stack. An unfinished layout rebuild
+or an active stack writer prevents export. No acquisition or pair processing runs.
+
+Copy that directory and the new year's SAFE/orbit inputs to the other computer.
+Create a config using the original processing, polarization, burst/AOI selection,
+matching grid (`window`, `search`, `stride`, `first_center`), and geocoding EPSG and
+spacing, with these stack/output overrides:
+
+```yaml
+stack:
+  reference_directory: /data/references/larsen-20170101
+  safe_directory: /data/larsen/2018/safes
+  orbit_directory: /data/larsen/2018/orbits
+  start_date: '2018-01-01'
+  end_date: '2018-12-31'
+  processing: isce3_merge_first
+  swath_merge: midpoint
+output:
+  directory: /data/stacks/larsen-2018
+```
+
+A standalone Larsen example is [`configs/stack.larsen.2018-reference.example.yaml`](configs/stack.larsen.2018-reference.example.yaml).
+
+Paths obey the usual YAML-relative inheritance rules. The bundle supplies the
+reference date, DEM, and AOI; `inputs.dem` and `aoi` can be omitted. An inherited
+original DEM/AOI path is also replaced with its bundled counterpart. Explicitly
+incompatible inputs or settings are rejected. A specified `reference_date` must
+agree with the bundle. Do not carry an absolute `extends` path from another
+computer without updating it.
+
+```bash
+glacier-offsets stack plan configs/larsen-2018.yaml
+glacier-offsets stack validate configs/larsen-2018.yaml
+OMP_NUM_THREADS=4 glacier-offsets stack run configs/larsen-2018.yaml --backend cpu
+glacier-offsets package configs/larsen-2018.yaml
+```
+
+Planning and validation inspect metadata; processing verifies the bundled file
+checksums before preparing acquisitions. For a separate full integrity check:
+
+```python
+from glacier_offsets.reference_bundle import read_bundle
+read_bundle('/data/references/larsen-20170101', verify=True)
+```
+
+The 2017 reference is loaded independently of the date filters. Only selected
+2018 acquisitions enter the pair graph; there is no long-baseline displacement
+pair to the reference. If the reference is inside the date filters, it can enter
+the graph normally.
+
+The versioned `reference.json` manifest authenticates each bundled file and records
+a path-independent bundle fingerprint. Contents include prepared reference SLCs,
+per-burst topology and radar grids, fixed support/ownership, the common map grid,
+exact burst timing, the single reference SAFE, its precise orbit, the required DEM,
+and any AOI sidecars. VRT dependencies and symlink targets are copied into the
+bundle, with relative VRT references. No other year's acquisition directories or
+pair products are included. The bundle retains original reference identities and
+software/input provenance; machine paths and hardware need not match.
+
+On the first processing invocation, the destination copies the verified bundle
+into `<output.directory>/.reference/`. Reserve disk space for this copy in addition
+to processing products. The external bundle may then be disconnected; retain the
+configured reference path, which is pinned in `.reference-source.json`. Inspection,
+subsequent processing and packaging use the managed assets. Imported reference
+fingerprints and provenance are carried into packaged netCDF attributes.
+
+Imported radar layout, observation ownership, matching centers and map grid remain
+fixed. Each new acquisition's validity further masks its own support; gaps are
+not filled from another burst. The supplied bundle is never changed. `--force`
+reprocesses destination products without regenerating its reference. Reference
+replacement and `stack rebuild-layout` require a new output directory when using
+an imported reference. Configurations without `reference_directory` retain their
+existing reference preparation and common-validity behavior.
+
+A shared reference does not extend an empirical correction's application scope.
+The shipped 2017 Larsen spacecraft/swath calibration must be independently
+validated for 2018 before applying it there.
+
 #### Visualize a stack plan
 
 ```bash

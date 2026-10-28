@@ -16,14 +16,19 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog='glacier-offsets stack',
         epilog='Use glacier-offsets stack init --help to initialize a stack YAML.')
     parser.add_argument('command', choices=['stages', 'status', 'plan', 'validate', 'coregister', 'assemble', 'match',
-                                           'geocode', 'diagnostics', 'correct-swaths', 'run', 'rebuild-layout'])
+                                           'geocode', 'diagnostics', 'correct-swaths', 'run', 'rebuild-layout', 'export-reference'])
     parser.add_argument('config', nargs='?')
+    parser.add_argument('--output', help='New reference bundle directory (export-reference only)')
     parser.add_argument('--backend', choices=['cpu', 'gpu', 'auto'])
     parser.add_argument('--force', action='store_true')
     parser.add_argument('--dry-run', action='store_true', help='Verify and preview rebuild-layout without changing files')
     parser.add_argument('--json', action='store_true', help='Machine-readable stack status')
     parser.add_argument('--pair', action='append', help='Saved pair to correct (repeatable; correct-swaths only)')
     args = parser.parse_args(argv)
+    if args.output and args.command != 'export-reference':
+        parser.error('--output is supported by export-reference')
+    if args.command == 'export-reference' and (not args.output or args.force or args.backend):
+        parser.error('export-reference requires --output and does not accept --force or --backend')
     if args.pair and args.command != 'correct-swaths':
         parser.error('--pair is supported by correct-swaths')
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
@@ -51,6 +56,11 @@ def main(argv=None):
                 cfg['matching']['backend'] = args.backend
             report = inspect_stack(cfg)
             print(json.dumps(report, indent=2) if args.json else format_status(report))
+            return 0
+        if args.command == 'export-reference':
+            from .reference_bundle import export_reference
+            cfg = load_status_config(args.config)
+            print(json.dumps(export_reference(cfg, args.output), indent=2))
             return 0
         if args.command == 'correct-swaths':
             from .swath_correction import execute_corrections

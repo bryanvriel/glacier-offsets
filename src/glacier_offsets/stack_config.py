@@ -7,7 +7,7 @@ from pathlib import Path
 from .config import _load_overrides, load_defaults, merge_config, validate_common
 from .swath_correction_config import settings as correction_settings
 
-STACK_DEFAULTS = {'start_date': None, 'end_date': None, 'reference_date': None, 'processing': 'isce3',
+STACK_DEFAULTS = {'reference_directory': None, 'start_date': None, 'end_date': None, 'reference_date': None, 'processing': 'isce3',
                   'swath_merge': 'overwrite',
                   'pairing': {'neighbors': 1, 'max_separation_days': 12, 'pairs_file': None}}
 # Canonical merge-first selector, then its deprecated ISCE2-named alias.
@@ -49,6 +49,9 @@ def _load_stack_settings(path):
             isinstance(cfg.get('matching'), dict) and
             'engine' not in overrides.get('matching', {})):
         cfg['matching']['engine'] = 'isce2'
+    if isinstance(cfg.get('stack'), dict) and cfg['stack'].get('reference_directory'):
+        from .reference_bundle import configure
+        configure(cfg)
     return cfg
 
 

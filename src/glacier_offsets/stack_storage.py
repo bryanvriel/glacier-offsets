@@ -67,6 +67,8 @@ def burst_config(cfg, reference, acquisition):
 
 
 def reference_specification(cfg, plan, hashes, software):
+    if cfg.get('_reference_bundle'):
+        return deepcopy(cfg['_reference_bundle']['data']['frame']['specification'])
     from .stack_mosaic import policy
     return {'method': METHOD, 'ownership_policy': policy(cfg), 'anchor': plan.anchor,
             'inputs': {key: hashes(path) for key, path in
@@ -76,6 +78,16 @@ def reference_specification(cfg, plan, hashes, software):
 
 def prepare_geometry(cfg, plan, specification, software, force=False, process=True, expected_layout=None, checksums=None):
     root = Path(cfg['output']['directory']) / 'geometry'
+    if cfg.get('_reference_bundle'):
+        from .reference_bundle import runtime_frame
+        frame = runtime_frame(cfg)
+        frame['reference_preparation_software'] = deepcopy(frame.get('software', {}))
+        frame['software'] = software
+        if not verified(frame, 'geometry_identity', frame['geometry_identity'], checksums=checksums):
+            raise ValueError('Imported reference products are incomplete or damaged')
+        if process:
+            write_json(root / 'manifest.json', frame)
+        return frame
     fingerprint = identity(specification)
     previous = read_manifest(root)
     if not force and verified(previous, 'geometry_identity', fingerprint, checksums=checksums):
@@ -200,6 +212,7 @@ def date_specification(acquisition, frame, hashes):
     if acquisition.error:
         raise ValueError(acquisition.error)
     return {'method': METHOD, 'geometry': frame['geometry_identity'],
+            **({'alignment_software': frame['software'].get('packages', {})} if frame.get('reference_bundle') else {}),
             'safe': hashes(acquisition.scene.path), 'orbit': hashes(acquisition.orbit.path),
             'burst_times': {e['burst_id']: (acquisition.bursts[e['burst_id']].start.isoformat()
                                           if acquisition.bursts[e['burst_id']].start else None)
@@ -329,7 +342,8 @@ def assemble_date(cfg, acquisition, frame, aligned, force=False, process=True, c
         slc_path, mask_path = Path(scratch)/'slc.tif', Path(scratch)/'valid.tif'
         if enabled(cfg):
             # Ownership comes from the saved plan, which also wrote source.tif.
-            count = compose(MergePlan.from_frame(frame), aligned['slcs'], slc_path, mask_path)
+            validity = {'valid_windows': aligned.get('valid_windows')} if frame.get('reference_bundle') else {}
+            count = compose(MergePlan.from_frame(frame), aligned['slcs'], slc_path, mask_path, **validity)
             result['assembly_implementation'] = IMPLEMENTATION
         else:
             count = _compose_with_gdal(frame, aligned, slc_path, mask_path, shape)

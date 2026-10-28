@@ -1,0 +1,38 @@
+# Transfer a bundle exported from stack.larsen.production.yaml, then update these paths.
+# No 2017 acquisition/pair directories are needed. DEM and AOI come from the bundle.
+extends: defaults
+inputs:
+  polarization: HH
+  subswaths: [1, 2, 3]
+  burst_id: null
+stack:
+  reference_directory: ../data/references/larsen-20170101
+  safe_directory: ../data/larsen/2018/safes
+  orbit_directory: ../data/larsen/2018/orbits
+  start_date: '2018-01-01'
+  end_date: '2018-12-31'
+  processing: isce3_merge_first
+  swath_merge: midpoint
+  # The 2017 spacecraft calibration is not validated for 2018.
+  swath_correction:
+    enabled: false
+matching:
+  engine: isce3
+  backend: cpu
+  deramp: 0
+  range_oversampling: 2
+  zoom: 16
+  oversampling: 32
+  raw_oversampling: 2
+  window: [64, 256]
+  search: [10, 40]
+  stride: [32, 128]
+gross_offsets:
+  mode: zero
+geocoding:
+  epsg: 3031
+  spacing_m: 200
+  resampling: nearest
+  mask: input
+output:
+  directory: ../work/larsen-2018

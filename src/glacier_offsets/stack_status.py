@@ -70,10 +70,10 @@ def reference_status(cfg, frame, error):
         if key in selection and cfg['inputs'].get(key) != selection[key]:
             return state('stale', f'Reference selection changed: inputs.{key}')
     dem = spec.get('inputs', {}).get('dem', {}).get('path')
-    if dem and Path(cfg['inputs'].get('dem', '')).resolve() != Path(dem).resolve():
+    if not frame.get('reference_bundle') and dem and Path(cfg['inputs'].get('dem', '')).resolve() != Path(dem).resolve():
         return state('stale', 'Configured DEM path differs from the pinned reference')
     old_aoi = (selection.get('aoi') or {}).get('specification')
-    if old_aoi != cfg.get('aoi'):
+    if not frame.get('reference_bundle') and old_aoi != cfg.get('aoi'):
         return state('stale', 'Configured AOI differs from the pinned reference')
     return result
 
@@ -133,6 +133,9 @@ def inspect_stack(cfg):
     report = {'output_directory': str(root), 'inspection':
               'Saved active plan, completion identities and key output existence; no input discovery or checksums.',
               'reference': reference, 'acquisitions': {}, 'pairs': {}, 'stages': {}, 'notes': []}
+    if frame.get('reference_bundle'):
+        report['reference_bundle'] = frame['reference_bundle']
+        report['notes'].append('Imported reference: ' + frame['reference_bundle']['fingerprint'])
     if catalog_error:
         report['notes'].append(f'Cannot read stack catalog: {catalog_error}; showing saved directories')
     if not catalog:

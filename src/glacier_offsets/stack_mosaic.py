@@ -255,7 +255,7 @@ def write_layout(root, sources, *, checksums=None, ownership_policy=POLICY):
             'ownership': ownership_record, 'layout_implementation': IMPLEMENTATION}
 
 
-def compose(plan, slcs, slc_path, mask_path):
+def compose(plan, slcs, slc_path, mask_path, *, valid_windows=None):
     """Compose one date onto the plan; return its number of valid samples.
 
     `slcs` maps burst IDs to aligned SLCs; missing bursts stay masked. Output
@@ -277,6 +277,16 @@ def compose(plan, slcs, slc_path, mask_path):
                 if ds is None or not gdal.DataTypeIsComplex(ds.GetRasterBand(1).DataType):
                     raise ValueError(f'{p.burst_id}: aligned SLC is missing or not complex')
                 support[p.burst_id] = ~invalid_samples(ds)
+                if valid_windows is not None:
+                    window = valid_windows.get(p.burst_id, {}).get('window')
+                    if window is None:
+                        raise ValueError(f'{p.burst_id}: imported-reference acquisition validity is missing')
+                    y0, y1, x0, x1 = window
+                    valid = support[p.burst_id]
+                    valid[:y0] = False
+                    valid[y1:] = False
+                    valid[:, :x0] = False
+                    valid[:, x1:] = False
                 ds = None
                 sources[p.burst_id] = _open(slcs[p.burst_id])
             outputs = [_open(slc_path, True), _open(mask_path, True)]
@@ -420,6 +430,9 @@ def common_windows(sources, dates):
 
 def prepare_common_layout(cfg, plan, frame, dates, checksums=None):
     """Fix stack-common validity, rewriting the layout only when it changes."""
+    if frame.get('reference_bundle'):
+        # Imported ownership is immutable; assembly masks each acquisition locally.
+        return frame
     from .stack_pairs import common_map_grid
     from .stack_storage import product_hashes
     root = Path(cfg['output']['directory'])/'geometry'

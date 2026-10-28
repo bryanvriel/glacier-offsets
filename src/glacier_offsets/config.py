@@ -14,6 +14,7 @@ PATH_FIELDS = (
     ('aoi', 'path'),
     ('gross_offsets', 'velocity', 'vx', 'path'),
     ('gross_offsets', 'velocity', 'vy', 'path'),
+    ('stack', 'reference_directory'),
     ('stack', 'safe_directory'),
     ('stack', 'orbit_directory'),
     ('stack', 'pairing', 'pairs_file'),

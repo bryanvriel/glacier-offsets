@@ -234,6 +234,8 @@ def _apply(root, journal, checksums):
 
 
 def rebuild_layout(cfg, *, dry_run=False):
+    if cfg.get('_reference_bundle') or cfg.get('stack', {}).get('reference_directory'):
+        raise ValueError('Imported reference ownership is immutable; use a new output directory')
     root = Path(cfg['output']['directory']).resolve()
     with stack_lock(root, rebuilding=True):
         journal_path = _owned(root, '.layout-rebuild/journal.json')

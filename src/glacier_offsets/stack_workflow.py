@@ -76,16 +76,21 @@ def _execute_stack(cfg, command, force=False):
     if command not in (*STAGES, 'run'):
         raise ValueError(f'Unknown stack stage {command}')
     root = Path(cfg['output']['directory'])
+    checksums = ChecksumCache()
     retain_slcs = keep_merged_slcs(cfg)
     old = read_catalog(root)
     plan = plan_stack(cfg, previous=old)
     # Native reference placement/DEM checks happen before any scientific mutation.
     validate_stack(cfg, plan, check_dates=False)
+    if cfg.get('_reference_bundle'):
+        from .reference_bundle import install, validate_native_geometry
+        validate_native_geometry(cfg)
+        install(cfg, checksums=checksums)
+        plan = plan_stack(cfg, previous=old)
     if cfg['matching'].get('engine') == 'isce2':
         from .isce2_matching import provenance
         provenance(cfg)  # Fail before scientific mutation if the native runtime is unavailable.
     hashes = SourceHashes()
-    checksums = ChecksumCache()
     software = inspect_environment()
     specification = reference_specification(cfg, plan, hashes, software)
     fingerprint = identity(specification)
@@ -163,6 +168,8 @@ def _execute_stack(cfg, command, force=False):
         report.update(anchor=plan.anchor, reference_specification_identity=fingerprint,
                       geometry_identity=frame['geometry_identity'], reference_status='complete')
         report['layout_identity'] = frame['layout_identity']
+        if frame.get('reference_bundle'):
+            report['reference_bundle'] = frame['reference_bundle']
         save()
     except KeyboardInterrupt:
         report.update(outcome='interrupted', reference_status='interrupted')
@@ -342,7 +349,7 @@ def _execute_stack(cfg, command, force=False):
         report['matching_template_identity'] = identity(specification)
         report['matching_template'] = specification
         template_failure_stage = 'geocode'
-        target_grid = (frame.get('map_grid') if isce2 else None) or common_map_grid(cfg, frame)
+        target_grid = (frame.get('map_grid') if isce2 or frame.get('reference_bundle') else None) or common_map_grid(cfg, frame)
         if isce2 and (target_grid['epsg'] != cfg['geocoding']['epsg'] or
                       target_grid['transform'][1] != cfg['geocoding']['spacing_m']):
             target_grid = common_map_grid(cfg, frame)

@@ -258,6 +258,9 @@ def write_package(path, cfg, frame, grid, pairs, omitted, center, association, o
                        axis_sign='later-minus-earlier; positive range away from sensor; positive azimuth increasing reference sensing time',
                        timing_policy='Exact per-burst sensing-start intervals; time is a pair midpoint label, not an independent acquisition',
                        geometry_method=GEOMETRY_METHOD)
+        if frame.get('reference_bundle'):
+            h.attrs['reference_bundle_fingerprint'] = frame['reference_bundle']['fingerprint']
+            h.attrs['reference_bundle_provenance'] = json.dumps(frame['reference_bundle'], sort_keys=True)
         variable(h, 'x', ('x',), gt[0]+(np.arange(width)+.5)*gt[1], units='m', standard_name='projection_x_coordinate', axis='X')
         variable(h, 'y', ('y',), gt[3]+(np.arange(height)+.5)*gt[5], units='m', standard_name='projection_y_coordinate', axis='Y')
         crs = CRS.from_epsg(grid['epsg'])
@@ -473,6 +476,7 @@ def package_stack(cfg, *, output=None, force=False):
         specification = {'schema': SCHEMA, 'source': options['source'], 'grid': grid,
                          'implementation': IMPLEMENTATION,
                          'geometry': frame['geometry_identity'], 'layout': frame['layout_identity'], 'geometry_method': GEOMETRY_METHOD,
+                         **({'reference_bundle': frame['reference_bundle']} if frame.get('reference_bundle') else {}),
                          'pairs': [p['pair'] for p in pairs], 'omitted': omitted,
                          'inventory': catalog.get('inventory', []), 'geocoding': cfg['geocoding'],
                          # Verify catalog revisions during this invocation, but

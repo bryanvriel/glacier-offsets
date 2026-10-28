@@ -91,6 +91,19 @@ direction and polarization. The earliest eligible date supplies the reference
 geometry; `--reference-date YYYY-MM-DD` selects another date. Completed stacks
 keep their reference geometry pinned when extended.
 
+A separate stack can reuse a reference on another computer without copying old
+pair products:
+
+```bash
+glacier-offsets stack export-reference configs/stack.generated.yaml \
+  --output /path/reference-bundle
+```
+
+Set `stack.reference_directory` to the transferred bundle in the new config;
+its reference may precede `stack.start_date`. Keep the original matching grid and
+map-grid settings. See [portable references](README_DETAILED.md#transfer-a-prepared-reference-to-another-computer)
+for contents, disk requirements, and compatibility checks.
+
 To visualize planned pairs and missing burst coverage:
 
 ```bash

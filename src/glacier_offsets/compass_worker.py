@@ -7,7 +7,14 @@ from compass import s1_rdr2geo, s1_geo2rdr, s1_resample
 
 
 def run(path):
-    cfg = RunConfig.load_from_yaml(str(path), 's1_cslc_radar')
+    from compass.utils import runconfig
+    from .inputs import load_safe_bursts
+    original_loader = runconfig.load_bursts
+    try:
+        runconfig.load_bursts = load_safe_bursts
+        cfg = RunConfig.load_from_yaml(str(path), 's1_cslc_radar')
+    finally:
+        runconfig.load_bursts = original_loader
     if len(cfg.bursts) != 1:
         raise ValueError(f'Exactly one burst/polarization required; COMPASS loaded {len(cfg.bursts)}')
     from .annotation_geometry import normalize_burst_geometry

@@ -15,14 +15,49 @@ class Burst:
     native: object = None
 
 
+def load_safe_bursts(path, orbit_path, swath_num, pol='vv', burst_ids=None, flag_apply_eap=True):
+    """Use native parsing with explicit non-metadata paths on macOS SAFE copies.
+
+    s1-reader's directory loader takes the first os.listdir match, including
+    AppleDouble files. Its public XML parser retains identical science while
+    avoiding any dependency on directory insertion order.
+    """
+    from s1reader.s1_reader import load_bursts, burst_from_xml
+    safe = Path(path)
+    annotations = safe / 'annotation'
+    if not safe.is_dir() or not any(p.name.startswith('._') for p in annotations.glob('*')):
+        return load_bursts(path, orbit_path, swath_num, pol, burst_ids=burst_ids, flag_apply_eap=flag_apply_eap)
+    from .input_preparation import annotation_paths
+    pol = pol.lower()
+    if swath_num not in (1, 2, 3) or pol not in ('hh', 'hv', 'vv', 'vh'):
+        raise ValueError('Invalid Sentinel-1 swath or polarization')
+    paths = annotation_paths(safe)
+    def annotation(swath):
+        matches = [p for p in paths if f'iw{swath}-slc-{pol}' in p.lower()]
+        if len(matches) != 1:
+            raise ValueError(f'Expected one IW{swath} {pol} annotation in {safe}')
+        return str(safe / matches[0])
+    rasters = sorted(p for p in (safe / 'measurement').glob(f'*iw{swath_num}-slc-{pol}*tiff')
+                     if not p.name.startswith('.'))
+    if len(rasters) > 1:
+        raise ValueError(f'Ambiguous IW{swath_num} {pol} measurement in {safe}')
+    items = burst_from_xml(annotation(swath_num), str(orbit_path), str(rasters[0]) if rasters else '',
+                           annotation(2), flag_apply_eap=flag_apply_eap)
+    if burst_ids:
+        ids = burst_ids if isinstance(burst_ids, (list, tuple, set)) else [burst_ids]
+        wanted = set(map(str, ids))
+        items = [b for b in items if str(b.burst_id) in wanted]
+    return items
+
+
 def inventory(safe, orbit, polarization, swaths, loader=None):
+    native_loader = loader is None or loader.__module__.startswith('s1reader')
     if loader is None:
-        from s1reader.s1_reader import load_bursts
-        loader = load_bursts
+        loader = load_safe_bursts
     result = []
     for swath in swaths:
         annotation = None
-        if loader.__module__.startswith('s1reader'):
+        if native_loader:
             from .input_preparation import annotation_paths, safe_xml
             annotations = [p for p in annotation_paths(Path(safe))
                            if f'iw{swath}-slc-{polarization.lower()}' in p.lower()]
@@ -41,7 +76,7 @@ def inventory(safe, orbit, polarization, swaths, loader=None):
         except Exception as exc:
             raise ValueError(f"Cannot parse {Path(safe).name} IW{swath} {polarization}: {exc}") from exc
         result.extend(Burst(str(b.burst_id), swath, b.sensing_start, b) for b in items)
-    if result and loader.__module__.startswith('s1reader'):
+    if result and native_loader:
         validate_orbit(orbit, result)
     return result
 
