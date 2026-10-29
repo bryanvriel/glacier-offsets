@@ -1,0 +1,166 @@
+{
+  "allocation": "symmetric",
+  "beta_px": 0.03121531958026427,
+  "beta_std_px": 0.013254180946040575,
+  "method": "spacecraft-swath-azimuth-v1",
+  "provenance": {
+    "application_scope": "Same pinned Larsen reference geometry and matching treatment, restricted to the observed 2018 acquisition interval. This is a separate 2018 fit, not an extension of the 2017 calibration.",
+    "estimate": "all-data descriptive spacecraft coefficient from the primary cohort; no residual trimming or minimum-link-support threshold",
+    "geometry_reference_date": "2017-01-01",
+    "label": "Larsen full-year 2018 spacecraft-order empirical relative azimuth calibration",
+    "physical_cause": "unidentified; empirical calibration, not a validated timing correction",
+    "population": "primary; native-valid burst interiors and geometry support; each swath (peak >= 0.3 and SNR >= 8) or SNR >= 20; equal total weight per link and equal weight per burst-pair group within each link",
+    "reference_bundle_fingerprint": "3a1c5a0705caeeb19933694cead0c24515fce3db2fe7fb9ff6fe47efae9959b6",
+    "source_analysis_sha256": "571d672efa5fd848a492675220f38f135211fd924b6fc08fe9f53e93776d1b94",
+    "source_experiment_identity": "fcd81a600b15646f444615b1f4d34888f226f7427f4ea10ec75cadf71bc72fb3",
+    "source_fit_sha256": "096f336565ec825782b1dd9517555758da2981eff1b663acefdf9b6fa8657b00",
+    "source_plan_sha256": "186d6eed60401cf986a49b1ce4c566af79a5c20d8561d9541ae14ed28942a494",
+    "source_summary_sha256": "39afc21169e7883e2764454ba8a59cc7e810f7609fb0b9ed8d3989cf9be3c814",
+    "track_metadata_note": "Only track/direction metadata reused from the existing calibration after exact geometry-identity verification; coefficient and uncertainty are fitted independently to 2018.",
+    "track_metadata_source": "larsen-2017h1-spacecraft.json",
+    "track_metadata_source_sha256": "ed6ab421174d8941559b0fd2decc8ba43c318c28e1e79b568d8630b6420878dc",
+    "training_burst_pair_groups": 612,
+    "training_dates": [
+      "2018-01-02",
+      "2018-01-08",
+      "2018-01-14",
+      "2018-01-20",
+      "2018-01-26",
+      "2018-02-01",
+      "2018-02-07",
+      "2018-02-13",
+      "2018-02-19",
+      "2018-02-25",
+      "2018-03-03",
+      "2018-03-09",
+      "2018-03-15",
+      "2018-03-21",
+      "2018-03-27",
+      "2018-04-02",
+      "2018-04-08",
+      "2018-04-14",
+      "2018-04-20",
+      "2018-04-26",
+      "2018-05-02",
+      "2018-05-08",
+      "2018-05-14",
+      "2018-05-20",
+      "2018-05-26",
+      "2018-06-01",
+      "2018-06-07",
+      "2018-06-13",
+      "2018-06-19",
+      "2018-06-25",
+      "2018-07-01",
+      "2018-07-07",
+      "2018-07-13",
+      "2018-07-19",
+      "2018-07-25",
+      "2018-07-31",
+      "2018-08-06",
+      "2018-08-12",
+      "2018-08-18",
+      "2018-08-24",
+      "2018-08-30",
+      "2018-09-05",
+      "2018-09-11",
+      "2018-09-17",
+      "2018-09-23",
+      "2018-09-29",
+      "2018-10-05",
+      "2018-10-11",
+      "2018-10-17",
+      "2018-10-23",
+      "2018-10-29",
+      "2018-11-04",
+      "2018-11-10",
+      "2018-11-16",
+      "2018-11-22",
+      "2018-11-28",
+      "2018-12-04",
+      "2018-12-16",
+      "2018-12-22",
+      "2018-12-28"
+    ],
+    "training_ipf_versions": [
+      "002.84",
+      "002.90",
+      "002.91"
+    ],
+    "training_links": 111,
+    "training_windows": 7849,
+    "uncertainty": "Shared acquisition/source-burst multiplier descriptive standard deviation; excludes model error and absolute/common motion bias. Calibration uncertainty is shared across observations.",
+    "validation_mae_change": {
+      "leave_acquisition_out": {
+        "descriptive_interval95_px": [
+          -0.006934433643649764,
+          0.0032954304550189416
+        ],
+        "evaluation_instances": 1224,
+        "insufficient_training_groups": false,
+        "mae_change_vs_baseline_px": -0.004104160781637605,
+        "unique_test_groups": 612
+      },
+      "leave_burst_group_out": {
+        "descriptive_interval95_px": [
+          -0.007197945542902323,
+          0.0024478933393171447
+        ],
+        "evaluation_instances": 612,
+        "insufficient_training_groups": false,
+        "mae_change_vs_baseline_px": -0.0038017468966336275,
+        "unique_test_groups": 612
+      },
+      "leave_link_out": {
+        "descriptive_interval95_px": [
+          -0.007040802307739941,
+          0.0028835517619602113
+        ],
+        "evaluation_instances": 612,
+        "insufficient_training_groups": false,
+        "mae_change_vs_baseline_px": -0.004150447379261298,
+        "unique_test_groups": 612
+      }
+    },
+    "validation_note": "Point estimates improve held-out overlap-window MAE, but all three original descriptive 95% improvement intervals include zero. Absolute accuracy and extension of constant swath bias beyond measured overlap remain unvalidated.",
+    "validation_status": "inconclusive"
+  },
+  "reference_prf_hz": 486.48631029955294,
+  "scope": {
+    "direction": "DESCENDING",
+    "end_date": "2018-12-28",
+    "geometry_identity": "b4aede8ca76255e257738311514495b24a60c377ccdb9f0a475f417812dd8bc1",
+    "matching": {
+      "backend": "cpu",
+      "deramp": 0,
+      "engine": "isce3",
+      "first_center": null,
+      "oversampling": 32,
+      "range_oversampling": 2,
+      "raw_oversampling": 2,
+      "search": [
+        10,
+        40
+      ],
+      "stride": [
+        32,
+        128
+      ],
+      "window": [
+        64,
+        256
+      ],
+      "zoom": 16
+    },
+    "polarization": "HH",
+    "processing": "isce3_merge_first",
+    "relative_orbit": 38,
+    "start_date": "2018-01-02",
+    "swath_merge": "midpoint"
+  },
+  "swaths": [
+    1,
+    2
+  ],
+  "units": "original_reference_azimuth_pixels"
+}

@@ -193,7 +193,7 @@ def installed_grid_check(burst, dem):
 
 
 def audit(experiment):
-    from tools.swath_experiment_io import read_json
+    from glacier_offsets.swath_experiment_io import read_json
     modules = ['glacier_offsets.compass_worker', 'glacier_offsets.compass_coreg',
                'glacier_offsets.inputs', 'compass.s1_rdr2geo', 'compass.s1_geo2rdr',
                'compass.s1_resample', 'compass.s1_geocode_slc', 'compass.utils.lut',
@@ -300,7 +300,7 @@ def native_input_products(experiment, day):
 
 
 def physics(experiment):
-    from tools.swath_experiment_io import read_json, load_npz, save_npz
+    from glacier_offsets.swath_experiment_io import read_json, load_npz, save_npz
     audit_record = experiment.checked_report(experiment.output/'audit.json')
     if not audit_record['executed_radar_path_recognized']:
         raise ValueError('Executed radar path has not passed source audit')

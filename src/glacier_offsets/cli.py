@@ -29,6 +29,7 @@ def main(argv=None):
         return stack_main(argv[1:])
     parser = argparse.ArgumentParser(prog="glacier-offsets")
     parser.epilog = ('Stack workflows: glacier-offsets stack --help. '
+                     'Estimate swath calibration: glacier-offsets stack calibrate-swaths --help. '
                      'Download bursts: glacier-offsets download-bursts --help. '
                      'Prepare inputs: glacier-offsets prepare-inputs --help. '
                      'Package displacements: glacier-offsets package --help. '

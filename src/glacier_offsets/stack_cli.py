@@ -10,13 +10,17 @@ from .stack_stages import STAGE_DESCRIPTIONS
 
 
 def main(argv=None):
+    if argv and argv[0] == 'calibrate-swaths':
+        from .swath_calibration import main as calibrate_swaths
+        return calibrate_swaths(argv[1:])
     if argv and argv[0] == 'init':
         from .stack_initialization import main as initialize
         return initialize(argv[1:])
     parser = argparse.ArgumentParser(prog='glacier-offsets stack',
-        epilog='Use glacier-offsets stack init --help to initialize a stack YAML.')
+        epilog=('Use glacier-offsets stack init --help to initialize a stack YAML. '
+                'Use glacier-offsets stack calibrate-swaths --help to estimate a swath calibration.'))
     parser.add_argument('command', choices=['stages', 'status', 'plan', 'validate', 'coregister', 'assemble', 'match',
-                                           'geocode', 'diagnostics', 'correct-swaths', 'run', 'rebuild-layout', 'export-reference'])
+                                           'geocode', 'diagnostics', 'correct-swaths', 'calibrate-swaths', 'run', 'rebuild-layout', 'export-reference'])
     parser.add_argument('config', nargs='?')
     parser.add_argument('--output', help='New reference bundle directory (export-reference only)')
     parser.add_argument('--backend', choices=['cpu', 'gpu', 'auto'])

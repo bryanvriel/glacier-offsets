@@ -569,74 +569,93 @@ is versioned separately from machine-specific configurations.
 
 ##### Estimate swath calibration factors
 
-Run the independent overlap experiment from the repository root in the ISCE3
-environment. Use the YAML for the processed stack with
-`stack.swath_correction.enabled: false` during estimation:
+The installed CLI includes overlap estimation and calibration export. Run this
+in the ISCE3 environment, from any working directory, using the processed
+stack's YAML with `stack.swath_correction.enabled: false`:
 
 ```bash
-python -m tools.swath_correction_experiment run configs/stack.yaml \
-  --output /path/to/swath-calibration-experiment --workers 4
+glacier-offsets stack calibrate-swaths /path/to/configs/stack.yaml \
+  --output /path/to/swath-calibration --workers 4
 ```
 
-Unlike `glacier-offsets`, this experiment's `tools` modules are not installed
-with the Python package. From outside the checkout, use the same ISCE3
-environment and explicitly expose the source directories:
-
-```bash
-GLACIER_OFFSETS_SOURCE=/path/to/glacier_offsets
-PYTHONPATH="$GLACIER_OFFSETS_SOURCE:$GLACIER_OFFSETS_SOURCE/src${PYTHONPATH:+:$PYTHONPATH}" \
-  python -m tools.swath_correction_experiment run /path/to/configs/stack.yaml \
-  --output /path/to/swath-calibration-experiment --workers 4
-```
-
-The checkout must remain available. Config and experiment output paths here are
-absolute; paths declared inside YAML still resolve relative to the declaring
-YAML. Running the script by its absolute filename alone does not expose its
-other `tools.*` imports.
-
-The output directory must be outside the production stack and its ancestors.
-The experiment uses eligible acquisitions in the saved stack catalog and builds
+The results directory must be outside the production stack and its ancestors.
+The estimator uses eligible acquisitions in the saved stack catalog and builds
 links between each date and its next two neighbors. It needs completed reference
 geometry, retained aligned per-burst SLCs and alignment products, SAFE inputs,
 precise orbits and the configured DEM. It requires ISCE3 CPU matching,
 `deramp: 0`, `range_oversampling: 2`, zero gross offsets and nearest geocoding.
-It performs additional unspliced overlap matching and physical comparisons,
-then fits and validates empirical models; production pair outputs are unchanged.
-Rerunning the same command reuses verified experiment products.
+It performs unspliced overlap matching and physical comparisons, then fits and
+validates empirical models. Stack and calibration locks protect retained inputs;
+production pairs remain unchanged. Estimation is independently invoked and is
+not added to `stack run`.
 
-With an imported reference, the experiment uses the local bundled DEM resolved
-by `stack.reference_directory` and verifies its checksum against the original
-reference identity. Laptop paths retained in reference provenance need not
-exist; leave that provenance unchanged and use `inputs.dem: null` to select
-the bundled DEM.
+The full command runs `plan`, `audit`, `measure`, `physics`, `fit`, `previews`,
+`report` and `export`. Select one with `--stage STAGE`. Use `--pilot-only` to
+measure just the first three-date triangle; pilots never export a calibration.
+Incomplete stages stop a full run. Rerunning unchanged work uses verified
+checkpoints. Support-threshold sensitivity rescoring remains explicitly opt-in
+with `--stage rescore` and never changes the exported primary-cohort estimate.
 
-Review `REPORT.md`, `summary.json` and `analysis/primary.json` in that directory.
-In `analysis/primary.json`, `models.spacecraft.parameters[0]` is the estimated
-`beta_px` in original reference azimuth pixels. The square root of
-`models.spacecraft.covariance[0][0]` gives `beta_std_px` when covariance is
-available. Inspect held-out acquisition, link and burst-group results before
-adopting the estimate; an unidentifiable coefficient or unavailable covariance
-does not supply a usable production calibration.
+Review `REPORT.md`, `summary.json` and `analysis/primary.json` in the results
+directory. The full run also creates:
 
-The experiment currently writes estimates and reports, **not** the calibration
-JSON consumed by `correct-swaths`. Publish a separate JSON following
-[`configs/calibrations/larsen-2017h1-spacecraft.json`](configs/calibrations/larsen-2017h1-spacecraft.json):
-record the fitted coefficient and uncertainty, actual reference PRF, matching
-and geometry scope, justified application dates, training dates and source
-experiment/analysis checksums. Use the new stack's scope and evidence; the
-shipped 2017 coefficient is not automatically applicable to 2018. The
-[method description](docs/stack-processing/SWATH_CORRECTION_METHOD.md) defines
-the signs, weights and symmetric allocation.
+- `calibration.json`: the coefficient, descriptive uncertainty, actual reference
+  PRF, geometry/matching/date scope, training dates, validation outcome and source
+  checksums, in the format consumed by `correct-swaths`.
+- `calibration.json.sha256`: the checksum pin for that exact JSON.
+- `calibration-settings.yaml`: the `stack.swath_correction` settings to copy into
+  your processing YAML; its calibration path is absolute.
 
-On Linux, calculate the published JSON's pin with:
+The primary model's `models.spacecraft.parameters[0]` supplies `beta_px`;
+`sqrt(models.spacecraft.covariance[0][0])` supplies `beta_std_px`. Unidentifiable
+coefficients, missing covariance, incomplete measurements or physics stages,
+changed inputs and incompatible reference/matching settings block export.
+Inconclusive or negative predictive validation is recorded explicitly and is
+not relabeled as validated accuracy. Application is restricted to the fitted
+acquisition interval; the command does not widen an existing calibration or
+apply corrections automatically. Model error and absolute accuracy remain
+outside the descriptive coefficient uncertainty.
+
+With an imported reference, the estimator uses the local bundled DEM resolved
+by `stack.reference_directory` and verifies its original checksum. Laptop paths
+retained in reference provenance need not exist; leave that provenance unchanged
+and use `inputs.dem: null` to select the bundled DEM.
+
+To export an already completed experiment, including outputs of the historical
+`tools.swath_correction_experiment` command, without rematching:
 
 ```bash
-sha256sum /path/to/calibration.json
+glacier-offsets stack calibrate-swaths /path/to/configs/stack.yaml \
+  --output /path/to/existing-swath-experiment --stage export
 ```
 
-On macOS, use `shasum -a 256 /path/to/calibration.json`. Set the YAML's
-`calibration` path and `calibration_sha256` to this file and digest, enable
-correction, and run the application step below.
+Legacy exports need the YAML and retained stack manifests for reference/track
+metadata, but do not discover SAFE files, load native burst geometry, or require
+the original experimental source checkout. Transferred result paths are resolved
+inside the supplied results directory and registered fit products/dependency
+reports are checksum-verified. Newly planned results also save portable reference
+metadata, allowing `--stage export --output RESULTS_DIR` with no YAML and the
+stack disconnected. Existing experimental measurements retain their provenance;
+use export-only to consume them without rerunning the implementation after its
+move into the package. Legacy `tools.*` imports remain compatibility shims for
+research scripts and are not required by the installed estimator.
+
+Use `--calibration-output /path/to/calibration.json` to choose another JSON
+location. Identical exports are reused. A different existing JSON is preserved
+unless `--force` is supplied; this option replaces only calibration export
+files, not upstream matches. Recalculate a pin after editing any calibration:
+
+```bash
+sha256sum /path/to/calibration.json       # Linux
+shasum -a 256 /path/to/calibration.json   # macOS
+```
+
+The separate frozen Larsen 2018 estimate is also available as
+[`configs/calibrations/larsen-2018-spacecraft.json`](configs/calibrations/larsen-2018-spacecraft.json).
+It records its inconclusive original held-out improvement tests. The
+[method description](docs/stack-processing/SWATH_CORRECTION_METHOD.md) defines
+the signs, weights and symmetric allocation. Copy the exported JSON to the
+processing computer and use its path/checksum to apply the correction below.
 
 ##### Apply a published swath calibration
 
@@ -729,12 +748,11 @@ contrasts: one spacecraft coefficient and one relative term per acquisition.
 It does not add production correction stages or modify the source stack.
 
 ```bash
-PYTHONPATH=src:.runtime/deps MPLCONFIGDIR=/tmp/glacier-mpl OMP_NUM_THREADS=1 \
-  /Users/briel/miniforge3/envs/isce3/bin/python -m tools.swath_correction_experiment \
-  run configs/stack.larsen.production.yaml --output work/larsen/swath-experiment-2017h1
+glacier-offsets stack calibrate-swaths configs/stack.larsen.production.yaml \
+  --output work/larsen/swath-experiment-2017h1
 ```
 
-The 31-date January–June plan has 30 adjacent links plus 29 skip-one links.
+The historical 31-date January–June plan had 30 adjacent links plus 29 skip-one links.
 The first three dates form a pilot gate before full measurement expansion.
 `--pilot-only` stops after that triangle. `--workers` accepts 1–4; pairs remain
 sequential. Individual `plan`, `audit`, `measure`, `physics`, `fit`, `previews`
@@ -779,17 +797,15 @@ To refresh existing previews from checksum-verified retained radar arrays and
 production center geometry, without reading aligned SLCs or refitting models:
 
 ```bash
-python -m tools.swath_correction_experiment previews configs/stack.larsen.production.yaml \
-  --output /Volumes/thinkplus/insar/glacier_offsets/work/larsen/swath-experiment-2017full \
-  --retained-previews
+glacier-offsets stack calibrate-swaths configs/stack.larsen.production.yaml \
+  --output /path/to/swath-calibration --stage previews --retained-previews
 ```
 
 To evaluate the **mean swath mismatch per link**, run the separate post hoc stage:
 
 ```bash
-PYTHONPATH=src:.runtime/deps MPLCONFIGDIR=/tmp/glacier-mpl OMP_NUM_THREADS=1 \
-  /Users/briel/miniforge3/envs/isce3/bin/python -m tools.swath_correction_experiment \
-  rescore configs/stack.larsen.production.yaml --output work/larsen/swath-experiment-2017h1
+glacier-offsets stack calibrate-swaths configs/stack.larsen.production.yaml \
+  --output /path/to/swath-calibration --stage rescore
 ```
 
 This reads the checksum-verified frozen analysis files without repeating matching,

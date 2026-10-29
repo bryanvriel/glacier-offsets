@@ -29,6 +29,7 @@
 !/configs/stack.swath-corrected.example.yaml
 !/configs/stack.larsen.2018-reference.example.yaml
 !/configs/calibrations/larsen-2017h1-spacecraft.json
+!/configs/calibrations/larsen-2018-spacecraft.json
 !/configs/stack.pig.yaml
 !/configs/stack.pig.validity.yaml
 !/configs/stack.pig.interior.yaml

@@ -113,25 +113,31 @@ python tools/plot_stack_plan.py plan.json
 
 ### Estimate and apply swath calibration after processing
 
-First estimate the factors from independently matched IW1/IW2 overlaps. Run from
-the repository root in the ISCE3 environment, using your processed stack YAML
-with swath correction disabled and a separate experiment output directory:
+Estimate the factors from independently matched IW1/IW2 overlaps in your
+installed ISCE3 environment. Use your processed stack YAML with swath correction
+disabled and a separate results directory:
 
 ```bash
-python -m tools.swath_correction_experiment run configs/stack.yaml \
-  --output /path/to/swath-calibration-experiment --workers 4
+glacier-offsets stack calibrate-swaths /path/to/configs/stack.yaml \
+  --output /path/to/swath-calibration --workers 4
 ```
 
-The `tools` directory is not installed with the package. To run from another
-directory, add the checkout root and its `src` directory to `PYTHONPATH` and use
-an absolute config path; see the [outside-the-checkout example](README_DETAILED.md#estimate-swath-calibration-factors).
+This writes reports, `calibration.json`, `calibration.json.sha256` and
+`calibration-settings.yaml`, containing the calibration path and checksum to
+copy into your stack YAML. It works outside the source checkout. It requires
+retained aligned burst SLCs, reference geometry, SAFE inputs and orbits; the
+current estimator supports ISCE3 CPU matching with `deramp: 0`,
+`range_oversampling: 2`, zero gross offsets and nearest geocoding.
 
-This requires retained aligned burst SLCs, reference geometry, SAFE inputs and
-orbits. The current estimator supports ISCE3 CPU matching with `deramp: 0`,
-`range_oversampling: 2`, zero gross offsets and nearest geocoding. Review
-`REPORT.md` and `analysis/primary.json` in the experiment directory. The tool
-estimates coefficients but does not export a production calibration JSON;
-see the [estimation and publication steps](README_DETAILED.md#estimate-swath-calibration-factors).
+For a completed legacy experiment, export its calibration without rematching:
+
+```bash
+glacier-offsets stack calibrate-swaths /path/to/configs/stack.yaml \
+  --output /path/to/existing-swath-experiment --stage export
+```
+
+Review `REPORT.md` and the calibration's recorded validation outcome before
+application. See the [estimation and export steps](README_DETAILED.md#estimate-swath-calibration-factors).
 
 Then apply the reviewed, published calibration to the completed stack:
 

@@ -3,6 +3,19 @@
 This empirical correction adjusts for a repeatable S1A/S1B-associated difference
 between IW1 and IW2 azimuth offsets.
 
+Run estimation with the installed CLI:
+
+```bash
+glacier-offsets stack calibrate-swaths /path/to/stack.yaml \
+  --output /path/to/swath-calibration --workers 4
+```
+
+The full run writes `calibration.json`, its `.sha256` pin, and
+`calibration-settings.yaml` for use with `stack correct-swaths`. For completed
+historical experiments, use the same command with `--stage export` to avoid
+rematching. Export records the actual validation outcome; it does not establish
+absolute accuracy or automatically apply corrections.
+
 **Calibration.** Match corresponding ground patches independently in unspliced
 IW1 and IW2 bursts, using the production ISCE3 range-2x treatment and sampling.
 Retain native-valid burst interiors satisfying, independently in both swaths,

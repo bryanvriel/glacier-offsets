@@ -109,8 +109,8 @@ def experiment_wisdom(experiment):
 
 def measure_link(experiment, link, prepared_cache, wisdom):
     """Match one link, retaining each native job so interrupted links can resume."""
-    from tools.compare_swath_overlap import select_views, attach_results, burst_interior_mask
-    from tools.swath_experiment_io import read_json, save_npz, load_npz, cohorts
+    from .swath_overlap_support import select_views, attach_results, burst_interior_mask
+    from glacier_offsets.swath_experiment_io import read_json, save_npz, load_npz, cohorts
     out = experiment.output/'measurements'/link['pair']
     days = [link['earlier'], link['later']]
     acquisitions = [experiment.verify_acquisition(day) for day in days]
@@ -118,7 +118,7 @@ def measure_link(experiment, link, prepared_cache, wisdom):
     specification = {'experiment': experiment.key, 'link': link,
                      'alignments': [a['alignment_identity'] for a in acquisitions],
                      'wisdom_sha256': wisdom['sha256'],
-                     'implementation': experiment.implementation('swath_observations.py', 'range_oversampling.py',
+                     'implementation': experiment.implementation('swath_observations.py', 'swath_overlap_support.py', 'range_oversampling.py',
                         'ampcor.py', 'fftw_cache.py', 'matching_grid.py', 'swath_experiment_io.py')}
     if experiment.current(out/'report.json', specification):
         return read_json(out/'report.json')
@@ -254,7 +254,7 @@ def measure_link(experiment, link, prepared_cache, wisdom):
 
 
 def measure(experiment, pilot_only=False):
-    from tools.swath_experiment_io import read_json
+    from glacier_offsets.swath_experiment_io import read_json
     experiment.verify_geometry()
     wisdom = experiment_wisdom(experiment)
     cache, records = {}, {}
