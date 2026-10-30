@@ -41,6 +41,7 @@ A small, restartable Python workflow for local Sentinel-1 TOPS SAFE pairs and ac
   - [Correct vertical ocean tides](#correct-vertical-ocean-tides)
   - [Convert to local east/north displacements](#convert-to-local-eastnorth-displacements)
   - [Fit exact-pair Msf velocities](#fit-exact-pair-msf-velocities)
+  - [Pixel inversion from netCDF to results](#pixel-inversion-from-netcdf-to-results)
 - [Products and scientific interpretation](#products-and-scientific-interpretation)
   - [Burst footprints in KML](#burst-footprints-in-kml)
   - [Standalone radar-offset plot](#standalone-radar-offset-plot)
@@ -1727,15 +1728,46 @@ models. See the [velocity-recovery workflow](docs/velocity-recovery/README.md)
 for baseline freezing, extended processing, calibration validation, model and
 weight conventions, uncertainty limits and scientific gates.
 
+### Pixel inversion from netCDF to results
+
+One version-2 YAML names the input packages, cache and result directories,
+corrections, annual noise model and inversion settings
+([example](configs/velocity-pixel.v2.example.yaml),
+[Larsen](configs/velocity-pixel.larsen.v2.yaml)). With the package installed in
+`ice` and the environment activated:
+
+```bash
+glacier-offsets velocity-pixels run inversion.yaml
+glacier-offsets velocity-pixels prepare inversion.yaml  # stop after extraction, solid Earth and noise
+```
+
+`run` validates the YAML, dependencies and inputs, then builds a virtual pair
+manifest over one or more already ocean-tide-corrected packages (any number of
+calendar years, split files in any order), extracts unique radar sources,
+applies full-ENU PySolid solid-Earth corrections once through a self-contained
+worker (`execution.solid_earth_python`, typically the `isce3` interpreter),
+obtains one range/azimuth covariance per calendar year (supplied files or
+reviewed control regions), fits named annual secular/order, residual vertical
+M2/O1 and along-flow Msf parameters with the direct-azimuth comparator, and
+writes NetCDF, GeoTIFFs, amplitude/phase and diagnostic figures, optional point
+series for reviewed targets, `verification.json` and `report.md`. Observation,
+correction and noise artifacts are immutable and shared through
+`cache_directory`; reruns reuse verified stages, resume interrupted chunks and
+rebuild only stages whose inputs changed. Version 2 requires
+`coverage.min_span_days`; `screening.remove_mixed_windows` stays `false` by
+default. See the [pixel inversion configuration guide](docs/velocity-recovery/PIXEL_INVERSION_CONFIGURATION.md#version-2-netcdf-to-results)
+for the schema, noise modes, cross-year handling, outputs and the validation
+against the frozen Larsen result.
+
 ## Products and scientific interpretation
 
-The subsequent exploratory 2017/2018 pixel inversion has a separate YAML:
+The earlier version-1 2017/2018 pixel inversion has a separate YAML:
 [`configs/velocity-pixel.larsen.yaml`](configs/velocity-pixel.larsen.yaml).
 After installing into `ice`, run `glacier-offsets velocity-pixels fit /path/to/velocity-pixel.larsen.yaml`
 from any directory, without `PYTHONPATH`.
 It reuses prepared observations, tide corrections and frozen weights, and
 configures screening, fit coverage and map display filters independently of
-stack creation. See the [pixel inversion configuration guide](docs/velocity-recovery/PIXEL_INVERSION_CONFIGURATION.md)
+stack creation. New work should use the version-2 workflow above. See the [pixel inversion configuration guide](docs/velocity-recovery/PIXEL_INVERSION_CONFIGURATION.md)
 for export commands and experiment provenance.
 
 Standalone pair outputs, illustrated by `work/jan10_jan22/t038_080975_iw2/`, include:

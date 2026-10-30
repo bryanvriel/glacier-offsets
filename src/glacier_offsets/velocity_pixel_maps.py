@@ -14,9 +14,11 @@ from .velocity_pixel_runtime import auxiliary_path
 COMPONENTS = {
     'msf-along': ('msf_along','Along-flow Msf velocity','m/day',0.20,None),
     'msf-azimuth': ('msf_azimuth','Satellite-azimuth Msf velocity','m/day',0.15,None),
-    'vertical-m2': ('residual_vertical_M2','Residual vertical M2 height','m',0.30,6),
-    'vertical-o1': ('residual_vertical_O1','Residual vertical O1 height','m',0.30,8),
+    'vertical-m2': ('residual_vertical_M2','Residual vertical M2 height','m',0.30,'vertical_M2_C'),
+    'vertical-o1': ('residual_vertical_O1','Residual vertical O1 height','m',0.30,'vertical_O1_C'),
 }
+# Historical two-year fits without stored names used these coefficient columns.
+LEGACY_COLUMNS = {'vertical_M2_C': 6, 'vertical_O1_C': 8}
 MASKS = ('default','estimable','standard','along','phase-quality','flow-proxy')
 
 
@@ -32,6 +34,7 @@ class MapData:
     mask: str
     phase_origin: str
     files: tuple
+    epsg: int = 3031
 
 
 def _mask_name(component,mask):
@@ -45,20 +48,30 @@ def resolve_map_input(path):
     path=Path(path).expanduser().resolve()
     if path.is_dir():return path,None
     if path.suffix.lower() in ('.yaml','.yml'):
+        from .velocity_workflow_config import config_version,load_workflow_config
+        if config_version(path)==2:return Path(load_workflow_config(path)['output']),path
         return Path(load_config(path)['output']),path
     raise ValueError(f'Expected a velocity output directory or inversion YAML: {path}')
 
 
 def _source_maps(directory,component,mask):
-    files=[directory/'observations.h5',directory/'source_coefficients.h5']
+    run_manifest=directory/'run-manifest.json'
+    # Version-2 fits carry their own map association; version 1 reads observations.h5.
+    files=[directory/'source_coefficients.h5' if run_manifest.exists() else directory/'observations.h5',directory/'source_coefficients.h5']
     recipe_file=directory/'recipe.json';recipe=json.loads(recipe_file.read_text()) if recipe_file.exists() else {}
     if recipe_file.exists():files.append(recipe_file)
     completion=directory/'fit-completion.json'
     if completion.exists():
         record=json.loads(completion.read_text());files.append(completion)
         if digest(directory/'source_coefficients.h5')!=record['output_sha256']:raise ValueError('Stored source fits changed')
-        if recipe_file.exists() and digest(recipe_file)!=record['recipe_sha256']:raise ValueError('Stored fit recipe changed')
-    display=parameters_from_recipe(recipe)['display']
+        if run_manifest.exists():
+            from .velocity_cache import identity_digest
+            if identity_digest(recipe)!=record['recipe_sha256']:raise ValueError('Stored fit recipe changed')
+        elif recipe_file.exists() and digest(recipe_file)!=record['recipe_sha256']:raise ValueError('Stored fit recipe changed')
+    if run_manifest.exists():
+        # Display settings belong to the current run configuration, not the fit recipe.
+        display=json.loads(run_manifest.read_text())['config']['display'];files.append(run_manifest)
+    else:display=parameters_from_recipe(recipe)['display']
     with h5py.File(files[0]) as obs,h5py.File(files[1]) as fits:
         if fits.attrs.get('status')!='complete':raise ValueError('Source fits are incomplete')
         index=obs['map_source_index'][:];foot=index>=0;safe=np.maximum(index,0)
@@ -73,15 +86,18 @@ def _source_maps(directory,component,mask):
                 joint['amplitude'][:],joint['amplitude_sigma'][:],joint['phase_sigma_deg'][:],display)
             selected=estimable&choices[{'along':'along','phase-quality':'phase_quality','flow-proxy':'proxy'}[mask]]
         else:selected=estimable&(standard if mask=='standard' else True)
-        start=COMPONENTS[component][4]
-        if start is None:
+        name=COMPONENTS[component][4]
+        if name is None:
             amplitude=group['amplitude'][:];phase=group['phase_deg'][:]
         else:
+            names=json.loads(joint.attrs['parameter_names']) if 'parameter_names' in joint.attrs else None
+            start=names.index(name) if names is not None else LEGACY_COLUMNS[name]
             cs=joint['coefficients'][:,start:start+2]
             amplitude=np.hypot(cs[:,0],cs[:,1]);phase=np.degrees(np.arctan2(cs[:,1],cs[:,0]))
         return MapData(obs['x'][:],obs['y'][:],amplitude[safe],phase[safe],foot,
             foot&selected[safe],fits['source_id'][:][safe],mask,
-            recipe.get('phase_origin','2000-01-01 00:00 UTC; phase=atan2(S,C)'),tuple(files))
+            recipe.get('phase_origin','2000-01-01 00:00 UTC; phase=atan2(S,C)'),tuple(dict.fromkeys(files)),
+            int(np.asarray(obs.attrs.get('EPSG',3031)).ravel()[0]))
 
 
 def _netcdf_maps(directory,component,mask):
@@ -97,7 +113,7 @@ def _netcdf_maps(directory,component,mask):
         origin=h.attrs.get('phase_origin','2000-01-01 00:00 UTC')
         if isinstance(origin,bytes):origin=origin.decode()
         return MapData(h['x'][:],h['y'][:],h[prefix+'_amplitude'][:],h[prefix+'_phase_deg'][:],
-            foot,selected,source_id,mask,str(origin),(path,))
+            foot,selected,source_id,mask,str(origin),(path,),int(np.asarray(h.attrs.get('EPSG',3031)).ravel()[0]))
 
 
 def read_maps(directory,component='msf-along',mask='default'):
@@ -136,6 +152,8 @@ def plot_maps(directory,*,component='msf-along',mask='default',amplitude_max=Non
     directory,config_file=resolve_map_input(directory)
     components=tuple(COMPONENTS) if component=='all' else (component,)
     data={name:read_maps(directory,name,mask) for name in components}
+    if regions is None and (directory/'run-manifest.json').exists():
+        regions=json.loads((directory/'run-manifest.json').read_text())['config']['diagnostics']['regions']
     region_file=auxiliary_path(directory,'regions',regions)
     overlays=[] if region_file is None else json.loads(region_file.read_text())['regions']
     # Matplotlib is only needed when rendering, and no external GIS runtime is required.
@@ -160,7 +178,7 @@ def plot_maps(directory,*,component='msf-along',mask='default',amplitude_max=Non
             ax.set_facecolor('white')
             ax.imshow(np.where(maps.footprint,1.,np.nan),extent=extent,origin='upper',cmap='gray',vmin=0,vmax=1.15,interpolation='nearest')
             im=ax.imshow(np.where(maps.selected,values,np.nan),extent=extent,origin='upper',cmap=cmap,vmin=limits[0],vmax=limits[1],interpolation='nearest')
-            ax.set(title=heading,xlabel='EPSG:3031 x (km)',ylabel='EPSG:3031 y (km)');ax.set_aspect('equal')
+            ax.set(title=heading,xlabel=f'EPSG:{maps.epsg} x (km)',ylabel=f'EPSG:{maps.epsg} y (km)');ax.set_aspect('equal')
             for region in overlays:
                 west,south,east,north=np.array(region['bounds'])/1000
                 ax.add_patch(Rectangle((west,south),east-west,north-south,fill=False,edgecolor='k',lw=.7))

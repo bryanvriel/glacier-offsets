@@ -30,6 +30,8 @@
 !/configs/velocity-recovery.example.yaml
 !/configs/velocity-recovery.larsen.yaml
 !/configs/velocity-pixel.larsen.yaml
+!/configs/velocity-pixel.v2.example.yaml
+!/configs/velocity-pixel.larsen.v2.yaml
 !/configs/calibrations/larsen-2017h1-spacecraft.json
 !/configs/calibrations/larsen-2018-spacecraft.json
 !/configs/stack.pig.yaml

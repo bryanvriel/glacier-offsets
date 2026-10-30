@@ -1,0 +1,49 @@
+# Version-2 pixel inversion: one YAML from displacement netCDFs to results.
+#   glacier-offsets velocity-pixels run THIS.yaml      # everything
+#   glacier-offsets velocity-pixels prepare THIS.yaml  # extraction, solid Earth, noise
+# Relative paths resolve against this file. Repeated runs reuse verified cache
+# artifacts and result stages; changed settings rebuild only dependent stages.
+version: 2
+
+# Self-contained displacement packages (glacier-offsets-displacements-v1), already
+# ocean-tide corrected. Any number of files and calendar years; files are read
+# lazily through a pair manifest, never merged. Input order does not matter.
+inputs:
+  - /data/packages2017/horizontal_2017.nc
+  - /data/packages2018/horizontal_2018.nc
+
+# Immutable observation, solid-Earth and noise artifacts, shareable across runs.
+cache_directory: /data/velocity/cache
+output: /data/velocity/results/run_01
+
+corrections:
+  ocean_tide: require_existing  # CATS correction must already be in the packages
+  solid_earth: true             # full-ENU PySolid, applied exactly once
+
+# Annual range/azimuth covariance, one per calendar year (pair calendar midpoint).
+noise:
+  mode: controls                # or: supplied
+  regions: /data/regions.reviewed.json  # reviewed role: control regions only
+  group_by: year
+  # Supplied mode instead:
+  # mode: supplied
+  # files:
+  #   - path: noise.json        # {"covariance_ra_m2_by_year": {"2017": [[...]], ...}}
+  #   - path: legacy-noise.json # unlabeled covariance_by_year list
+  #     years: [2017, 2018]
+
+# min_span_days is required in version 2; other keys keep version-1 defaults.
+coverage:
+  min_span_days: 540
+
+screening:
+  remove_mixed_windows: false
+
+# Optional: overlays and point time series for reviewed role: target regions.
+# Defaults to noise.regions in controls mode.
+# diagnostics:
+#   regions: /data/regions.reviewed.json
+
+execution:
+  # PySolid runs as a self-contained worker; default is the current interpreter.
+  solid_earth_python: /Users/briel/miniforge3/envs/isce3/bin/python

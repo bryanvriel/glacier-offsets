@@ -1,4 +1,158 @@
-# Configuring the 2017/2018 pixel inversion
+# Configuring the pixel inversion
+
+Two configuration versions exist. **Version 2** (below) runs the complete
+netCDF-to-results workflow from raw displacement packages for one or more
+calendar years. **Version 1** (from [Version 1](#version-1-prepared-directories)
+onward) reuses a prepared directory and remains supported unchanged.
+
+## Version 2: netCDF to results
+
+```bash
+glacier-offsets velocity-pixels run inversion.yaml      # validate → prepare → noise → fit → export/maps → verify/report
+glacier-offsets velocity-pixels prepare inversion.yaml  # extraction, solid-Earth correction and noise only
+```
+
+See [`configs/velocity-pixel.v2.example.yaml`](../../configs/velocity-pixel.v2.example.yaml)
+and the Larsen configuration [`configs/velocity-pixel.larsen.v2.yaml`](../../configs/velocity-pixel.larsen.v2.yaml).
+Install the package into `ice` as in the version-1 instructions and run from any
+directory. Activate the environment (or set `PROJ_DATA`): the workflow checks
+pyproj, Python dependencies, the PySolid worker and auxiliary files before it
+opens any input. `fit` with a version-2 YAML stops after fitting; `export`,
+`verify`, `plot`, `maps` and `report` accept the result directory or the YAML.
+
+### Schema
+
+| Key | Meaning |
+| --- | --- |
+| `version: 2` | Required |
+| `inputs` | Displacement packages (`glacier-offsets-displacements-v1`), any number, any order |
+| `cache_directory` | Shared immutable artifacts; may serve several result directories |
+| `output` | Result directory; must differ from the cache |
+| `corrections.ocean_tide` | Only `require_existing`: CATS provenance and `tidal_correction_available` must be present; CATS is not computed here |
+| `corrections.solid_earth` | `true` (default) applies full-ENU PySolid once; `false` records that none was applied |
+| `noise.mode` | `supplied` or `controls`; `group_by: year` |
+| `noise.files` | Supplied mode: list of paths or `{path, years}` |
+| `noise.regions`, `noise.block_size_m` | Controls mode: reviewed regions JSON; spatial group size (default 3000 m) |
+| `coverage.min_span_days` | **Required.** Other `screening`, `coverage`, `uncertainty` and `display` keys keep the version-1 defaults and checks |
+| `diagnostics.regions` | Optional overlays and point series; defaults to `noise.regions` |
+| `execution.solid_earth_python` | Interpreter for the PySolid worker; default is the current one |
+| `execution.batch_size`, `preparation_chunk_pairs`, `solid_earth_spacing_deg` | 512, 8, 0.1; the first two are computational only |
+
+Paths resolve relative to the YAML. Unknown or duplicate keys, invalid values
+and settings the collected pairs can never meet (for example a span longer than
+the inputs, or too few pairs in a year) are reported together before any
+preparation. `remove_mixed_windows` stays `false` by default; `run`/`fit` accept
+`--remove-mixed-windows`/`--no-remove-mixed-windows` and `--batch-size`.
+
+### Virtual collection
+
+Packages must share EPSG/CRS definition, `x`/`y`, geometry, reference-date and
+layout identities, burst IDs, source associations and ownership, reference
+centre line/sample and observation longitude/latitude exactly. Range/azimuth
+ENU sensitivities may differ by at most the documented `1e-5` export tolerance;
+each package keeps its own vectors. Internal content checksums are verified once
+per file content. Duplicate pair IDs, incomplete packages, unsupported spacecraft,
+missing ocean-tide provenance or an already recorded solid-Earth correction are
+rejected. Pairs are sorted by scene acquisition time (then pair ID), so input
+order does not matter; nothing is merged, reprojected or bridged, and exact
+owning-burst endpoints are never replaced by scene times.
+`collection-manifest.json` records every pair's file, slot, calendar-midpoint
+year, spacecraft order and whether it crosses a calendar year.
+
+### Cache artifacts and the run manifest
+
+`cache_directory` holds three independently identified, read-only artifacts:
+
+- `observations/<id>/observations.h5`: unique radar sources, exact endpoints,
+  range/azimuth metres, SNR/peak, `valid_including_mixed`, per-pair
+  `mixed_window`, `known_mixed_source`, per-file geometry, CRS, coordinates,
+  map association, height and CATS response. Identity: input checksums, pair
+  mapping and extraction code.
+- `solid_earth/<id>/solid_earth.h5`: PySolid corrections. Identity: observation
+  artifact, worker code, spacing and the worker's pysolid/numpy/h5py versions.
+- `noise/<id>/noise.json`: annual covariances and diagnostics. Supplied mode is
+  bound to the files and labels; controls mode to observations, corrections,
+  screening policy, reviewed regions, selected control sources and estimator.
+
+Artifacts are built under an exclusive lock in a partial directory, checksummed,
+made read-only and published by one rename; every reuse re-verifies checksums.
+The result directory never copies them: `run-manifest.json` records their
+directories and checksums.
+
+The PySolid worker (`glacier_offsets/solid_earth_worker.py`) imports only numpy,
+h5py and pysolid and runs as a file (`python -I`) under
+`execution.solid_earth_python`, typically the `isce3` environment. It retains the
+validated method: bilinear 0.1° grid, bracketing UTC seconds at exact burst
+endpoints, projection through each package's geometry and sampled exact-point
+checks within 10 µm.
+
+### Annual noise
+
+- **supplied**: JSON with `covariance_ra_m2_by_year: {"2017": [[...],[...]], ...}`,
+  or the legacy unlabeled `covariance_by_year` list with explicit `years` in the
+  YAML. Covariances must be finite, symmetric and positive definite. Each
+  observed year needs exactly one; extra years are recorded as unused.
+- **controls**: sources whose chip-centre positions lie inside reviewed
+  `role: control` regions (never chosen from fitted amplitudes). For each year,
+  the full-year record (not January–June) gives order-aware, 60-day
+  acquisition-purged held-out residuals, then the spatially balanced robust
+  covariance estimator with its minimum of 40 residuals. `noise.json` reports
+  samples, control source IDs per region, training dates and diagnostics. A year
+  that cannot be calibrated fails; pooled or other-year noise is never used.
+
+### Model with any number of years
+
+Parameters are named: `east_velocity_<year>`, `north_velocity_<year>`,
+`order_<year>` (only where both spacecraft orders occur), shared
+`vertical_M2_C/S`, `vertical_O1_C/S` and `Msf_C/S`; the azimuth comparator uses
+`azimuth_velocity_<year>`. Year regimes start on 1 January of each observed year
+(the first and last are open-ended). Secular displacement integrates each
+year's velocity over the pair's exact burst-endpoint overlap with that year;
+annual noise and order offsets follow the recorded calendar-midpoint year.
+Within-year pairs use the version-1 screen unchanged. Cross-year pairs are
+screened against integrated annual robust backgrounds trained on within-year
+pairs with every shared acquisition day purged. The flow axis is the equal-year
+mean; `year_direction_change_deg` is the maximum pairwise annual change (zero
+for one year). For two within-year years the design reproduces version 1 column
+for column.
+
+### Outputs and restart
+
+`source_coefficients.h5` (with map association, CRS and year labels),
+`coefficient_maps.nc`, GeoTIFFs (amplitude/phase, residual RMS, retained
+pairs, speed), the quicklook, amplitude/phase, azimuth, residual-vertical, fit
+and residual/coverage diagnostic figures, `amplitude_phase_maps/` for all four
+components, `map-summary.json`, `verification.json` and `report.md`. Reviewed
+`role: target` regions (any number) add `point_timeseries/`. Axis labels and
+GeoTIFF CRS come from the inputs.
+
+Preparation and fitting run in bounded chunks with checkpoints; an interrupted
+command (exit 130) resumes on rerun when inputs, settings and code match, and
+produces the same result as an uninterrupted run. `stages/*.json` records each
+result stage's identity: display changes redraw exports only; screening changes
+recompute controls noise and fits; correction changes create new correction,
+noise and fit identities. Writers are exclusive per result directory and per
+cache artifact.
+
+### Validation (2026-10-30)
+
+On the Larsen packages with the frozen supplied covariances
+(`noise.json` labeled 2017, 2018) and `remove_mixed_windows: true`, the version-2
+run reproduced `.runtime/velocity-recovery-larsen/maps-2017-2018` exactly: identical
+observations, solid-Earth corrections (difference 0.0 m), masks, flow axes,
+coefficients and RMS (maximum differences 0.0), and all 61 shared NetCDF
+variables. With mixed windows retained it reproduced the earlier check: 575
+mixed sources, 554 estimable (0 when removed), 18,224/19,751 retained mixed-source
+pairs by year, unchanged unmixed fits and exact agreement with the historical
+validation subset. An installed copy run from outside the checkout with an
+empty cache and controls noise generated every default output in 2.6 minutes.
+`tests/test_velocity_workflow.py` covers single-, multi-, split-file and
+cross-year cases, input-order and virtual/physical equivalence, geometry and
+projection tolerance, duplicates, provenance, supplied and correlated control
+noise, insufficient controls, both mixed-window policies, interruptions,
+invalidation and locking.
+
+## Version 1: prepared directories
 
 The exploratory pixel inversion has its own YAML file:
 [`configs/velocity-pixel.larsen.yaml`](../../configs/velocity-pixel.larsen.yaml).
@@ -8,7 +162,7 @@ two-year model: common along-flow Msf and residual vertical M2/O1, with separate
 EN secular velocities and azimuth spacecraft-order offsets per year. The
 direct-azimuth comparator is also fitted.
 
-## Install and run from any directory
+### Install and run from any directory
 
 Install the package once into the existing `ice` environment (which already
 contains the scientific/GIS dependencies):
@@ -102,8 +256,8 @@ regional_support: /path/to/fitted-support.npz
 They are copied to `regions.reviewed.json` and `regional-support.npz` in the
 output. If the YAML omits a path, the runner reuses the corresponding file
 from the prepared input directory when present. Export works without regions
-and simply omits ROI outlines; point-series plots require four reviewed target
-regions. Verification always checks source replay, physical radar prediction
+and simply omits ROI outlines; point-series plots need at least one reviewed
+target region (any number is supported). Verification always checks source replay, physical radar prediction
 and native maps; the additional descriptive regional fits run only when a
 frozen support file is supplied. Missing regional checks are recorded as such.
 Export/plot accept `--regions FILE`; verification accepts
@@ -117,9 +271,9 @@ installed package. The source-tree `bin/glacier-offsets` launcher also works
 from another directory when called by its full path and uses the same ABI
 isolation as the earlier temporal fitter.
 
-## Settings
+### Settings
 
-### Plot amplitude and phase without rerunning inversion or export
+#### Plot amplitude and phase without rerunning inversion or export
 
 ```bash
 glacier-offsets velocity-pixels maps /path/to/experiment.yaml
@@ -170,7 +324,7 @@ the same numeric limit is applied to every component. `--dpi` controls PNG
 resolution (default 180). Optional reviewed regions come from the output
 directory or `--regions FILE`.
 
-### Inversion settings
+#### Inversion settings
 
 All scientific sections support partial overrides; omitted keys take the
 documented defaults. Unknown keys, duplicate YAML keys, wrong value types,
@@ -227,7 +381,7 @@ The model constituents, common harmonic across years, exact endpoint handling,
 CATS/body-tide corrections and phase convention remain fixed. The YAML is scoped
 to this two-year exploratory inversion, not arbitrary years or a model bank.
 
-## Provenance and reuse
+### Provenance and reuse
 
 Each run records the full effective settings in `inversion-config.resolved.yaml`
 and the scientific parameters in `recipe.json`. Recipe descriptions are generated

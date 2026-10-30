@@ -1,0 +1,23 @@
+# Larsen 2017/2018 through the version-2 workflow: raw horizontal packages,
+# full-year annual control noise from the reviewed regions, retained mixed
+# windows. Paths are relative to this file.
+#   glacier-offsets velocity-pixels run configs/velocity-pixel.larsen.v2.yaml
+version: 2
+inputs:
+  - ../.runtime/velocity-recovery-larsen/frozen-2017/displacements_swath_corrected_tide_corrected_horizontal.nc
+  - /Volumes/thinkplus/insar/glacier_offsets/work/larsen/stack/packages2018/horizontal_2018.nc
+cache_directory: ../.runtime/velocity-workflow-v2/cache
+output: ../.runtime/velocity-workflow-v2/larsen-controls
+corrections:
+  ocean_tide: require_existing
+  solid_earth: true
+noise:
+  mode: controls
+  regions: ../.runtime/velocity-recovery-larsen/regions.reviewed.json
+  group_by: year
+coverage:
+  min_span_days: 540
+screening:
+  remove_mixed_windows: false
+execution:
+  solid_earth_python: /Users/briel/miniforge3/envs/isce3/bin/python
