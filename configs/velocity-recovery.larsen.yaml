@@ -1,0 +1,7 @@
+inputs:
+- ../.runtime/velocity-recovery-larsen/frozen-2017/displacements_swath_corrected_tide_corrected_horizontal.nc
+output: ../.runtime/velocity-recovery-larsen/2017
+regions: ../.runtime/velocity-recovery-larsen/regions.reviewed.json
+calibration_validation: ../.runtime/velocity-recovery-larsen/2017-pilot/calibration-validation.json
+start: '2017-01-01'
+end: '2018-01-01'

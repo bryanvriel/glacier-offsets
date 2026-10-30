@@ -1,0 +1,27 @@
+# Run in the existing ice environment. All paths are relative to this YAML.
+inputs:
+  - ../work/my_stack/packages/horizontal.nc
+output: ../work/velocity-recovery
+# inspect writes regions.proposed.json; independently review/edit before pilot.
+regions: null
+# A report from independent same-ground calibration validation, bound to the
+# input netCDF SHA256s, is required for maps. Existing scope is never widened.
+calibration_validation: null
+start: '2017-01-01'
+end: '2019-01-01' # exclusive UTC; both comparisons use these same-grid inputs
+sampling:
+  points_per_region: 3 # unique sources, one per approximately 3 km block
+pilot:
+  bootstrap_draws: 1000
+  validation_draws: 200
+  tuning_draws: 100
+  seed: 12345
+map:
+  tile_size: 16
+  min_pairs_one_year: 40
+  min_days_one_year: 270
+  min_pairs_two_year: 60
+  min_days_two_year: 540
+  phase_coverage: 0.75
+  fdr: 0.05
+  max_phase_std_degrees: 20

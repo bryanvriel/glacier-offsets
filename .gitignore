@@ -27,12 +27,17 @@
 !/configs/stack.merge-first.example.yaml
 !/configs/stack.swath-corrected.example.yaml
 !/configs/stack.larsen.2018-reference.example.yaml
+!/configs/velocity-recovery.example.yaml
+!/configs/velocity-recovery.larsen.yaml
+!/configs/velocity-pixel.larsen.yaml
 !/configs/calibrations/larsen-2017h1-spacecraft.json
 !/configs/calibrations/larsen-2018-spacecraft.json
 !/configs/stack.pig.yaml
 !/configs/stack.pig.validity.yaml
 !/configs/stack.pig.interior.yaml
 !/docs/stack-processing/README.md
+!/docs/velocity-recovery/README.md
+!/docs/velocity-recovery/PIXEL_INVERSION_CONFIGURATION.md
 !/docs/stack-processing/SWATH_CORRECTION_ENHANCEMENT.md
 !/docs/stack-processing/SWATH_CORRECTION_METHOD.md
 !/docs/stack-processing/HANDOFF_2026-10-24.md

@@ -1,6 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 _go_root=$(cd "$(dirname "$0")/.." && pwd)
-export PYTHONPATH="$_go_root/src:$_go_root/.runtime/deps${PYTHONPATH:+:$PYTHONPATH}"
+if [[ "${1:-}" == "fit-velocity" || "${1:-}" == "velocity-pixels" ]]; then
+    # Fitting runs in the ice environment; the ISCE3 NumPy ABI must not leak in.
+    _go_fit_path=""
+    if [[ -n "${PYTHONPATH:-}" ]]; then
+        IFS=: read -ra _go_paths <<< "$PYTHONPATH"
+        for _go_path in "${_go_paths[@]}"; do
+            _go_resolved="$_go_path"
+            if [[ -n "$_go_path" && -d "$_go_path" ]]; then
+                _go_resolved=$(cd "$_go_path" && pwd -P)
+            fi
+            if [[ -n "$_go_path" && "$_go_resolved" != "$_go_root/.runtime/deps" ]]; then
+                _go_fit_path="${_go_fit_path:+$_go_fit_path:}$_go_path"
+            fi
+        done
+    fi
+    export PYTHONPATH="$_go_root/src${_go_fit_path:+:$_go_fit_path}"
+else
+    export PYTHONPATH="$_go_root/src:$_go_root/.runtime/deps${PYTHONPATH:+:$PYTHONPATH}"
+fi
 export MPLCONFIGDIR="$_go_root/.runtime/matplotlib"
 exec "${GLACIER_OFFSETS_PYTHON:-python}" -m glacier_offsets "$@"

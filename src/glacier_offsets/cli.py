@@ -9,6 +9,21 @@ from .inputs import discover, select_pair
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] in ('fit-velocity', 'velocity-pixels'):
+        from pathlib import Path
+        runtime = Path(__file__).resolve().parents[2]/'.runtime'/'deps'
+        for name in ('numpy','scipy','h5py','h5netcdf'):
+            module = sys.modules.get(name)
+            filename = getattr(module,'__file__',None)
+            if filename and Path(filename).resolve().is_relative_to(runtime):
+                logging.error('Start fitting in the ice environment without .runtime/deps; %s is already loaded from it',name)
+                return 2
+        sys.path[:] = [p for p in sys.path if Path(p or '.').resolve()!=runtime]
+        if argv[0] == 'velocity-pixels':
+            from .velocity_pixel_cli import main as velocity_main
+        else:
+            from .velocity_recovery import main as velocity_main
+        return velocity_main(argv[1:])
     if argv and argv[0] == 'to-horizontal':
         from .horizontal import main as horizontal_main
         return horizontal_main(argv[1:])
@@ -28,7 +43,9 @@ def main(argv=None):
         from .stack_cli import main as stack_main
         return stack_main(argv[1:])
     parser = argparse.ArgumentParser(prog="glacier-offsets")
-    parser.epilog = ('Stack workflows: glacier-offsets stack --help. '
+    parser.epilog = ('Pixel inversion: glacier-offsets velocity-pixels --help. '
+                     'Temporal fits: glacier-offsets fit-velocity --help. '
+                     'Stack workflows: glacier-offsets stack --help. '
                      'Estimate swath calibration: glacier-offsets stack calibrate-swaths --help. '
                      'Download bursts: glacier-offsets download-bursts --help. '
                      'Prepare inputs: glacier-offsets prepare-inputs --help. '

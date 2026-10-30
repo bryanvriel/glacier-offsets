@@ -40,6 +40,7 @@ A small, restartable Python workflow for local Sentinel-1 TOPS SAFE pairs and ac
   - [Package displacement stacks as netCDF](#package-displacement-stacks-as-netcdf)
   - [Correct vertical ocean tides](#correct-vertical-ocean-tides)
   - [Convert to local east/north displacements](#convert-to-local-eastnorth-displacements)
+  - [Fit exact-pair Msf velocities](#fit-exact-pair-msf-velocities)
 - [Products and scientific interpretation](#products-and-scientific-interpretation)
   - [Burst footprints in KML](#burst-footprints-in-kml)
   - [Standalone radar-offset plot](#standalone-radar-offset-plot)
@@ -828,7 +829,7 @@ rebuilds in the same root. Stop processes launched with older software too,
 because those processes do not acquire the lock. Other reference, software or
 support-policy changes still require a new output root.
 
-Multi-slice assembly, NESD, time-series inversion, concurrent date
+Multi-slice assembly, NESD, concurrent date
 preparation/pairs and fractional alignment of reference bursts remain outside V1.
 
 #### Transfer a prepared reference to another computer
@@ -1454,7 +1455,7 @@ checks. Unchanged packages are verified and reused; changed sources or omissions
 rebuild them. `--force` affects packaging only. Internal variable checksums and
 `validate_package(path)` allow standalone integrity checks without opening any
 stack outputs. `correct-tides` consumes this file plus a local CATS2008 model.
-Future ENU/projected-velocity tools can also use this self-contained format.
+The standalone horizontal-conversion and velocity-fitting tools also use this self-contained format.
 
 ```python
 import iceutils as ice
@@ -1692,10 +1693,50 @@ source-burst endpoints and differentiate the fitted displacement function to
 obtain velocity. Alternatively, integrate velocity basis functions over each
 pair interval. Midpoints are labels, not instantaneous observations. The constant
 displacement term is unobservable and must be omitted or anchored. Temporal gaps,
-shared-acquisition correlations, regularization and fit diagnostics remain the
-responsibility of that future fitting step.
+shared-acquisition correlations, regularization and fit diagnostics are handled
+by the separately invoked `fit-velocity` workflow described below.
+
+### Fit exact-pair Msf velocities
+
+The independent `fit-velocity` command reads one or several self-contained
+horizontal netCDF packages in the **ice** environment:
+
+```bash
+GLACIER_OFFSETS_PYTHON=/Users/briel/miniforge3/envs/ice/bin/python \
+  bin/glacier-offsets fit-velocity configs/velocity-recovery.example.yaml --stage inspect
+# After reviewing regions and establishing control/calibration evidence:
+GLACIER_OFFSETS_PYTHON=/Users/briel/miniforge3/envs/ice/bin/python \
+  bin/glacier-offsets fit-velocity CONFIG.yaml --stage pilot
+GLACIER_OFFSETS_PYTHON=/Users/briel/miniforge3/envs/ice/bin/python \
+  bin/glacier-offsets fit-velocity CONFIG.yaml --stage map
+```
+
+It fits analytic interval-integrated Msf harmonics and a controlled background
+bank in local EN, compares free EN and along-flow models, estimates empirical
+range/azimuth covariance from reviewed controls, and retains covariance
+cross-terms while whitening. The launcher excludes the ISCE3 dependency overlay.
+Inspection proposes regions without fitting Msf; pilots require reviewed ice
+targets and independently identified bedrock controls. Maps require a current
+pilot recovery pass and independent calibration evidence bound to the exact
+netCDF inputs. Existing calibration scope is never widened automatically.
+
+Separate coefficient netCDFs support standalone velocity evaluation, daily pilot
+plots, explicit daily-cube export and resumable map tiles. Fit, detection and
+phase-valid masks remain distinct; map FDR counts unique sources across both
+models. See the [velocity-recovery workflow](docs/velocity-recovery/README.md)
+for baseline freezing, extended processing, calibration validation, model and
+weight conventions, uncertainty limits and scientific gates.
 
 ## Products and scientific interpretation
+
+The subsequent exploratory 2017/2018 pixel inversion has a separate YAML:
+[`configs/velocity-pixel.larsen.yaml`](configs/velocity-pixel.larsen.yaml).
+After installing into `ice`, run `glacier-offsets velocity-pixels fit /path/to/velocity-pixel.larsen.yaml`
+from any directory, without `PYTHONPATH`.
+It reuses prepared observations, tide corrections and frozen weights, and
+configures screening, fit coverage and map display filters independently of
+stack creation. See the [pixel inversion configuration guide](docs/velocity-recovery/PIXEL_INVERSION_CONFIGURATION.md)
+for export commands and experiment provenance.
 
 Standalone pair outputs, illustrated by `work/jan10_jan22/t038_080975_iw2/`, include:
 
