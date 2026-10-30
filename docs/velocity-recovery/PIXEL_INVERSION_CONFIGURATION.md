@@ -51,7 +51,7 @@ layout identities, burst IDs, source associations and ownership, reference
 centre line/sample and observation longitude/latitude exactly. Range/azimuth
 ENU sensitivities may differ by at most the documented `1e-5` export tolerance;
 each package keeps its own vectors. Internal content checksums are verified once
-per file content. Duplicate pair IDs, incomplete packages, unsupported spacecraft,
+per file content. Duplicate pair IDs, incomplete packages, spacecraft other than S1A–S1D,
 missing ocean-tide provenance or an already recorded solid-Earth correction are
 rejected. Pairs are sorted by scene acquisition time (then pair ID), so input
 order does not matter; nothing is merged, reprojected or bridged, and exact
@@ -109,6 +109,16 @@ Parameters are named: `east_velocity_<year>`, `north_velocity_<year>`,
 (the first and last are open-ended). Secular displacement integrates each
 year's velocity over the pair's exact burst-endpoint overlap with that year;
 annual noise and order offsets follow the recorded calendar-midpoint year.
+The spacecraft-order offset is defined per calendar year: a year may involve
+at most two spacecraft, the alphabetically first is its reference, and the sign
+is `[later == partner] - [earlier == partner]`. S1A/S1B years keep the historical
+`B_later - B_earlier` sign; S1A/S1C years (from 2025) use S1C; single-spacecraft
+years, such as S1A-only 2022–2024 with 12-day pairs, have no order term. Each
+year's offset is fitted independently, so no S1A/S1B bias is carried into S1C
+years. `collection-manifest.json` (`order_spacecraft`), the layout record and
+the NetCDF `order_sign` attribute record each year's definition. A year mixing
+three spacecraft is rejected. Swath-corrected packaging remains S1A/S1B-only;
+use `packaging.source: raw` for S1C stacks until an S1C swath calibration exists.
 Within-year pairs use the version-1 screen unchanged. Cross-year pairs are
 screened against integrated annual robust backgrounds trained on within-year
 pairs with every shared acquisition day purged. The flow axis is the equal-year

@@ -8,6 +8,8 @@ overlap with that year; harmonics are integrated exactly. Annual noise and
 order groups follow the recorded midpoint year. For two within-year regimes
 this reproduces the version-1 two-year design column for column.
 """
+import json
+
 import numpy as np
 
 from .velocity_basis import harmonic, PERIOD
@@ -30,20 +32,23 @@ class Layout:
     preceding regime instead of introducing an unconstrained velocity.
     """
 
-    def __init__(self, years, order_years=None):
+    def __init__(self, years, order_years=None, order_spacecraft=None):
         self.years = tuple(int(y) for y in years)
         if not self.years or list(self.years) != sorted(set(self.years)):
             raise ValueError('Regime years must be unique and increasing')
         order_years = self.years if order_years is None else set(order_years)
         self.order_years = tuple(y for y in self.years if y in order_years)
         self.bounds = np.array([-np.inf, *[year_start(y) for y in self.years[1:]], np.inf])
+        # Version-1 and older caches were S1A/S1B only.
+        self.order_spacecraft = order_spacecraft or {str(y): {'reference': 'S1A', 'partner': 'S1B'} for y in self.order_years}
 
     @classmethod
     def from_observations(cls, h):
         years = h['years'][:].tolist()
         index = h['year_index'][:]
         order = h['order'][:]
-        return cls(years, [y for k, y in enumerate(years) if np.any(order[index == k] != 0)])
+        spacecraft = json.loads(h.attrs['order_spacecraft_json']) if 'order_spacecraft_json' in h.attrs else None
+        return cls(years, [y for k, y in enumerate(years) if np.any(order[index == k] != 0)], spacecraft)
 
     @property
     def joint_names(self):
@@ -65,8 +70,14 @@ class Layout:
         overlap = np.minimum(late, self.bounds[1:])-np.maximum(early, self.bounds[:-1])
         return np.where(np.isnan(overlap), np.nan, np.maximum(overlap, 0.))
 
+    def order_sign(self, year):
+        partner = self.order_spacecraft.get(str(year), {}).get('partner') or 'S1B'
+        return f'{partner}_later - {partner}_earlier; azimuth displacement metres'
+
     def record(self):
         return {'years': list(self.years), 'order_years': list(self.order_years),
+                'order_spacecraft': self.order_spacecraft,
+                'order_sign': {str(y): self.order_sign(y) for y in self.order_years},
                 'regime_starts_utc': ['open' if not np.isfinite(b) else f'{y}-01-01T00:00:00Z'
                                       for b, y in zip(self.bounds[:-1], self.years)],
                 'joint_parameters': list(self.joint_names), 'azimuth_parameters': list(self.azimuth_names)}

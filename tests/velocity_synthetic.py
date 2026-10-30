@@ -30,10 +30,10 @@ def utc(text):
     return datetime.fromisoformat(text).replace(tzinfo=timezone.utc)
 
 
-def acquisitions(start, count, step=6):
-    """Alternating S1A/S1B acquisitions at the fixed hour of the real Larsen stack."""
+def acquisitions(start, count, step=6, spacecraft=('S1A', 'S1B')):
+    """Cycling spacecraft acquisitions at the fixed hour of the real Larsen stack."""
     first = utc(start)+timedelta(hours=8, minutes=2, seconds=11)
-    return [(first+timedelta(days=step*i), 'S1A' if i % 2 == 0 else 'S1B') for i in range(count)]
+    return [(first+timedelta(days=step*i), spacecraft[i % len(spacecraft)]) for i in range(count)]
 
 
 class Truth:
@@ -96,7 +96,8 @@ def write_package(path, truth, pairs, *, noise=None, seed=0, perturb=0., grid_sh
     early = (bursts[:, owner_s, 0].T-EPOCH_SECONDS)/86400.
     late = (bursts[:, owner_s, 1].T-EPOCH_SECONDS)/86400.
     overlap = np.nan_to_num(layout.overlaps(early, late))
-    order = np.array([int(b == 'S1B')-int(a == 'S1B') for _, _, a, b in pairs], float)
+    # Each year's partner is its non-S1A spacecraft (the workflow's per-year rule).
+    order = np.array([int(b != 'S1A')-int(a != 'S1A') for _, _, a, b in pairs], float)
     label = [layout.years.index(datetime.fromtimestamp((s[0]+s[1])/2, tz=timezone.utc).year) for s in scene]
     data = np.zeros((truth.ns, nt, 2))
     for k, year in enumerate(truth.years):
@@ -181,8 +182,8 @@ def write_package(path, truth, pairs, *, noise=None, seed=0, perturb=0., grid_sh
     return path
 
 
-def pair_list(start, count, step=6):
-    acq = acquisitions(start, count+1, step)
+def pair_list(start, count, step=6, spacecraft=('S1A', 'S1B')):
+    acq = acquisitions(start, count+1, step, spacecraft)
     return [(acq[i][0], acq[i+1][0], acq[i][1], acq[i+1][1]) for i in range(count)]
 
 

@@ -6,6 +6,7 @@ availability flags. Eligibility is retained before any optional mixed-window
 exclusion. Pairs are read in bounded chunks; a partial artifact checkpoints the
 completed pair count and resumes only for an identical identity.
 """
+import json
 import logging
 
 import h5py
@@ -92,6 +93,7 @@ def _create(path, manifest, handles, static, chunk):
         out['file_index'] = np.array([p['file'] for p in pairs], np.int32)
         out['slot'] = np.array([p['slot'] for p in pairs], np.int32)
         out['order'] = np.array([p['order'] for p in pairs], np.int8)
+        out.attrs['order_spacecraft_json'] = json.dumps(manifest['order_spacecraft'], sort_keys=True)
         out['year'] = np.array([p['year'] for p in pairs], np.int32)
         out['years'] = np.array(years, np.int32)
         out['year_index'] = np.array([years.index(p['year']) for p in pairs], np.int32)

@@ -7,6 +7,12 @@ ownership, reference positions and geographic coordinates. Projection vectors
 may differ only within the documented 1e-5 numerical-export tolerance, and each
 package keeps its own vectors. Pairs are sorted by acquisition time; pair IDs
 must be unique. No reprojection, bridging pair or scene-time substitution.
+
+Each calendar year (pair calendar midpoint) may involve at most two Sentinel-1
+spacecraft. The alphabetically first is that year's reference; the order sign
+is ``[later == partner] - [earlier == partner]``. S1A/S1B years keep the
+historical ``B_later - B_earlier`` sign; S1A/S1C years use S1C as partner and
+single-spacecraft years have no order term. Each year's offset is separate.
 """
 from datetime import datetime, timezone
 import json
@@ -26,7 +32,7 @@ PACKAGE_SCHEMA = 'glacier-offsets-displacements-v1'
 PROJECTION_TOLERANCE = 1e-5
 TIME_UNITS = 'seconds since 1970-01-01 00:00:00'
 CALENDARS = ('proleptic_gregorian', 'standard', 'gregorian')
-SPACECRAFT = ('S1A', 'S1B')
+SPACECRAFT = ('S1A', 'S1B', 'S1C', 'S1D')
 REQUIRED = ('x', 'y', 'crs', 'pair_id', 'earlier_time', 'later_time', 'earlier_burst_time',
             'later_burst_time', 'earlier_spacecraft', 'later_spacecraft', 'burst_id', 'enu',
             'range_displacement_m', 'azimuth_displacement_m', 'snr', 'correlation_peak',
@@ -129,7 +135,7 @@ def _package(path):
         earlier, later = _strings(h['earlier_spacecraft']), _strings(h['later_spacecraft'])
         unknown = sorted(set(earlier+later)-set(SPACECRAFT))
         if unknown:
-            raise ValueError(f'{path}: unsupported spacecraft {unknown}; order offsets are defined for S1A/S1B')
+            raise ValueError(f'{path}: unsupported spacecraft {unknown}; expected {"/".join(SPACECRAFT)}')
         scene = np.stack([h['earlier_time'][:], h['later_time'][:]], -1)
         bursts = np.stack([h['earlier_burst_time'][:], h['later_burst_time'][:]], -1)
         if bursts.shape[:2] != (len(pairs), len(_strings(h['burst_id']))):
@@ -220,10 +226,10 @@ def collect(paths, cache_directory, verify_content=True):
                          'calendar_midpoint_day': float(mid), 'year': label,
                          'within_year': calendar_year(early) == label == calendar_year(late),
                          'earlier_spacecraft': earlier, 'later_spacecraft': later,
-                         'order': int(later == 'S1B')-int(earlier == 'S1B'),
                          'burst_span_days': [float(days(bursts[finite, 0].min())), float(days(bursts[finite, 1].max()))]
                          if finite.any() else None})
     rows.sort(key=lambda r: (r['calendar_early_day'], r['calendar_late_day'], r['pair_id']))
+    order_spacecraft = assign_order(rows)
     spans = np.array([r['burst_span_days'] for r in rows if r['burst_span_days'] is not None])
     if not len(spans):
         raise ValueError('No pair has finite, increasing burst endpoints')
@@ -237,12 +243,30 @@ def collect(paths, cache_directory, verify_content=True):
                 'projection_tolerance': PROJECTION_TOLERANCE, 'geometry_max_abs_differences': differences,
                 'pairs': rows, 'years': years,
                 'pairs_by_year': {str(y): sum(r['year'] == y for r in rows) for y in years},
+                'order_spacecraft': order_spacecraft,
                 'cross_year_pairs': [r['pair_id'] for r in rows if not r['within_year']],
                 'span_days': float(spans[:, 1].max()-spans[:, 0].min()),
                 'year_assignment': 'calendar year of the scene-label midpoint; secular motion uses exact burst-endpoint overlaps',
                 'pair_order': 'scene earlier time, scene later time, pair ID'}
     logging.info('Collected %d pairs from %d package(s); years %s', len(rows), len(paths), years)
     return manifest
+
+
+def assign_order(rows):
+    """Per-year reference/partner spacecraft and each pair's order sign."""
+    result = {}
+    for year in sorted({r['year'] for r in rows}):
+        members = [r for r in rows if r['year'] == year]
+        spacecraft = sorted({s for r in members for s in (r['earlier_spacecraft'], r['later_spacecraft'])})
+        if len(spacecraft) > 2:
+            raise ValueError(f'{year} pairs involve {spacecraft}; one order offset per year supports at most two '
+                             'spacecraft. Split the inputs into years with one spacecraft pair')
+        partner = spacecraft[1] if len(spacecraft) == 2 else None
+        for r in members:
+            r['order'] = int(r['later_spacecraft'] == partner)-int(r['earlier_spacecraft'] == partner)
+        result[str(year)] = {'spacecraft': spacecraft, 'reference': spacecraft[0], 'partner': partner,
+                             'sign': None if partner is None else f'[later == {partner}] - [earlier == {partner}]'}
+    return result
 
 
 def content_identity(manifest):

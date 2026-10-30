@@ -115,6 +115,20 @@ class CollectionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
             collect([tampered], self.root/'cache')
 
+    def test_order_spacecraft_is_defined_per_year(self):
+        three = write_package(self.root/'three.nc', Truth([2025]), pair_list('2025-01-06', 20, spacecraft=('S1A', 'S1B', 'S1C')))
+        with self.assertRaisesRegex(ValueError, 'at most two'):
+            collect([three], self.root/'cache')
+        cd = write_package(self.root/'cd.nc', Truth([2027]), pair_list('2027-01-06', 20, spacecraft=('S1C', 'S1D')))
+        manifest = collect([cd], self.root/'cache')
+        self.assertEqual(manifest['order_spacecraft']['2027']['reference'], 'S1C')
+        self.assertEqual([p['order'] for p in manifest['pairs'][:3]], [1, -1, 1])
+        with h5py.File(cd, 'r+') as h:
+            h['later_spacecraft'][0] = 'S2A'
+        with self.assertRaisesRegex(ValueError, 'unsupported spacecraft'):
+            from glacier_offsets.velocity_collection import _package
+            _package(cd)
+
     def test_layout_overlap_is_exact_at_year_boundary(self):
         layout = Layout([2017, 2018])
         boundary = year_start(2018)
@@ -201,6 +215,33 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual((cross['year'], manifest['pairs_by_year']), (2017, {'2017': 31, '2018': 29}))
         # Every pair, including the cross-year pair, survives the screen of noise-free data.
         self.assertEqual(fits(self.root/'y2/source_coefficients.h5')['clean_pairs_by_year'].sum(), 60*12)
+
+    def test_s1b_era_s1a_only_and_s1c_era_years_in_one_inversion(self):
+        years = [2021, 2022, 2025]
+        truth = Truth(years)
+        segments = {2021: pair_list('2021-01-05', 55), 2022: pair_list('2022-01-04', 28, step=12, spacecraft=('S1A',)),
+                    2025: pair_list('2025-01-06', 55, spacecraft=('S1A', 'S1C'))}
+        for year, pairs in segments.items():
+            write_package(self.root/f'{year}.nc', truth, pairs, dtype='f8')
+        (self.root/'eras.json').write_text(json.dumps({'covariance_ra_m2_by_year': {str(y): [[.01, .002], [.002, .04]] for y in years}}))
+        config = self.space.config([f'{y}.nc' for y in (2025, 2021, 2022)], output='eras', noise='mode: supplied\nfiles:\n  - eras.json')
+        manifest = run_workflow(config, 'fit')
+        collection = json.loads((self.root/'eras/collection-manifest.json').read_text())
+        self.assertEqual({y: v['partner'] for y, v in collection['order_spacecraft'].items()},
+                         {'2021': 'S1B', '2022': None, '2025': 'S1C'})
+        self.assertEqual(manifest['layout']['order_years'], [2021, 2025])
+        self.assertEqual(manifest['layout']['order_sign']['2025'], 'S1C_later - S1C_earlier; azimuth displacement metres')
+        result = fits(self.root/'eras/source_coefficients.h5')
+        index = {n: j for j, n in enumerate(result['names'])}
+        self.assertNotIn('order_2022', index)
+        coef = result['residual_vertical/coefficients']
+        self.assertTrue(result['residual_vertical/estimable'].all())
+        for year in years:
+            assert_allclose(coef[:, [index[f'east_velocity_{year}'], index[f'north_velocity_{year}']]], truth.velocity[year], atol=1e-9)
+        for year in (2021, 2025):
+            assert_allclose(coef[:, index[f'order_{year}']], truth.order[year], atol=1e-9)
+        azimuth_names = json.loads(h5py.File(self.root/'eras/source_coefficients.h5')['azimuth_direct'].attrs['parameter_names'])
+        self.assertEqual([n for n in azimuth_names if n.startswith('order_')], ['order_2021', 'order_2025'])
 
     def test_virtual_and_physical_concatenation_match_for_any_order(self):
         truth = Truth([2017, 2018])

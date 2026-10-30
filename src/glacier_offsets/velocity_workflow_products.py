@@ -54,7 +54,8 @@ class RunView:
             if h.attrs.get('status') != 'complete':
                 raise ValueError('Source fits are incomplete')
             view.years = [int(y) for y in h.attrs['years']]
-            view.layout = Layout(view.years, json.loads(h.attrs['layout_json'])['order_years'])
+            layout = json.loads(h.attrs['layout_json'])
+            view.layout = Layout(view.years, layout['order_years'], layout.get('order_spacecraft'))
             view.x, view.y = h['x'][:], h['y'][:]
             view.index = h['map_source_index'][:]
             view.source_id = h['source_id'][:]
@@ -240,7 +241,7 @@ def export_maps(view):
                              phase_origin='2000-01-01T00:00:00Z',
                              phase_convention='v=C cos(omega*tau)+S sin(omega*tau); phase=atan2(S,C) degrees',
                              horizontal_Msf_period_days=14.765294, vertical_M2_period_days=M2_PERIOD,
-                             vertical_O1_period_days=O1_PERIOD, order_sign='B_later - B_earlier; azimuth displacement metres',
+                             vertical_O1_period_days=O1_PERIOD, order_sign=json.dumps({str(y): view.layout.order_sign(y) for y in view.layout.order_years}, sort_keys=True),
                              secular_vertical_velocity_m_day=0.,
                              vertical_basis='height endpoint differences, M2 and O1; coefficients in metres',
                              uncertainty=view.recipe['diagnostic_uncertainty'],
@@ -534,6 +535,8 @@ def report_v2(view, series=None):
              _table(['Input', 'SHA-256'], [[i['path'], i['sha256'][:16]+'…'] for i in manifest['collection']['inputs']]), '',
              f"Pairs by calendar-midpoint year: `{json.dumps(manifest['collection']['pairs_by_year'])}`; "
              f"cross-year pairs: {len(manifest['collection']['cross_year_pairs'])}.", '',
+             'Spacecraft order offsets: '+(', '.join(f'{y}: {view.layout.order_sign(y).split(";")[0]}' for y in view.layout.order_years)
+                                           or 'none (single-spacecraft years)')+'; years not listed have no order term.', '',
              'Ocean tides: existing CATS correction required and verified by provenance. Solid Earth: '
              + (f"PySolid full-ENU correction artifact `{solid['id']}`." if 'id' in solid else 'not applied.'), '',
              f"Observation cache `{manifest['artifacts']['observations']['id']}`; noise `{manifest['artifacts']['noise']['id']}`.", '',
