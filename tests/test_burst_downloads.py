@@ -2,6 +2,7 @@
 import argparse
 import contextlib
 import copy
+import hashlib
 from datetime import datetime, timedelta
 import io
 import json
@@ -21,6 +22,7 @@ from glacier_offsets.aoi import AOI, load_aoi
 from glacier_offsets.cli import main
 from glacier_offsets.inputs import inventory
 from glacier_offsets.products import checksum
+from glacier_offsets.burst_download_repair import repair_annotation_widths
 from glacier_offsets.prepared_inputs import prepared_paths
 from glacier_offsets.stack import scan_safes, plan_stack
 from glacier_offsets.stack_config import load_stack_config
@@ -421,6 +423,119 @@ class BurstDownloads(unittest.TestCase):
         safe=synthetic_safe(self.root,group,self.request)
         next((safe/'measurement').iterdir()).write_text('bad tiff')
         with self.assertRaises(Exception):bd.validate_safe(safe,group,self.request)
+
+    def width_fixture(self, scratch):
+        """Two source slices, one sample of right padding, stale assembled width."""
+        from lxml import etree as ET
+        groups,_=self.plan([product(),product(11)])
+        group=groups[0]
+        group['bursts'][1]['parent']=group['bursts'][1]['parent'].replace('_2151','_3151')
+        safe=synthetic_safe(scratch,group,self.request)
+        annotation=next((safe/'annotation').glob('*iw2*'))
+        correct=annotation.read_bytes()
+        annotation.write_bytes(correct.replace(b'<numberOfSamples>5',b'<numberOfSamples>4'))
+        metadata=[]
+        for row,width in zip(group['bursts'],(4,5)):
+            source=ET.fromstring(correct)
+            source.find('imageAnnotation/imageInformation/numberOfSamples').text=str(width)
+            source.find('swathTiming/samplesPerBurst').text=str(width)
+            combined=ET.fromstring(b'<root><metadata><product><swath>IW2</swath>'
+                                   b'<polarisation>HH</polarisation></product></metadata></root>')
+            source.tag='content'
+            combined.find('metadata/product').append(source)
+            path=Path(scratch)/f'{row["parent"]}_HH.xml'
+            path.write_bytes(ET.tostring(combined));metadata.append(path)
+        tree=ET.parse(str(safe/'manifest.safe'))
+        stream=ET.SubElement(ET.SubElement(tree.getroot(),'dataObject'),'byteStream',
+                             size=str(annotation.stat().st_size))
+        ET.SubElement(stream,'fileLocation',href='./'+annotation.relative_to(safe).as_posix())
+        ET.SubElement(stream,'checksum',checksumName='MD5').text=hashlib.md5(annotation.read_bytes()).hexdigest()
+        tree.write(str(safe/'manifest.safe'),encoding='UTF-8',xml_declaration=True)
+        return safe,group,annotation,metadata,correct
+
+    def test_width_repair_preserves_imagery_updates_manifest_and_is_idempotent(self):
+        from lxml import etree as ET
+        safe,group,annotation,_,correct=self.width_fixture(self.root)
+        measurement=next((safe/'measurement').iterdir())
+        before=checksum(measurement)
+        with self.assertRaisesRegex(ValueError,'Inconsistent annotation dimensions'):
+            bd.validate_safe(safe,group,self.request)
+        repairs=repair_annotation_widths(safe,group,self.root)
+        self.assertEqual(annotation.read_bytes(),correct)
+        self.assertEqual(checksum(measurement),before)
+        self.assertEqual(repairs[0]['old_number_of_samples'],4)
+        self.assertEqual(repairs[0]['number_of_samples'],5)
+        self.assertEqual(set(repairs[0]['source_widths'].values()),{4,5})
+        stream=ET.parse(str(safe/'manifest.safe')).find('.//byteStream')
+        self.assertEqual(stream.get('size'),str(len(correct)))
+        self.assertEqual(stream.findtext('checksum'),hashlib.md5(correct).hexdigest())
+        validation=bd.validate_safe(safe,group,self.request)
+        bd.verify_files(safe,validation)
+        before={str(p):checksum(p) for p in safe.rglob('*') if p.is_file()}
+        self.assertEqual(repair_annotation_widths(safe,group,self.root),[])
+        self.assertEqual(before,{str(p):checksum(p) for p in safe.rglob('*') if p.is_file()})
+
+    def test_width_repair_rejects_unproven_or_unrelated_errors_without_writes(self):
+        cases=('two_sample_gap','wrong_height','wrong_tiff','single_parent','same_source_width',
+               'bad_checksum','bad_size','missing_source','bad_source_lines')
+        for case in cases:
+            with self.subTest(case=case),tempfile.TemporaryDirectory(dir=self.root) as tmp:
+                safe,group,annotation,metadata,_=self.width_fixture(tmp)
+                if case=='two_sample_gap':
+                    annotation.write_bytes(annotation.read_bytes().replace(b'<numberOfSamples>4',b'<numberOfSamples>3'))
+                elif case=='wrong_height':
+                    annotation.write_bytes(annotation.read_bytes().replace(b'<numberOfLines>8',b'<numberOfLines>7'))
+                elif case=='wrong_tiff':
+                    measurement=next((safe/'measurement').iterdir())
+                    ds=gdal.GetDriverByName('GTiff').Create(str(measurement),4,8,1,gdal.GDT_CInt16);ds=None
+                elif case=='single_parent':
+                    group['bursts'][1]['parent']=group['bursts'][0]['parent']
+                elif case=='same_source_width':
+                    metadata[1].write_bytes(metadata[0].read_bytes())
+                elif case=='bad_checksum':
+                    p=safe/'manifest.safe'
+                    p.write_bytes(p.read_bytes().replace(b'checksumName="MD5"',b'checksumName="SHA256"'))
+                elif case=='bad_size':
+                    p=safe/'manifest.safe'
+                    p.write_bytes(p.read_bytes().replace(b'<byteStream size="',b'<byteStream size="1'))
+                elif case=='missing_source':
+                    metadata[1].unlink()
+                elif case=='bad_source_lines':
+                    metadata[1].write_bytes(metadata[1].read_bytes().replace(b'<linesPerBurst>4',b'<linesPerBurst>5'))
+                before={str(p):checksum(p) for p in safe.rglob('*') if p.is_file()}
+                with self.assertRaises((ValueError,OSError)):
+                    repair_annotation_widths(safe,group,tmp)
+                self.assertEqual(before,{str(p):checksum(p) for p in safe.rglob('*') if p.is_file()})
+
+    def test_repaired_width_publication_provenance_reuse_and_full_validation(self):
+        # Exercise the actual staged download path, including checksummed reuse.
+        safe,group,_,_,_=self.width_fixture(self.root/'fixture')
+        groups=[group]
+        def converter(**kw):
+            staged,g,annotation,metadata,correct=self.width_fixture(kw['work_dir'])
+            return staged
+        self.assertEqual(self.download(groups,converter),0)
+        collection=self.root/'collection'
+        saved=bd.managed_collection(collection)['download']['acquisitions'][0]
+        self.assertEqual(saved['validation']['annotation_repairs'][0]['number_of_samples'],5)
+        self.assertEqual(self.download(groups,lambda **kw:self.fail('repaired SAFE redownloaded')),0)
+        self.assertEqual(saved['validation'],bd.managed_collection(collection)['download']['acquisitions'][0]['validation'])
+        # A matching width does not bypass unrelated sensing-time validation.
+        def bad_converter(**kw):
+            staged,g,annotation,metadata,correct=self.width_fixture(kw['work_dir'])
+            annotation.write_bytes(annotation.read_bytes().replace(b'08:02:39',b'08:02:38'))
+            from lxml import etree as ET
+            tree=ET.parse(str(staged/'manifest.safe'))
+            stream=tree.find('.//byteStream')
+            stream.set('size',str(annotation.stat().st_size))
+            stream.find('checksum').text=hashlib.md5(annotation.read_bytes()).hexdigest()
+            tree.write(str(staged/'manifest.safe'))
+            return staged
+        # Use a fresh destination to force reconstruction rather than reuse.
+        other=self.root/'other'
+        with patch('burst2safe.auth.check_earthdata_credentials',return_value='netrc'):
+            self.assertEqual(bd.download(self.request,copy.deepcopy(groups),other,bad_converter),1)
+        self.assertFalse((other/'safe'/group['id']).exists())
 
     def test_failures_continue_and_incomplete_collections_refused(self):
         groups,_=self.plan([product(),product(day=14,mission='B',orbit_number=9164)])

@@ -226,6 +226,13 @@ Collections contain `download_manifest.json`, visible completed SAFEs beneath
 validate XML, complex TIFF dimensions/readability and required helper annotations
 before publishing a complete acquisition directory. The manifest records
 granules/parents, coverage, context, checksums, package versions and group status.
+For the known `burst2safe` mixed-slice width issue, the downloader repairs an
+inherited `numberOfSamples` only when retained source annotations prove a
+one-sample width difference and the complex TIFF already matches the larger
+`samplesPerBurst` width. It updates the SAFE manifest checksum/size and records
+the repair under the acquisition's `validation.annotation_repairs`. Image samples
+are unchanged; all other dimension errors remain failures and full validation
+still runs before publication.
 Rerunning the same request verifies checksums and reuses unchanged files;
 incomplete/corrupt groups are retried and independent groups continue after a
 failure. Resume checkpoints preserve completed acquisition records even when
