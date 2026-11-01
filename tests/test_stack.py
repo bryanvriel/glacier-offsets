@@ -224,7 +224,11 @@ class StackPlanningTests(unittest.TestCase):
                 '--dem',str(self.root/'dem.tif'),'--burst-id','burst','--polarization','HH',
                 '--output',str(output),'--relative-paths']), 0)
         generated = load_stack_config(output)
-        self.assertEqual(generated, cfg)
+        expected = deepcopy(cfg)
+        expected['stack']['verification_workers'] = 4
+        expected['stack']['swath_correction'] = {
+            'enabled': False, 'calibration': None, 'calibration_sha256': None, 'pairs_directory': None}
+        self.assertEqual(generated, expected)
         for bad in [{'pairing': {'neighbors':0}}, {'reference_date':'20200101'},
                     {'pairing':{'max_separation_days':float('inf')}}, {'pairing':None}, {'unexpected':True}]:
             document = yaml.safe_load(self.path.read_text())
@@ -232,6 +236,69 @@ class StackPlanningTests(unittest.TestCase):
             child.write_text(yaml.safe_dump(document))
             with self.assertRaises(ValueError):
                 load_stack_config(child)
+
+    def test_initialized_yaml_has_full_defaults_and_is_consumed_by_all_commands(self):
+        from osgeo import gdal
+        from pyproj import CRS
+        dem=self.root/'dem.tif'
+        ds=gdal.GetDriverByName('GTiff').Create(str(dem),10,10,1,gdal.GDT_Float32)
+        ds.SetProjection(CRS.from_epsg(3031).to_wkt());ds=None
+        for relative in (False,True):
+            with self.subTest(relative=relative):
+                output=self.root/'configs'/f'generated-{relative}.yaml'
+                args=['stack','init','--safe-dir',str(self.safe),'--orbit-dir',str(self.orbits),
+                      '--dem',str(dem),'--burst-id','burst','--polarization','HH',
+                      '--output',str(output),'--output-directory',str(self.root/'run')]
+                if relative:args.append('--relative-paths')
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(main(args),0)
+                document=yaml.safe_load(output.read_text())
+                self.assertNotIn('extends',document)
+                defaults=load_defaults()
+                self.assertTrue(set(defaults)<=set(document))
+                for section in ('matching','storage','gross_offsets','burst_merge','packaging'):
+                    self.assertEqual(document[section],defaults[section])
+                self.assertEqual(document['geocoding'],defaults['geocoding']|{'epsg':3031})
+                self.assertEqual(document['stack']['verification_workers'],4)
+                self.assertFalse(document['stack']['swath_correction']['enabled'])
+                self.assertEqual(document['stack']['processing'],'isce3')
+                self.assertEqual(document['stack']['pairing']['max_separation_days'],12)
+                self.assertEqual(Path(document['output']['directory']).is_absolute(),not relative)
+                resolved=load_stack_config(output)
+                self.assertEqual(resolved['output']['directory'],str(self.root/'run'))
+                # The generated values remain pinned when the packaged defaults change.
+                changed=deepcopy(defaults)
+                changed['matching']['window']=[128,512]
+                changed['geocoding']['spacing_m']=400
+                changed['storage']['keep_merged_slcs']=True
+                with patch('glacier_offsets.stack_config.load_defaults',return_value=changed):
+                    self.assertEqual(load_stack_config(output),resolved)
+                # Plan uses real synthetic scene discovery; native validation and
+                # execution boundaries are mocked to avoid processing imagery.
+                with contextlib.redirect_stdout(io.StringIO()), \
+                     patch('glacier_offsets.stack_cli.validate_stack',return_value='cpu') as validate, \
+                     patch('glacier_offsets.stack_workflow.execute_stack',return_value=0) as run:
+                    self.assertEqual(main(['stack','plan',str(output)]),0)
+                    self.assertEqual(main(['stack','validate',str(output)]),0)
+                    self.assertEqual(main(['stack','run',str(output)]),0)
+                self.assertEqual(validate.call_args.args[0],resolved)
+                run.assert_called_once_with(resolved,'run',force=False)
+                self.assertFalse((self.root/'run').exists())
+
+    def test_yaml_relative_scratch_directory_and_generated_path_roundtrip(self):
+        from glacier_offsets.stack_initialization import main as initialize
+        scratch=self.root/'scratch';scratch.mkdir()
+        cfg=deepcopy(self.cfg)
+        cfg['storage']['scratch_directory']=str(scratch)
+        output=self.root/'configs'/'generated.yaml'
+        with patch('glacier_offsets.stack_initialization.make_stack_config',return_value=cfg), \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(initialize(['--safe-dir',str(self.safe),'--orbit-dir',str(self.orbits),
+                '--dem',str(self.root/'dem.tif'),'--burst-id','burst','--polarization','HH',
+                '--output',str(output),'--relative-paths']),0)
+        document=yaml.safe_load(output.read_text())
+        self.assertEqual(document['storage']['scratch_directory'],'../scratch')
+        self.assertEqual(load_stack_config(output)['storage']['scratch_directory'],str(scratch))
 
     def test_plan_and_validate_cli_do_not_hash_or_write(self):
         with patch('glacier_offsets.products.checksum', side_effect=AssertionError('hashed SAFE')), \

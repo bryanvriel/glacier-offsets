@@ -611,6 +611,19 @@ OMP_NUM_THREADS=4 glacier-offsets stack run configs/stack.generated.yaml --backe
 ```
 
 `python tools/init_stack_config.py` accepts the same initialization options.
+Stack initialization writes all resolved production settings into the YAML,
+including matching values, storage and ISCE2 runtime options, geocoding,
+packaging, pairing, verification workers and disabled swath-correction settings.
+It writes a complete configuration rather than compact `extends: defaults`
+overrides, so existing values stay explicit when packaged defaults change.
+The generated file can be passed directly to `plan`, `validate` and `run`.
+Absolute paths are the default; `--relative-paths` makes declared paths relative
+to the output YAML, including a configured `storage.scratch_directory`.
+Runtime product directories (`geometry`, dated `acquisitions`, dated `pairs`,
+and `packages`) are derived from `output.directory` and described in the YAML
+header. Null optional paths keep their automatic behavior; initialization does
+not create processing directories. Pair initialization still writes compact
+overrides.
 
 List processing stages or inspect completion without running them:
 

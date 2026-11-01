@@ -5,9 +5,19 @@ from pathlib import Path
 import sys
 import yaml
 
-from .config import PATH_FIELDS, config_overrides, load_defaults, merge_config
+from .config import PATH_FIELDS, load_defaults, merge_config
 from .stack import plan_stack
-from .stack_config import STACK_DEFAULTS, validate_stack_config
+from .stack_config import STACK_DEFAULTS, validate_stack_config, verification_workers
+from .swath_correction_config import settings as correction_settings
+
+
+CONFIG_HEADER = '''# Complete stack settings, ready for stack plan, validate and run.
+# Matching arrays are [azimuth, range]. Null values retain automatic behavior.
+# Runtime directories are derived from output.directory:
+#   geometry/, acquisitions/<date>/, pairs/<earlier>_<later>/, packages/
+# storage.scratch_directory: null keeps temporary matching inputs with the pair.
+# Null matching.isce2 runtime paths use the current interpreter/environment.
+'''
 
 
 def make_stack_config(safe_directory, orbit_directory, dem, output_directory, polarization,
@@ -99,7 +109,11 @@ def main(argv=None):
         kwargs['safe_directory'] = kwargs.pop('safe_dir')
         kwargs['orbit_directory'] = kwargs.pop('orbit_dir')
         cfg = make_stack_config(**kwargs)
-        document = config_overrides(cfg)
+        # Expand operational defaults as well as the shared scientific settings.
+        # Pair initialization deliberately continues to write compact overrides.
+        document = merge_config(cfg, {'stack': {
+            'verification_workers': verification_workers(cfg),
+            'swath_correction': correction_settings(cfg)}})
         if args.relative_paths:
             for field in PATH_FIELDS:
                 section = document
@@ -109,7 +123,8 @@ def main(argv=None):
                     section[field[-1]] = os.path.relpath(section[field[-1]], output.parent)
         output.parent.mkdir(parents=True, exist_ok=True)
         with output.open('w' if args.force else 'x') as stream:
-            yaml.safe_dump({'extends': 'defaults'} | document, stream, sort_keys=False)
+            stream.write(CONFIG_HEADER)
+            yaml.safe_dump(document, stream, sort_keys=False)
     except (ValueError, RuntimeError, OSError, ImportError) as exc:
         parser.error(str(exc))
     print(f'Wrote {output}')
