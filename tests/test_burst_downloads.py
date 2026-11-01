@@ -411,6 +411,24 @@ class BurstDownloads(unittest.TestCase):
                 self.download(groups)
             path.unlink()
 
+    def test_preparation_preserves_aliases_to_collection_root_and_safe_directory(self):
+        groups,_=self.plan([product()])
+        self.assertEqual(self.download(groups),0)
+        # Alias names deliberately differ from their physical target names.
+        for name,target in (('linked-scenes',self.root/'collection/safe'),
+                            ('safe',self.root/'collection')):
+            with self.subTest(alias=name):
+                alias=self.root/name;alias.symlink_to(target,target_is_directory=True)
+                output=self.root/('prepared-'+name)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(main(['prepare-inputs',str(alias),'-o',str(output),
+                                           '--recursive','--skip-orbit','--skip-dem']),0)
+                saved=json.loads((output/'manifest.json').read_text())
+                expected=alias if name=='linked-scenes' else alias/'safe'
+                self.assertEqual(saved['safe_directory'],str(expected))
+                self.assertEqual(saved['count'],1)
+                self.assertTrue(saved['scenes'][0]['safe'].startswith(str(expected)+'/'))
+
     def test_invalid_safe_tiff_xml_and_helpers(self):
         groups,_=self.plan([product()]);group=groups[0]
         safe=synthetic_safe(self.root,group,self.request)

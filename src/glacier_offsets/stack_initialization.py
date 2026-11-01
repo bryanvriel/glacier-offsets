@@ -9,6 +9,7 @@ from .config import PATH_FIELDS, load_defaults, merge_config
 from .stack import plan_stack
 from .stack_config import STACK_DEFAULTS, validate_stack_config, verification_workers
 from .swath_correction_config import settings as correction_settings
+from .paths import absolute_path
 
 
 CONFIG_HEADER = '''# Complete stack settings, ready for stack plan, validate and run.
@@ -30,7 +31,7 @@ def make_stack_config(safe_directory, orbit_directory, dem, output_directory, po
         raise ValueError('aoi_layer requires aoi')
     from osgeo import gdal
     from pyproj import CRS
-    dem = Path(dem).expanduser().resolve(strict=True)
+    dem = absolute_path(dem, strict=True)
     gdal.UseExceptions()
     ds = gdal.Open(str(dem))
     if not ds.GetProjection():
@@ -39,18 +40,18 @@ def make_stack_config(safe_directory, orbit_directory, dem, output_directory, po
         epsg = CRS.from_wkt(ds.GetProjection()).to_epsg()
     cfg = merge_config(load_defaults(), {
         'stack': merge_config(STACK_DEFAULTS, {
-            'safe_directory': str(Path(safe_directory).expanduser().resolve()),
-            'orbit_directory': str(Path(orbit_directory).expanduser().resolve()),
+            'safe_directory': str(absolute_path(safe_directory)),
+            'orbit_directory': str(absolute_path(orbit_directory)),
             'start_date': start_date, 'end_date': end_date, 'reference_date': reference_date,
             'pairing': {'neighbors': neighbors, 'max_separation_days': max_separation_days,
-                        'pairs_file': str(Path(pairs_file).expanduser().resolve()) if pairs_file else None}}),
+                        'pairs_file': str(absolute_path(pairs_file)) if pairs_file else None}}),
         'inputs': {'dem': str(dem), 'polarization': polarization, 'burst_id': burst_id},
-        'output': {'directory': str(Path(output_directory).expanduser().resolve())},
+        'output': {'directory': str(absolute_path(output_directory))},
         'geocoding': {'epsg': epsg}})
     if spacing_m is not None:
         cfg['geocoding']['spacing_m'] = spacing_m
     if aoi is not None or bbox is not None:
-        cfg['aoi'] = {'path': str(Path(aoi).expanduser().resolve())} if aoi else {'bbox': bbox}
+        cfg['aoi'] = {'path': str(absolute_path(aoi))} if aoi else {'bbox': bbox}
         if aoi_layer:
             cfg['aoi']['layer'] = aoi_layer
     cfg = validate_stack_config(cfg)
@@ -92,7 +93,7 @@ def main(argv=None):
     parser.add_argument('--relative-paths', action='store_true')
     parser.add_argument('--force', action='store_true')
     args = parser.parse_args(argv)
-    output = args.output.expanduser().resolve()
+    output = absolute_path(args.output)
     if output.exists() and not args.force:
         parser.error(f'{output} already exists; use --force to replace it')
     try:

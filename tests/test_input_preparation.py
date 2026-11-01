@@ -366,6 +366,37 @@ class PreparationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'shared DEM'):
             prepared_paths(path)
 
+    def test_prepared_manifest_and_overrides_preserve_symlink_paths(self):
+        project=self.root/'project';project.mkdir()
+        (project/'data').symlink_to(self.root,target_is_directory=True)
+        handoff=self.root/'handoff';handoff.mkdir()
+        m={'method':'s1-input-preparation-v1','status':'complete','failed_steps':0,'scenes':[{'status':'ok'}],
+           'safe_directory':'../safe','orbit_directory':'orbits','dem':'dem/one.tif'}
+        (handoff/'manifest.json').write_text(json.dumps(m))
+        path=project/'data/handoff/manifest.json'
+        self.assertEqual(prepared_paths(path),tuple(map(str,(
+            project/'data/safe',project/'data/handoff/orbits',project/'data/handoff/dem/one.tif'))))
+        with contextlib.chdir(project):
+            self.assertEqual(prepared_paths(path,'data/safe','data/orbits','data/dem.tif'),
+                             tuple(str(project/'data'/p) for p in ('safe','orbits','dem.tif')))
+
+    def test_preparation_writes_logical_paths_for_stack_handoff(self):
+        project=self.root/'project';project.mkdir()
+        (project/'data').symlink_to(self.root,target_is_directory=True)
+        with contextlib.chdir(project),self.downloader(), \
+             patch.object(prep,'generate_rema',side_effect=self.generator), \
+             contextlib.redirect_stdout(self.stream):
+            self.assertEqual(main(['prepare-inputs','data/safe','-o','data/prepared',
+                                   '--padding-km','0']),0)
+        path=project/'data/prepared/manifest.json'
+        manifest=json.loads(path.read_text())
+        self.assertEqual(manifest['input'],str(project/'data/safe'))
+        self.assertEqual(manifest['scenes'][0]['safe'],str(project/'data/safe/scene.zip'))
+        self.assertEqual(manifest['orbit_directory'],str(project/'data/prepared/orbits'))
+        self.assertEqual(prepared_paths(path),(
+            str(project/'data/safe'),str(project/'data/prepared/orbits'),manifest['dem']))
+        self.assertTrue(manifest['dem'].startswith(str(project/'data/prepared/dem')+'/'))
+
     def test_fail_fast_does_not_download_dem_after_orbit_failure(self):
         with self.downloader(lambda **kw: (_ for _ in ()).throw(RuntimeError('offline'))), \
              patch.object(prep,'generate_rema',side_effect=AssertionError('downloaded DEM after failure')), \

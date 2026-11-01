@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 import yaml
 from glacier_offsets.initialization import make_pair_config
 from glacier_offsets.config import PATH_FIELDS, config_overrides, load_defaults
+from glacier_offsets.paths import absolute_path
 
 
 def main(argv=None):
@@ -32,7 +33,7 @@ def main(argv=None):
     parser.add_argument('--force', action='store_true', help='Replace an existing generated YAML')
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-    output = args.output.expanduser().resolve()
+    output = absolute_path(args.output)
     if output.exists() and not args.force:
         parser.error(f'{output} already exists; choose another --output or use --force')
     try:

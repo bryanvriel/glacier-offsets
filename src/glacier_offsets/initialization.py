@@ -13,6 +13,7 @@ import xml.etree.ElementTree as ET
 from zipfile import BadZipFile, ZipFile
 
 from .config import load_defaults, merge_config
+from .paths import absolute_path
 
 # Matches installed s1-reader's ANX-selection margin and interpolation padding.
 ORBIT_START_MARGIN_SECONDS = (12 * 86400 / 175) + 60
@@ -46,7 +47,7 @@ class SceneMetadata:
 
 def read_scene(path):
     """Read only manifest.safe, from one unpacked SAFE or one local ZIP."""
-    path = Path(path).expanduser().resolve(strict=True)
+    path = absolute_path(path, strict=True)
     try:
         if path.is_dir():
             root = local_xml((path / 'manifest.safe').read_bytes())
@@ -104,7 +105,7 @@ def read_precise_orbit(path):
     if stop <= start or len(times) < 4 or any(b <= a for a, b in zip(times, times[1:])):
         raise ValueError('Orbit validity and state-vector times must increase')
     created = header.findtext('Source/Creation_Date')
-    return PreciseOrbit(Path(path).resolve(), mission, start, stop, times[0], times[-1],
+    return PreciseOrbit(absolute_path(path), mission, start, stop, times[0], times[-1],
                         utc_time(created) if created else datetime.min,
                         int(header.findtext('File_Version', '0')))
 
@@ -112,7 +113,7 @@ def read_precise_orbit(path):
 class OrbitCatalog:
     """Index a local orbit directory once; resolve each scene independently."""
     def __init__(self, directory):
-        directory = Path(directory).expanduser().resolve(strict=True)
+        directory = absolute_path(directory, strict=True)
         if not directory.is_dir():
             raise ValueError('Orbit directory must be a directory')
         self.orbits = []
@@ -155,7 +156,7 @@ def order_pair(scenes, max_separation_days=None):
     if len(scenes) != 2:
         raise ValueError('Pair initialization requires exactly two acquisitions')
     reference, secondary = sorted(scenes, key=lambda s: s.start)
-    if reference.path == secondary.path or secondary.start <= reference.start:
+    if reference.path.resolve() == secondary.path.resolve() or secondary.start <= reference.start:
         raise ValueError('Pair must contain two distinct acquisitions with increasing sensing times')
     if (reference.relative_orbit, reference.direction) != (secondary.relative_orbit, secondary.direction):
         raise ValueError('Acquisitions must share a relative orbit and orbit direction')
@@ -186,7 +187,7 @@ def make_pair_config(safes, dem, orbit_directory, output_directory=None, polariz
         raise ValueError(f'Polarization {polarization} is not present in both acquisitions')
     catalog = OrbitCatalog(orbit_directory)
     orbits = [catalog.resolve(scene) for scene in [reference, secondary]]
-    dem = Path(dem).expanduser().resolve(strict=True)
+    dem = absolute_path(dem, strict=True)
     from osgeo import gdal
     from pyproj import CRS
     from .geocode import validate_geocoding
@@ -213,7 +214,7 @@ def make_pair_config(safes, dem, orbit_directory, output_directory=None, polariz
         'inputs': {'reference_safe': str(reference.path), 'secondary_safe': str(secondary.path),
                    'reference_orbit': str(orbits[0].path), 'secondary_orbit': str(orbits[1].path),
                    'dem': str(dem), 'polarization': polarization},
-        'output': {'directory': str(Path(output_directory).expanduser().resolve())},
+        'output': {'directory': str(absolute_path(output_directory))},
         'geocoding': geocoding,
     })
     if burst_id:
@@ -221,7 +222,7 @@ def make_pair_config(safes, dem, orbit_directory, output_directory=None, polariz
         from .inputs import select_pair
         select_pair(cfg)  # Metadata-only validation, never coregistration/matching.
     if aoi is not None or bbox is not None:
-        cfg['aoi'] = {'path': str(Path(aoi).expanduser().resolve())} if aoi is not None else {'bbox': bbox}
+        cfg['aoi'] = {'path': str(absolute_path(aoi))} if aoi is not None else {'bbox': bbox}
         if aoi_layer is not None:
             cfg['aoi']['layer'] = aoi_layer
         from .aoi import select_aoi

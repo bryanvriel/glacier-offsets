@@ -35,6 +35,7 @@ import zipfile
 from .initialization import OrbitCatalog, read_scene, ORBIT_START_MARGIN_SECONDS
 from .products import checksum, write_json
 from .stack import scan_safes
+from .paths import absolute_path
 
 AUX_API = "https://sar-mpc.eu/api/v1/"
 AUX_SITE = "https://sar-mpc.eu/"
@@ -103,10 +104,10 @@ def find_safes(path: Path, recursive: bool = False) -> tuple[list[Path], list[di
         problem = zip_problem(path)
         if problem:
             raise ValueError(f"Invalid SAFE ZIP: {path}: {problem}")
-        return [path.resolve()], []
+        return [absolute_path(path)], []
     if path.name.lower().endswith(".safe"):
         product_info(path)
-        return [path.resolve()], []
+        return [absolute_path(path)], []
 
     candidates = scan_safes(path, recursive=recursive)
     # Prefer extracted SAFE directories to duplicate ZIPs with same scene name.
@@ -119,9 +120,9 @@ def find_safes(path: Path, recursive: bool = False) -> tuple[list[Path], list[di
         if p.is_file():
             problem = zip_problem(p)
             if problem:
-                invalid.append({"path": str(p.resolve()), "reason": problem})
+                invalid.append({"path": str(absolute_path(p)), "reason": problem})
                 continue
-        selected[key] = p.resolve()
+        selected[key] = absolute_path(p)
     return sorted(selected.values()), invalid
 
 
@@ -685,10 +686,13 @@ def get_dem(bounds: list[float], folder: Path, args: argparse.Namespace) -> str:
 
 
 def prepare(args: argparse.Namespace) -> int:
-    input_path = args.safe.expanduser().resolve()
+    input_path = absolute_path(args.safe)
     from .burst_downloads import managed_collection
     download_provenance = managed_collection(input_path)
-    scan_path = Path(download_provenance['safe_directory']) if download_provenance else input_path
+    scan_path = input_path
+    if (download_provenance and
+            input_path.resolve() != Path(download_provenance['safe_directory']).resolve()):
+        scan_path = input_path/'safe'
     if download_provenance and not args.recursive:
         raise ValueError('Managed burst collections require recursive preparation')
     safes, invalid_zips = find_safes(scan_path, args.recursive)
@@ -700,7 +704,7 @@ def prepare(args: argparse.Namespace) -> int:
             raise ValueError(f"No usable SAFE products; {len(invalid_zips)} invalid ZIP(s). "
                              "Check warnings above and re-download those scenes.")
         raise ValueError("No Sentinel-1 SLC .SAFE directories or .SAFE.zip archives found")
-    root = args.output.expanduser().resolve()
+    root = absolute_path(args.output)
     orbit_dir, aux_dir, dem_dir = [root / n for n in ("orbits", "aux", "dem")]
     for folder in (root, orbit_dir, aux_dir, dem_dir):
         folder.mkdir(parents=True, exist_ok=True)

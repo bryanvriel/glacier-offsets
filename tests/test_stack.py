@@ -300,6 +300,42 @@ class StackPlanningTests(unittest.TestCase):
         self.assertEqual(document['storage']['scratch_directory'],'../scratch')
         self.assertEqual(load_stack_config(output)['storage']['scratch_directory'],str(scratch))
 
+    def test_init_preserves_linked_inputs_outputs_and_yaml_directory(self):
+        from osgeo import gdal
+        from pyproj import CRS
+        dem=self.root/'dem.tif'
+        ds=gdal.GetDriverByName('GTiff').Create(str(dem),10,10,1,gdal.GDT_Float32)
+        ds.SetProjection(CRS.from_epsg(3031).to_wkt());ds=None
+        project=self.root/'project';project.mkdir()
+        (project/'data').symlink_to(self.root,target_is_directory=True)
+        (self.root/'config_store').mkdir()
+        (project/'configs').symlink_to(self.root/'config_store',target_is_directory=True)
+        (self.root/'run_store').mkdir()
+        (project/'work').symlink_to(self.root/'run_store',target_is_directory=True)
+        def inventory(safe,orbit,pol,swaths):
+            return self.bursts(Path(safe).resolve(),Path(orbit).resolve(),pol,swaths)
+        with contextlib.chdir(project),patch('glacier_offsets.stack.inventory',side_effect=inventory):
+            for relative in (False,True):
+                with self.subTest(relative=relative):
+                    output=project/'configs'/f'stack-{relative}.yaml'
+                    args=['stack','init','--safe-dir','data/safe','--orbit-dir','data/orbits',
+                          '--dem','data/dem.tif','--burst-id','burst','--polarization','HH',
+                          '--output',f'configs/stack-{relative}.yaml','--output-directory','work/stack']
+                    if relative:args.append('--relative-paths')
+                    with contextlib.redirect_stdout(io.StringIO()):self.assertEqual(main(args),0)
+                    document=yaml.safe_load(output.read_text())
+                    prefix='../data' if relative else str(project/'data')
+                    self.assertEqual(document['inputs']['dem'],prefix+'/dem.tif')
+                    self.assertEqual(document['stack']['safe_directory'],prefix+'/safe')
+                    self.assertEqual(document['stack']['orbit_directory'],prefix+'/orbits')
+                    self.assertEqual(document['output']['directory'],
+                                     '../work/stack' if relative else str(project/'work/stack'))
+                    cfg=load_stack_config(output)
+                    self.assertEqual(cfg['inputs']['dem'],str(project/'data/dem.tif'))
+                    self.assertEqual(cfg['output']['directory'],str(project/'work/stack'))
+                    self.assertEqual(len(plan_stack(cfg).acquisitions),3)
+        self.assertFalse((project/'work/stack').exists())
+
     def test_plan_and_validate_cli_do_not_hash_or_write(self):
         with patch('glacier_offsets.products.checksum', side_effect=AssertionError('hashed SAFE')), \
              contextlib.redirect_stdout(io.StringIO()) as output:

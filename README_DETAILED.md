@@ -256,9 +256,23 @@ Reconstructed SAFEs can contain overlapping geolocation records at internal
 burst joins. During inventory, KML export and COMPASS processing, these records
 are interpreted in memory: for a repeated line/pixel, use the record nearest
 the following burst's annotated start. Normalization requires an assembled
-product, a regular burst-boundary grid, timestamps within 1.1 azimuth samples,
-and coordinates within two ground azimuth pixels. Conflicting records and
-invalid resulting footprints still fail validation. Downloaded XML and imagery
+product, a regular burst-boundary grid and timestamps within 1.1 azimuth samples.
+Coordinates normally must agree within two ground azimuth pixels. Larger
+differences can arise when source slices use different nominal reference-height
+surfaces. With an orbit available, the reader checks the zero-Doppler/range
+equations, requires each adjacent complete row to fit one reference height
+(at most 1 m height spread), and requires every boundary fragment to match one
+of those two surfaces within 1 m. Reference heights must lie within the annotated
+grid's height envelope (including zero), with a two-azimuth-pixel allowance;
+zero-Doppler residuals must also be within two azimuth pixels. Only complete,
+matching range-sample rows qualify. The reader retains a complete following-source
+row when available, otherwise a complete preceding-source row. It copies that
+entire row without averaging, interpolation or coordinate changes. The logged
+reference heights describe nominal footprint surfaces, not measured ice height.
+Without an orbit, large conflicts still fail (supply `--orbit-dir` or `--orbit`
+for KML export). Conflicting records and invalid resulting footprints still fail
+validation. This affects approximate discovery footprints and centers only;
+precise-orbit/DEM coregistration and radar metadata are unchanged. Downloaded XML and imagery
 remain unchanged; existing collections do not need downloading or preparation
 again for this correction. Regenerate saved stack plans to update coverage.
 
@@ -392,6 +406,19 @@ matching:
 Mappings merge recursively; lists such as window/stride/subswaths replace the whole list. Absolute parent paths and further parent/child layers are supported. Cycles, missing parents and malformed inheritance raise clear errors. `extends: defaults` selects the packaged default file without a filesystem-relative path; the initializer writes this portable form, and omitting `extends` also inherits the packaged defaults for compatibility with earlier YAMLs. `extends` is removed from the resolved processing configuration. If the example YAML is copied to another directory, adjust its `extends` path or use `extends: defaults`.
 
 Local paths may be absolute or relative to the directory of the YAML that declares them, regardless of where you run the command. This applies to SAFE files/directories, orbit files, the DEM, `output.directory`, and `gross_offsets.velocity.vx.path` / `vy.path`. Inherited paths remain relative to their parent YAML; a child override is relative to the child YAML. `~` expands to the current user's home directory. For a YAML in `configs/`, `../data/...` and `../work/...` refer to the project's `data/` and `work/` directories. Keep that layout when syncing between machines. Input paths must exist; the output directory may be created during processing. `load_config()` returns absolute paths for downstream processing.
+
+Configuration loading, pair/stack initialization and preparation handoffs preserve
+symbolic-link paths. For example, if `/project/data` links to an external drive,
+an input remains `/project/data/evans` (or `../data/evans` in a YAML under
+`/project/configs`) instead of being rewritten to `/Volumes/...`. Relative paths
+use the YAML's visible location, including when the YAML or its directory is a
+symlink; parent YAMLs retain their own visible locations. Home and dot components
+are normalized without following links. Input existence checks still follow the
+links, and internal identity/ownership checks may use physical paths. Previously
+saved physical paths are not automatically mapped back to symlinks; regenerate
+the configuration or supply the desired alias explicitly. For `stack init
+--prepared-inputs`, explicit `--safe-dir`, `--orbit-dir` and `--dem` override older
+manifest paths.
 
 All maintained pair YAMLs now inherit from the shared file. Changing a default affects pairs that have not explicitly overridden it. Existing result files are not rewritten on edit; processing identities use resolved settings when stages are next run. Archived validation configs/results retain their as-run parameters. The initializer writes only overrides, including an explicit EPSG inferred from the DEM; it does not duplicate matching defaults or a default map spacing. To freeze a configuration for archival reproducibility, save the resolved config from `load_config()` rather than a live inheritance document.
 
