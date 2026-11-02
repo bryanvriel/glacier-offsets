@@ -4,6 +4,7 @@ import importlib.util
 import io
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 from zipfile import ZipFile
@@ -103,6 +104,32 @@ class InitializationTests(unittest.TestCase):
             wrong = read_scene(scene(d/'wrong.zip', self.time+timedelta(days=12), track=39))
             with self.assertRaisesRegex(ValueError, 'relative orbit'):
                 order_pair([a, wrong])
+
+    def test_orbit_catalog_checks_files_concurrently_and_keeps_selection(self):
+        from glacier_offsets.initialization import read_precise_orbit
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder).resolve()
+            orbit(root/'a.EOF',self.time-timedelta(hours=8))
+            newest=orbit(root/'b.EOF',self.time-timedelta(hours=8),created='2022-01-01T00:00:00')
+            s=read_scene(scene(root/'scene.zip',self.time))
+            barrier=threading.Barrier(2,timeout=5)
+            threads=set()
+            def read(path):
+                threads.add(threading.get_ident())
+                barrier.wait()
+                return read_precise_orbit(path)
+            with patch('glacier_offsets.initialization.read_precise_orbit',side_effect=read) as checked:
+                parallel=OrbitCatalog(root,workers=2)
+            self.assertEqual(checked.call_count,2)
+            self.assertEqual(len(threads),2)
+            sequential=OrbitCatalog(root,workers=1)
+            self.assertEqual(parallel.orbits,sequential.orbits)
+            self.assertEqual(parallel.resolve(s).path,newest)
+            (root/'bad.EOF').write_text('bad XML')
+            self.assertEqual(OrbitCatalog(root,workers=2).orbits,sequential.orbits)
+            for invalid in (0,-1,True,1.5):
+                with self.assertRaisesRegex(ValueError,'positive integer'):
+                    OrbitCatalog(root,workers=invalid)
 
     def test_orbit_catalog_ignores_hidden_files_and_directories(self):
         from glacier_offsets.initialization import read_precise_orbit

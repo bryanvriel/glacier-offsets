@@ -309,6 +309,13 @@ the same XML, state-vector, interpolation-margin and latest-creation selection
 rules as processing. RESORB fallback is rejected. Downloads are staged and
 validated before cached precise files are replaced. `--refresh-orbits` queries
 the provider even if the cache is valid.
+Cached orbit XML/state-vector checks run in parallel with four workers by
+default. Set `--orbit-workers 8` to change this, or `--orbit-workers 1` for
+sequential verification. Preparation indexes the orbit directory once per
+invocation and reuses that validated catalog across scenes; newly downloaded
+orbits are validated before promotion and added to the same catalog. Downloads,
+auxiliary preparation and scene reports remain sequential, with the same orbit
+selection, failure and refresh behavior. `--skip-orbit` skips the catalog checks.
 
 DEM defaults are one shared GeoTIFF, a 5 km footprint buffer, and automatic
 source selection: REMA for buffered bounds entirely south of 55°S, otherwise

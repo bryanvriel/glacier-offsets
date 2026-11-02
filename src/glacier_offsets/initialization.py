@@ -4,6 +4,7 @@ Scene readers and the orbit catalog are independent of pair generation so a
 future stack planner can index each acquisition once and reuse this logic.
 """
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import logging
 import math
@@ -112,24 +113,44 @@ def read_precise_orbit(path):
 
 class OrbitCatalog:
     """Index a local orbit directory once; resolve each scene independently."""
-    def __init__(self, directory):
+    def __init__(self, directory, *, workers=1, allow_empty=False):
+        if type(workers) is not int or workers < 1:
+            raise ValueError('Orbit verification workers must be a positive integer')
         directory = absolute_path(directory, strict=True)
         if not directory.is_dir():
             raise ValueError('Orbit directory must be a directory')
         self.orbits = []
+        paths = []
         for root, directories, files in os.walk(directory):
             directories[:] = sorted(name for name in directories if not name.startswith('.'))
             for name in sorted(files):
                 path = Path(root) / name
                 if name.startswith('.') or not path.is_file() or path.suffix.lower() not in {'.eof', '.xml'}:
                     continue
-                try:
-                    orbit = read_precise_orbit(path)
-                    if orbit is not None:
-                        self.orbits.append(orbit)
-                except (ET.ParseError, OSError, AttributeError, TypeError, ValueError) as exc:
-                    logging.warning('Ignoring invalid orbit candidate %s: %s', path, exc)
-        if not self.orbits:
+                paths.append(path)
+
+        def read(path):
+            try:
+                return read_precise_orbit(path), None
+            except (ET.ParseError, OSError, AttributeError, TypeError, ValueError) as exc:
+                return None, str(exc)
+
+        def collect(results):
+            for path, (orbit, error) in zip(paths, results):
+                if error is not None:
+                    logging.warning('Ignoring invalid orbit candidate %s: %s', path, error)
+                if orbit is not None:
+                    self.orbits.append(orbit)
+
+        if workers == 1 or len(paths) < 2:
+            collect(map(read, paths))
+        else:
+            pool = ThreadPoolExecutor(max_workers=min(workers, len(paths)))
+            try:
+                collect(pool.map(read, paths))
+            finally:
+                pool.shutdown(wait=True, cancel_futures=True)
+        if not self.orbits and not allow_empty:
             raise ValueError(f'No valid precise AUX_POEORB files in {directory}')
 
     def resolve(self, scene):

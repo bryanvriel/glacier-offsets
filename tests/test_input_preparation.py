@@ -124,6 +124,54 @@ class PreparationTests(unittest.TestCase):
             prep.get_orbit(self.path,folder,False,True)
         self.assertEqual(found.read_bytes(),before)
 
+    def test_resume_indexes_cached_orbits_once_for_all_scenes(self):
+        from glacier_offsets.initialization import read_precise_orbit
+        scene(self.safe/'second.zip',self.time+timedelta(hours=6))
+        folder=self.output/'orbits';folder.mkdir(parents=True)
+        orbit(folder/'old.EOF',self.time-timedelta(hours=3),created='2021-01-01T00:00:00')
+        newest=orbit(folder/'new.EOF',self.time-timedelta(hours=3),created='2022-01-01T00:00:00')
+        (folder/'corrupt.EOF').write_text('bad XML')
+        manifests=[]
+        for workers in (1,4):
+            with self.downloader(lambda **kw:self.fail('downloaded despite valid cache')), \
+                 patch('glacier_offsets.initialization.read_precise_orbit',wraps=read_precise_orbit) as read, \
+                 contextlib.redirect_stdout(self.stream):
+                self.assertEqual(main(['prepare-inputs',str(self.safe),'-o',str(self.output),
+                                       '--skip-dem','--orbit-workers',str(workers)]),0)
+            self.assertEqual(read.call_count,3)  # Each file once, not once per scene.
+            saved=json.loads((self.output/'manifest.json').read_text())
+            self.assertEqual([s['orbit'] for s in saved['scenes']],[str(newest)]*2)
+            self.assertTrue(all(s['orbit_sha256']==checksum(newest) for s in saved['scenes']))
+            manifests.append(saved)
+        self.assertEqual(manifests[0],manifests[1])
+
+    def test_newly_downloaded_orbit_is_reused_by_shared_catalog_and_failed_refresh_is_safe(self):
+        from glacier_offsets.initialization import OrbitCatalog
+        folder=self.root/'orbits';folder.mkdir()
+        catalog=OrbitCatalog(folder,workers=4,allow_empty=True)
+        with self.downloader(),contextlib.redirect_stdout(self.stream):
+            found=Path(prep.get_orbit(self.path,folder,False,False,catalog))
+        before=found.read_bytes()
+        with self.downloader(lambda **kw:self.fail('redownloaded a just-validated orbit')), \
+             patch('glacier_offsets.initialization.read_precise_orbit',side_effect=AssertionError('reparsed cache')), \
+             contextlib.redirect_stdout(self.stream):
+            self.assertEqual(Path(prep.get_orbit(self.path,folder,False,False,catalog)),found)
+        def invalid(**kwargs):
+            orbit(Path(kwargs['save_dir'])/found.name,self.time-timedelta(hours=3),kind='AUX_RESORB')
+        with self.downloader(invalid),self.assertRaises(ValueError):
+            prep.get_orbit(self.path,folder,False,True,catalog)
+        self.assertEqual(found.read_bytes(),before)
+        self.assertEqual(catalog.resolve(read_scene(self.path)).path,found)
+
+    def test_orbit_workers_validation_and_skipping_checks(self):
+        for invalid in ('0','-1','1.5'):
+            with contextlib.redirect_stderr(self.stream),self.assertRaises(SystemExit):
+                main(['prepare-inputs',str(self.safe),'--orbit-workers',invalid])
+        with patch.object(prep,'OrbitCatalog',side_effect=AssertionError('checked skipped orbit')), \
+             contextlib.redirect_stdout(self.stream):
+            self.assertEqual(main(['prepare-inputs',str(self.safe),'-o',str(self.output),
+                                   '--skip-orbit','--skip-dem']),0)
+
     def test_older_downloader_uses_padded_query_and_still_requires_one_strict_orbit(self):
         package=ModuleType('eof');package.__path__=[];module=ModuleType('eof.download')
         seen=[]

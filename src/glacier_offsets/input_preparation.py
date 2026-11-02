@@ -17,6 +17,7 @@ not the OpenTopography globaldem API (which does not serve REMA rasters).
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import hashlib
 import inspect
 import json
@@ -232,18 +233,18 @@ def pad_bounds(bounds: list[float], km: float) -> list[float]:
     return result
 
 
-def cached_orbit(folder: Path, scene) -> Path | None:
+def cached_orbit(folder: Path, scene, catalog=None) -> Path | None:
     """Use precisely the same XML, state-vector and time checks as processing."""
     try:
-        return OrbitCatalog(folder).resolve(scene).path
+        return (OrbitCatalog(folder) if catalog is None else catalog).resolve(scene).path
     except ValueError:
         return None
 
 
-def get_orbit(safe: Path, folder: Path, use_cdse: bool, refresh: bool) -> str:
+def get_orbit(safe: Path, folder: Path, use_cdse: bool, refresh: bool, catalog=None) -> str:
     scene = read_scene(safe)
     folder.mkdir(parents=True, exist_ok=True)
-    old = cached_orbit(folder, scene)
+    old = cached_orbit(folder, scene, catalog)
     if old is not None and not refresh:
         print(f"    Reusing orbit: {old.name}")
         return str(old)
@@ -268,8 +269,12 @@ def get_orbit(safe: Path, folder: Path, use_cdse: bool, refresh: bool) -> str:
         downloaded.resolve(scene)  # Reject RESORB fallback or insufficient coverage.
         for orbit in downloaded.orbits:
             if orbit.mission == scene.mission:
-                orbit.path.replace(folder/orbit.path.name)
-    found = OrbitCatalog(folder).resolve(scene).path
+                destination = absolute_path(folder/orbit.path.name)
+                orbit.path.replace(destination)
+                if catalog is not None:
+                    catalog.orbits[:] = [o for o in catalog.orbits if o.path != destination]
+                    catalog.orbits.append(replace(orbit, path=destination))
+    found = (OrbitCatalog(folder) if catalog is None else catalog).resolve(scene).path
     print(f"    Orbit: {found.name}")
     return str(found)
 
@@ -720,6 +725,12 @@ def prepare(args: argparse.Namespace) -> int:
             raise
     print(f"Found {len(safes)} usable SAFE product(s) in {args.safe}; "
           f"skipped {len(invalid_zips)} invalid ZIP(s)")
+    orbit_catalog = None
+    if not args.skip_orbit:
+        workers = getattr(args, 'orbit_workers', 4)
+        print(f'Checking cached precise orbits with {workers} verification worker(s)...', flush=True)
+        orbit_catalog = OrbitCatalog(orbit_dir, workers=workers, allow_empty=True)
+        print(f'  Indexed {len(orbit_catalog.orbits)} valid precise orbit file(s).', flush=True)
     counts = Counter(scene_stem(p) for p in safes)
     reports = {}
     for p in safes:
@@ -750,7 +761,7 @@ def prepare(args: argparse.Namespace) -> int:
             info["instrument_configuration_id"] = icid
             print(f"  {mission} {start.isoformat()} IPF={ipf or '?'} ICID={icid}")
             if not args.skip_orbit:
-                info["orbit"] = get_orbit(safe,orbit_dir,args.use_cdse,args.refresh_orbits)
+                info["orbit"] = get_orbit(safe,orbit_dir,args.use_cdse,args.refresh_orbits,orbit_catalog)
                 info['orbit_sha256'] = checksum(info['orbit'])
             kinds = aux_selection(ipf, args.aux)
             if args.aux == "auto" and ipf is None:
@@ -856,11 +867,15 @@ def main(argv=None) -> int:
                         help="Auto downloads AUX_CAL only for historical IPF 002.36 scenes")
     parser.add_argument("--use-cdse", action="store_true", help="Use Copernicus Data Space for orbit downloads")
     parser.add_argument("--refresh-orbits", action="store_true", help="Query/download precise orbits even with a valid cache")
+    parser.add_argument('--orbit-workers', type=int, default=4,
+                        help='Parallel cached-orbit verification workers (default 4; 1 for sequential checks)')
     parser.add_argument("--skip-orbit", action="store_true")
     parser.add_argument("--skip-dem", action="store_true")
     parser.add_argument("--overwrite-dem", action="store_true")
     parser.add_argument("--fail-fast", action="store_true", help="Stop scene processing on first error")
     args = parser.parse_args(argv)
+    if args.orbit_workers < 1:
+        parser.error('orbit-workers must be a positive integer')
     if args.isce2_xml and args.dem_format!='ENVI':
         parser.error('--isce2-xml requires --dem-format ENVI')
     if (not math.isfinite(args.min_dem_valid_fraction) or not 0 < args.min_dem_valid_fraction <= 1
