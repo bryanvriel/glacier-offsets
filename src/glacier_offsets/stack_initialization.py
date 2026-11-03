@@ -14,6 +14,7 @@ from .paths import absolute_path
 
 CONFIG_HEADER = '''# Complete stack settings, ready for stack plan, validate and run.
 # Matching arrays are [azimuth, range]. Null values retain automatic behavior.
+# Production matching: ISCE3 CPU, deramp 0, complex range oversampling 2x.
 # Runtime directories are derived from output.directory:
 #   geometry/, acquisitions/<date>/, pairs/<earlier>_<later>/, packages/
 # storage.scratch_directory: null keeps temporary matching inputs with the pair.
@@ -46,6 +47,8 @@ def make_stack_config(safe_directory, orbit_directory, dem, output_directory, po
             'pairing': {'neighbors': neighbors, 'max_separation_days': max_separation_days,
                         'pairs_file': str(absolute_path(pairs_file)) if pairs_file else None}}),
         'inputs': {'dem': str(dem), 'polarization': polarization, 'burst_id': burst_id},
+        'matching': {'engine': 'isce3', 'backend': 'cpu', 'deramp': 0,
+                     'range_oversampling': 2},
         'output': {'directory': str(absolute_path(output_directory))},
         'geocoding': {'epsg': epsg}})
     if spacing_m is not None:

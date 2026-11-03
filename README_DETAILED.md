@@ -648,6 +648,8 @@ OMP_NUM_THREADS=4 glacier-offsets stack run configs/stack.generated.yaml --backe
 Stack initialization writes all resolved production settings into the YAML,
 including matching values, storage and ISCE2 runtime options, geocoding,
 packaging, pairing, verification workers and disabled swath-correction settings.
+New stack YAMLs explicitly select production range-2x matching:
+`matching.engine: isce3`, `backend: cpu`, `deramp: 0` and `range_oversampling: 2`.
 It writes a complete configuration rather than compact `extends: defaults`
 overrides, so existing values stay explicit when packaged defaults change.
 The generated file can be passed directly to `plan`, `validate` and `run`.
@@ -1138,8 +1140,10 @@ internal SSD), range-2x took 164 s against 93 s for `deramp: 0`: 33 s of
 preparation and 131 s of matching. Peak worker RSS was 1.2 GB against 0.85 GB. Segment metadata and `native_parameters.range_oversampling`
 record the treatment.
 
-The default, 1, keeps existing matching identities, so completed pairs are not
-rematched. Setting 2 changes the matching identity: rerunning a root rematches
+The shared default remains 1 for configurations that omit this setting;
+`stack init` explicitly writes 2 for new production stacks. Existing YAMLs are
+not rewritten. Changing an existing stack to 2 changes the matching identity:
+rerunning a root rematches
 its pairs, reusing geometry, aligned bursts and assemblies. Standalone pair/AOI
 matching, GPU matching and the ISCE2 engine reject `range_oversampling: 2`.
 

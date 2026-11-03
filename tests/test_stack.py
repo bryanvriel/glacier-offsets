@@ -256,8 +256,10 @@ class StackPlanningTests(unittest.TestCase):
                 self.assertNotIn('extends',document)
                 defaults=load_defaults()
                 self.assertTrue(set(defaults)<=set(document))
-                for section in ('matching','storage','gross_offsets','burst_merge','packaging'):
+                for section in ('storage','gross_offsets','burst_merge','packaging'):
                     self.assertEqual(document[section],defaults[section])
+                self.assertEqual(document['matching'],defaults['matching']|{
+                    'engine':'isce3','backend':'cpu','deramp':0,'range_oversampling':2})
                 self.assertEqual(document['geocoding'],defaults['geocoding']|{'epsg':3031})
                 self.assertEqual(document['stack']['verification_workers'],4)
                 self.assertFalse(document['stack']['swath_correction']['enabled'])
@@ -269,6 +271,9 @@ class StackPlanningTests(unittest.TestCase):
                 # The generated values remain pinned when the packaged defaults change.
                 changed=deepcopy(defaults)
                 changed['matching']['window']=[128,512]
+                changed['matching']['range_oversampling']=1
+                changed['matching']['deramp']=1
+                changed['matching']['backend']='auto'
                 changed['geocoding']['spacing_m']=400
                 changed['storage']['keep_merged_slcs']=True
                 with patch('glacier_offsets.stack_config.load_defaults',return_value=changed):
@@ -359,6 +364,9 @@ class StackPlanningTests(unittest.TestCase):
         ds.SetProjection(CRS.from_epsg(3031).to_wkt())
         ds.SetGeoTransform((-4000000,80000,0,4000000,0,-80000)); ds=None
         cfg=make_stack_config(self.safe,self.orbits,dem,self.root/'output','HH',burst_id='burst',epsg=3031)
+        self.assertEqual(cfg['matching']['range_oversampling'],2)
+        self.assertEqual(cfg['matching']['deramp'],0)
+        self.assertEqual(cfg['matching']['backend'],'cpu')
         plan=plan_stack(cfg)
         for acquisition in plan.acquisitions:
             native=acquisition.bursts['burst'].native
