@@ -50,6 +50,14 @@ class StackPlanningTests(unittest.TestCase):
         native = SimpleNamespace(border=[box(-100, -76, -98, -74)])
         return [Burst('burst', 2, self.times[i], native)]
 
+    def test_explicit_matching_recovery_cli_and_force_rejection(self):
+        with patch('glacier_offsets.stack_workflow.execute_stack', return_value=0) as execute:
+            self.assertEqual(main(['stack', 'recover-matching', str(self.path)]), 0)
+            execute.assert_called_once_with(self.cfg, 'recover-matching', force=False)
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+            main(['stack', 'recover-matching', str(self.path), '--force'])
+        self.assertEqual(error.exception.code, 2)
+
     def test_verification_workers_default_inheritance_and_validation(self):
         self.assertEqual(verification_workers(self.cfg), 4)
         self.assertNotIn('verification_workers', self.cfg['stack'])

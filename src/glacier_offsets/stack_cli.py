@@ -20,7 +20,7 @@ def main(argv=None):
         epilog=('Use glacier-offsets stack init --help to initialize a stack YAML. '
                 'Use glacier-offsets stack calibrate-swaths --help to estimate a swath calibration.'))
     parser.add_argument('command', choices=['stages', 'status', 'plan', 'validate', 'coregister', 'assemble', 'match',
-                                           'geocode', 'diagnostics', 'correct-swaths', 'calibrate-swaths', 'run', 'rebuild-layout', 'export-reference'])
+                                           'geocode', 'diagnostics', 'recover-matching', 'correct-swaths', 'calibrate-swaths', 'run', 'rebuild-layout', 'export-reference'])
     parser.add_argument('config', nargs='?')
     parser.add_argument('--output', help='New reference bundle directory (export-reference only)')
     parser.add_argument('--backend', choices=['cpu', 'gpu', 'auto'])
@@ -44,6 +44,8 @@ def main(argv=None):
         parser.error('rebuild-layout preserves coregistration; --force is not supported')
     if args.command in ('stages', 'status') and args.force:
         parser.error('--force is not supported by read-only inspection commands')
+    if args.command == 'recover-matching' and args.force:
+        parser.error('recover-matching does not accept --force')
     if args.command == 'stages':
         for stage, description in STAGE_DESCRIPTIONS.items():
             print(f'{stage:12} {description}')

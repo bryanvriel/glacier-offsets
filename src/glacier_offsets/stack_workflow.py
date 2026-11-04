@@ -73,8 +73,10 @@ def _execute_stack(cfg, command, force=False):
     isce2 = enabled(cfg)
     invocation_started = time.perf_counter()
     check_workers = verification_workers(cfg)
-    if command not in (*STAGES, 'run'):
+    if command not in (*STAGES, 'run', 'recover-matching'):
         raise ValueError(f'Unknown stack stage {command}')
+    if command == 'recover-matching' and force:
+        raise ValueError('recover-matching does not accept --force')
     root = Path(cfg['output']['directory'])
     checksums = ChecksumCache()
     retain_slcs = keep_merged_slcs(cfg)
@@ -405,7 +407,10 @@ def _execute_stack(cfg, command, force=False):
             effective.pop('aoi', None)
             effective['inputs']['burst_id'] = 'stack'
             active_stage = 'match'
-            if command in ('match', 'run'):
+            if command == 'recover-matching':
+                from .stack_matching_recovery import recover_matching
+                recover_matching(effective, directory, manifest)
+            elif command in ('match', 'run'):
                 current = (not force and manifest.get('match_identity') == identity(matching_specification(effective, manifest))
                            and (directory/'radar/offsets.h5').is_file())
                 if not current:

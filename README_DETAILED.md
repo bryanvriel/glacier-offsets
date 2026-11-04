@@ -821,6 +821,17 @@ reference, needs no merged SLC during matching, geocoding or diagnostics. Its
 acquisition manifest may remain `aligned` without an `assembly_identity`.
 Explicit `stack assemble` still materializes all selected dates.
 
+If a failed invocation cleared matching completion markers while leaving
+published offsets intact, explicitly check and recover them with
+`glacier-offsets stack recover-matching CONFIG.yaml`. This runs the normal
+reference/acquisition checks, compares each saved HDF5 matching specification
+and input provenance with the current pair, and reads the required datasets
+before restoring a missing marker. Incompatible or incomplete results are
+rejected. It does not launch Ampcor or rewrite offsets. Recovery records the
+offset checksum and clears downstream completion markers; follow it with
+`stack geocode` and `stack diagnostics`. Recovery is deliberately opt-in and
+does not accept `--force`; ordinary restarts retain their invalidation behavior.
+
 Cleanup is journaled in the manifests so `stack status`, restart and downstream
 commands recognize intentional release. Small amplitude previews preserve
 diagnostic plots after cleanup. Matching changes or new pairs automatically

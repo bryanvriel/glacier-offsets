@@ -294,5 +294,50 @@ class StackStorageTests(unittest.TestCase):
             self.assertEqual(execute_stack(self.cfg, 'geocode'), 0)
             self.assertEqual(execute_stack(self.cfg, 'diagnostics'), 0)
 
+    def test_explicit_recovery_checks_native_offsets_and_preserves_their_bytes(self):
+        from glacier_offsets.stack_workflow import invalidate_pair
+        from glacier_offsets.stack_matching_recovery import recover_matching
+        import h5py
+        self.f.plan = self.f.make_plan(self.f.acquisitions[:2])
+        self.assertEqual(execute_stack(self.cfg, 'run'), 0)
+        pair = next(self.root.glob('pairs/*/manifest.json')).parent
+        path = pair/'radar/offsets.h5'
+        original = path.read_bytes(), path.stat().st_mtime_ns
+        matched = read_manifest(pair)['match_identity']
+        invalidate_pair(pair, 'match')
+        effective = deepcopy(self.cfg)
+        effective.pop('aoi', None); effective['inputs']['burst_id'] = 'stack'
+        changed = deepcopy(effective); changed['matching']['oversampling'] *= 2
+        with self.assertRaisesRegex(ValueError, 'Saved offsets differ'):
+            recover_matching(changed, pair, read_manifest(pair))
+        self.assertNotIn('match_identity', read_manifest(pair))
+        with h5py.File(path, 'a') as h:
+            metadata = json.loads(h.attrs['metadata_json'])
+            metadata['input_provenance'] = {}
+            h.attrs['metadata_json'] = json.dumps(metadata)
+        with self.assertRaisesRegex(ValueError, 'input_provenance differs'):
+            recover_matching(effective, pair, read_manifest(pair))
+        path.write_bytes(original[0])
+        # A complete fingerprint alone cannot rescue an incomplete HDF5 product.
+        with h5py.File(path, 'a') as h:
+            del h['seam_search_known']
+        with self.assertRaises(KeyError):
+            recover_matching(effective, pair, read_manifest(pair))
+        self.assertNotIn('match_identity', read_manifest(pair))
+        path.write_bytes(original[0])
+        before = path.read_bytes(), path.stat().st_mtime_ns
+        with patch('glacier_offsets.stack_workflow.match', side_effect=AssertionError('rematched')):
+            # Recovery is opt-in; an ordinary geocode still rejects a missing marker.
+            self.assertEqual(execute_stack(self.cfg, 'geocode'), 1)
+            self.assertEqual(execute_stack(self.cfg, 'recover-matching'), 0)
+            result = read_manifest(pair)
+            self.assertEqual(result['match_identity'], matched)
+            self.assertEqual(result['stages']['match'], 'complete')
+            self.assertNotIn('geocode_identity', result)
+            self.assertEqual(result['matching_recovery']['offsets_sha256'], checksum(path))
+            self.assertEqual(execute_stack(self.cfg, 'geocode'), 0)
+            self.assertEqual(execute_stack(self.cfg, 'diagnostics'), 0)
+        self.assertEqual((path.read_bytes(), path.stat().st_mtime_ns), before)
+
 
 if __name__ == '__main__':unittest.main()
