@@ -1,0 +1,44 @@
+# Separate from stack creation and the earlier regional velocity-recovery YAML.
+# Paths are relative to this file. Reuse prepared RA observations, body tides,
+# and frozen yearly noise weights; no stack rebuilding or tide recomputation.
+version: 1
+input_directory: ../.runtime/velocity-recovery-larsen/maps-2017-2018
+output: ../.runtime/velocity-recovery-larsen/maps-2017-2018-configured
+# Optional diagnostic inputs, copied into the output for portable follow-up.
+regions: ../.runtime/velocity-recovery-larsen/regions.reviewed.json
+regional_support: ../.runtime/velocity-recovery-larsen/2017-order-set/fitted-support.npz
+
+# Pair acceptance, applied independently within each year. Residuals are from
+# acquisition-purged secular/order predictions, in displacement metres.
+screening:
+  remove_mixed_windows: false  # true restores the previous seam exclusion.
+  min_peak: 0.08
+  max_range_residual_m: 2.0
+  max_azimuth_residual_m: 5.0
+
+# All counts refer to retained displacement pairs, not individual RA channels.
+# Full design rank/estimability remains required regardless of these settings.
+coverage:
+  min_pairs_per_year: 20
+  min_pairs_total: 40
+  min_span_days: 540
+  phase_bins: 12
+  min_phase_bins: 9
+  min_pairs_standard: 40  # Additional map-coverage requirement, not a fit weight.
+
+# Diagnostic sandwich covariance only; this does not change GLS coefficients.
+uncertainty:
+  cluster_days: 30
+
+# Export filters only. All supported estimable fits remain in the NetCDF/HDF5.
+display:
+  min_speed_m_day: 0.1
+  min_abs_azimuth_projection: 0.3
+  max_direction_change_deg: 20
+  diagnostic_min_abs_azimuth_projection: 0.5
+  max_phase_sigma_deg: 30
+  min_amplitude_over_sigma: 2
+  proxy_min_speed_m_day: 0.5
+
+execution:
+  batch_size: 512
