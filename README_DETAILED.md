@@ -816,6 +816,10 @@ required SLCs. The planned pair graph determines first and last use: each merged
 date is assembled once and kept through all its planned matching consumers.
 Geometry and per-burst sources remain available for geocoding,
 reassembly, new pairs and stack extension without repeating COMPASS.
+An acquisition with no active pair, including a date used only as the geometry
+reference, needs no merged SLC during matching, geocoding or diagnostics. Its
+acquisition manifest may remain `aligned` without an `assembly_identity`.
+Explicit `stack assemble` still materializes all selected dates.
 
 Cleanup is journaled in the manifests so `stack status`, restart and downstream
 commands recognize intentional release. Small amplitude previews preserve

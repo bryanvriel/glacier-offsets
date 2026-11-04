@@ -191,6 +191,7 @@ def _execute_stack(cfg, command, force=False):
         return 2 if preflight else 1
 
     dates = {}
+    pair_dates = {day for pair in plan.pairs for day in pair}
     reference_bursts = {b.id: b for b in plan.bursts}
     with acquisition_checks(cfg, plan.acquisitions, frame, hashes, checksums) as checking:
         for acquisition, checked in checking:
@@ -220,9 +221,13 @@ def _execute_stack(cfg, command, force=False):
                 aligned = prepare_date(cfg, plan, acquisition, frame, specification,
                                        force=force and command in ('coregister', 'run'),
                                        process=command in ('coregister', 'run'), checksums=checksums)
-                if isce2:
-                    dates[acquisition.date] = aligned
-                if command != 'coregister' and not isce2:
+                dates[acquisition.date] = aligned
+                # Lazy run/match can leave an unpaired date (including the
+                # geometry reference) aligned without ever creating a merged
+                # SLC. Downstream stages have no assembly dependency on it.
+                needs_assembly = command != 'coregister' and (
+                    acquisition.date in pair_dates or command == 'assemble')
+                if needs_assembly and not isce2:
                     assembly_identity = identity(assembly_specification(frame, aligned))
                     logical = verified(aligned, 'assembly_identity', assembly_identity, allow_released=True, checksums=checksums)
                     if not logical:
@@ -246,7 +251,7 @@ def _execute_stack(cfg, command, force=False):
                                  valid_samples=dates[acquisition.date].get('valid_samples'),
                                  coverage_fraction=dates[acquisition.date].get('coverage_fraction'))
                 entry.update(status='complete', alignment_identity=aligned['alignment_identity'],
-                             completed_stage='coregister' if command == 'coregister' or isce2 else 'assemble')
+                             completed_stage='assemble' if needs_assembly and not isce2 else 'coregister')
             except KeyboardInterrupt:
                 invalidate_pairs(acquisition.date)
                 entry['status'] = 'interrupted'
@@ -291,7 +296,7 @@ def _execute_stack(cfg, command, force=False):
                     invalidate_pairs(day)
                     if command == 'coregister':
                         invalidate_date(root/'acquisitions'/day)
-                if command == 'coregister':
+                if command == 'coregister' or (day not in pair_dates and command != 'assemble'):
                     continue
                 need_slc = command == 'assemble' or (retain_slcs and command in ('match', 'run'))
                 if logical and not (force and command in ('assemble', 'run')) and not need_slc:

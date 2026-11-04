@@ -187,6 +187,44 @@ class StackStorageTests(unittest.TestCase):
             self.assertGreater(report['product_checksum_cache_hits'], 0)
         self.assertEqual(len(self.calls), 3)
 
+    def test_unpaired_reference_stays_aligned_during_downstream_stages(self):
+        self.check_unpaired_reference()
+
+    def test_merge_first_unpaired_reference_stays_aligned_during_downstream_stages(self):
+        self.cfg['stack']['processing'] = 'isce3_merge_first'
+        # The synthetic aligner returns TIFFs beside these zero resampling
+        # offsets; merge-first derives secondary validity from those products.
+        from osgeo import gdal
+        grid = self.f.sources[0][1]['coreg']['reference_grid']
+        for name in ('azimuth.off', 'range.off'):
+            ds = gdal.GetDriverByName('GTiff').Create(str(self.f.root/name),
+                grid['width'], grid['length'], 1, gdal.GDT_Float32)
+            ds.GetRasterBand(1).Fill(0); ds = None
+        self.check_unpaired_reference()
+
+    def check_unpaired_reference(self):
+        first, last = self.f.acquisitions[0].date, self.f.acquisitions[-1].date
+        self.f.plan = self.f.make_plan(self.f.acquisitions, links=[(first, last)])
+        orphan = self.root/'acquisitions'/self.f.reference.date
+        with self.mocked_science():
+            self.assertEqual(execute_stack(self.cfg, 'run'), 0)
+        self.assertEqual(read_manifest(orphan)['status'], 'aligned')
+        self.assertNotIn('assembly_identity', read_manifest(orphan))
+        offsets = self.root/'pairs'/f'{first}_{last}'/'radar/offsets.h5'
+        before = checksum(offsets), offsets.stat().st_mtime_ns
+        with self.mocked_science(), patch('glacier_offsets.stack_workflow.assemble_date',
+                side_effect=AssertionError('No merged SLC is needed')):
+            for command in ('geocode', 'diagnostics', 'match', 'run'):
+                with self.subTest(command=command):
+                    self.assertEqual(execute_stack(self.cfg, command), 0)
+        self.assertEqual((checksum(offsets), offsets.stat().st_mtime_ns), before)
+        self.assertEqual(len(self.calls), 1)
+        self.assertNotIn('assembly_identity', read_manifest(orphan))
+        # Explicit assembly must still materialize every requested acquisition.
+        with self.mocked_science():
+            self.assertEqual(execute_stack(self.cfg, 'assemble'), 0)
+        self.assertTrue((orphan/'slc.tif').is_file())
+
     def test_failed_pair_keeps_required_slcs_and_retry_reuses_other_offsets(self):
         first = '_'.join(self.f.plan.pairs[0])
         original = self.fake_match
