@@ -11,6 +11,7 @@ import tempfile
 import numpy as np
 
 from glacier_offsets.products import ChecksumCache, identity, write_json
+from .swath_pair import select_pair, recorded_pair, names, allocation
 
 METHOD = 'larsen-unspliced-range2x-experiment-v1'
 COHORTS = ('primary', 'native', 'peak03', 'peak05')
@@ -70,6 +71,7 @@ def source_identity():
     root = Path(__file__).resolve().parent
     files = [root/'swath_calibration.py', root/'swath_calibration_export.py', *root.glob('swath_experiment_*.py')]
     files += [root/name for name in ('swath_observations.py', 'swath_overlap_support.py',
+                                    'swath_pair.py',
                                     'swath_physics.py', 'swath_models.py', 'range_oversampling.py',
                                     'ampcor.py', 'fftw_cache.py', 'matching_grid.py', 'geocode.py')]
     hashes = ChecksumCache()
@@ -78,17 +80,18 @@ def source_identity():
 
 def cohorts(data):
     base = data['dual_valid'] & data['burst_interior'] & data['geometry_eligible']
+    low, high = names(recorded_pair(data))
     flags = []
-    for swath in ('iw1', 'iw2'):
+    for swath in (low, high):
         flags.append(((data[f'{swath}_peak'] >= .3) & (data[f'{swath}_snr'] >= 8)) |
                      (data[f'{swath}_snr'] >= 20))
     return {'native': base, 'primary': base & flags[0] & flags[1],
-            'peak03': base & (data['iw1_peak'] >= .3) & (data['iw2_peak'] >= .3),
-            'peak05': base & (data['iw1_peak'] >= .5) & (data['iw2_peak'] >= .5)}
+            'peak03': base & (data[f'{low}_peak'] >= .3) & (data[f'{high}_peak'] >= .3),
+            'peak05': base & (data[f'{low}_peak'] >= .5) & (data[f'{high}_peak'] >= .5)}
 
 
 class Experiment:
-    def __init__(self, config, output, workers=4):
+    def __init__(self, config, output, workers=4, swaths=None):
         from glacier_offsets.stack_config import load_stack_config
         self.config = Path(config).resolve()
         self.cfg = load_stack_config(self.config)
@@ -111,6 +114,9 @@ class Experiment:
         self.frame = read_json(self.stack/'geometry/manifest.json')
         if self.frame.get('status') != 'complete':
             raise ValueError('Pinned reference geometry is incomplete')
+        self.swaths = select_pair(self.frame['sources'], swaths)
+        from .swath_observations import overlap_grid
+        overlap_grid(self.cfg, self.frame, self.swaths)  # Fail before audit or acquisition reads.
         self.inputs.file(self.stack/'stack_manifest.json')
         self.catalog = read_json(self.stack/'stack_manifest.json')
         inventory = sorted((x for x in self.catalog['inventory'] if x.get('eligible')), key=lambda x: x['date'])
@@ -124,13 +130,16 @@ class Experiment:
                      'geometry_identity': self.frame['geometry_identity'],
                      'layout_identity': self.frame['layout_identity'], 'dates': self.dates,
                      'links': self.links, 'source_hashes': self.sources}
+        # Preserve historical IW1/IW2 experiment identities for existing results.
+        if self.swaths != (1, 2):
+            self.spec['swaths'] = list(self.swaths)
         # Geometry/configuration define the experiment; stage-local source hashes
         # invalidate only affected work when implementation changes.
         self.key = identity({k: v for k, v in self.spec.items() if k != 'source_hashes'})
         self.output.mkdir(parents=True, exist_ok=True)
 
     def implementation(self, *names):
-        return {p: digest for p, digest in self.sources.items() if Path(p).name in names}
+        return {p: digest for p, digest in self.sources.items() if Path(p).name in (*names, 'swath_pair.py')}
 
     def checked_report(self, path, complete=True):
         self.inputs.file(path)
@@ -232,7 +241,8 @@ class Experiment:
                   'validation': ['leave_acquisition_out', 'leave_link_out', 'leave_burst_group_out'],
                   'bootstrap': {'draws': 1000, 'seed': 0, 'shared_factors': 'acquisition and source burst'},
                   'primary_selection': 'native-valid, geometry eligible, burst interior; each swath (peak>=.3 & SNR>=8) | SNR>=20',
-                  'preview_allocation': 'IW1=-delta/2, IW2=+delta/2; subtract in original pixels',
+                  'swaths': list(self.swaths),
+                  'preview_allocation': allocation(self.swaths),
                   'preview_spatial_assumption': 'constant relative swath bias outside measured overlap'}
         record['reference_metadata'] = reference_metadata(self.frame, self.catalog)
         write_json(previous, record)

@@ -4,6 +4,7 @@ import json
 import math
 from pathlib import Path
 import re
+from .swath_pair import validate_pair
 
 METHOD = 'spacecraft-swath-azimuth-v1'
 DEFAULTS = {'enabled': False, 'calibration': None, 'calibration_sha256': None,
@@ -63,8 +64,9 @@ def load_calibration(cfg):
             raise ValueError(f'Calibration {key} must be finite')
     if cal['beta_std_px'] < 0 or cal['reference_prf_hz'] <= 0:
         raise ValueError('Calibration uncertainty must be nonnegative and PRF positive')
-    if cal.get('swaths') != [1, 2] or cal.get('allocation') != 'symmetric':
-        raise ValueError('Calibration must describe symmetric IW1/IW2 azimuth allocation')
+    validate_pair(cal.get('swaths', ()))
+    if cal.get('allocation') != 'symmetric':
+        raise ValueError('Calibration must describe symmetric adjacent-swath azimuth allocation')
     scope = cal.get('scope', {})
     if not isinstance(scope, dict) or any(key not in scope for key in (
             'geometry_identity', 'relative_orbit', 'direction', 'polarization',

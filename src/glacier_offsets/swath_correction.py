@@ -1,6 +1,6 @@
 """Optional production spacecraft correction, isolated from native pair products.
 
-Only a pinned relative IW1/IW2 azimuth coefficient is applied. This module never
+Only a pinned relative adjacent-swath azimuth coefficient is applied. This module never
 fits observations, launches native processing, or changes source pair manifests.
 """
 from datetime import datetime, timezone
@@ -24,6 +24,7 @@ from .stack_lock import stack_lock
 from .stack_status import matching_status
 from .swath_correction_config import METHOD, load_calibration, output_root, settings
 from .swath_ownership import pure_swath_footprints
+from .swath_pair import validate_pair, select_pair, allocation
 
 
 def read_json(path):
@@ -33,7 +34,7 @@ def read_json(path):
 def implementation():
     return {name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
             for name in ('swath_correction.py', 'swath_correction_config.py',
-                         'swath_ownership.py', 'geocode.py')}
+                         'swath_ownership.py', 'swath_pair.py', 'geocode.py')}
 
 
 def specification(cfg, manifest, calibration_sha256):
@@ -100,10 +101,11 @@ def current(directory, spec, inputs, checksums):
         return False
 
 
-def correction_arrays(total, owner_swath, pure_swath, eligible, delta, beta_std):
+def correction_arrays(total, owner_swath, pure_swath, eligible, delta, beta_std, *, swaths=(1, 2)):
     """Preserve original units and common motion; unsupported values stay raw."""
-    available = eligible & (pure_swath == owner_swath) & np.isin(pure_swath, [1, 2])
-    bias = np.where(available, np.where(owner_swath == 1, -delta / 2, delta / 2), 0.)
+    low, high = validate_pair(swaths)
+    available = eligible & (pure_swath == owner_swath) & np.isin(pure_swath, (low, high))
+    bias = np.where(available, np.where(owner_swath == low, -delta / 2, delta / 2), 0.)
     corrected = np.asarray(total, dtype='float64') - bias
     sigma = np.where(available, beta_std / 2, 0.)
     return corrected, bias, available, sigma
@@ -112,6 +114,7 @@ def correction_arrays(total, owner_swath, pure_swath, eligible, delta, beta_std)
 def context(cfg, frame, manifest, cal, scenes):
     """Validate applicability against retained metadata, never date alternation."""
     scope = cal['scope']
+    select_pair(frame['sources'], cal['swaths'])
     if frame.get('status') != 'complete' or frame['geometry_identity'] != scope['geometry_identity']:
         raise ValueError('Calibration is pinned to a different reference geometry')
     if identity(frame['specification']) != frame['geometry_identity']:
@@ -221,7 +224,7 @@ def correct_pair(cfg, pair, frame, scenes, cal, cal_hash, checksums, force=False
     if cfg['geocoding']['mask'] == 'quality':
         base &= quality
     corrected, bias, available, sigma = correction_arrays(
-        total, swath, pure, base, delta, abs(contrast) * cal['beta_std_px'])
+        total, swath, pure, base, delta, abs(contrast) * cal['beta_std_px'], swaths=cal['swaths'])
     mixed = base & (pure == 0) & (owner > 0)
     grid = manifest['map_grid']
     x, y = Transformer.from_crs(4326, grid['epsg'], always_xy=True).transform(lon, lat)
@@ -243,7 +246,7 @@ def correct_pair(cfg, pair, frame, scenes, cal, cal_hash, checksums, force=False
     metadata = {'correction_method': METHOD, 'calibration_sha256': cal_hash,
                 'beta_px': cal['beta_px'], 'pair_contrast_px': delta,
                 'axis_sign': 'later-minus-earlier on original stack-reference radar grid',
-                'allocation': 'subtract IW1=-delta/2; IW2=+delta/2',
+                'swaths': cal['swaths'], 'allocation': allocation(cal['swaths']),
                 'unsupported_policy': 'retain raw; see correction_available mask',
                 'spatial_assumption': 'constant relative bias per swath in reference radar pixels',
                 'accuracy': 'relative empirical calibration; common azimuth bias unconstrained',

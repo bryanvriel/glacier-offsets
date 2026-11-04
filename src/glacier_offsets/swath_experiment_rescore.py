@@ -293,7 +293,9 @@ def rescore(experiment, minimum_support=MINIMUM_SUPPORT, draws=1000):
     if experiment.current(out/'record.json', spec):
         return read_json(out/'record.json')
     out.mkdir(parents=True, exist_ok=True)
+    from .swath_pair import recorded_pair
     result = {'method': METHOD, 'post_hoc': True, 'metadata': fit['metadata'], 'cohorts': {},
+        'swaths': list(recorded_pair(experiment.spec)),
         'policy': {'target': 'equal mean of burst-pair group means per link',
             'score': 'loss after averaging; equal total weight per link across repeated folds',
             'support': 'selected windows per complete link, evaluated before folds; no residual or agreement selection',
@@ -432,6 +434,8 @@ def render_report(result):
 
 
 def plot_results(out, result):
+    from .swath_pair import recorded_pair
+    low, high = recorded_pair(result)
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
@@ -458,7 +462,7 @@ def plot_results(out, result):
                 ax.plot([i-.3, i+.3], [prediction, prediction], '--', c=colors[order], linewidth=1)
         ax.axhline(0, color='gray', linewidth=.7)
         ax.set_xticks(range(4), [f'{s[0]}→{s[1]}\n(n={variant["order"][s]["links"]})' for s in ORDERS])
-        ax.set(ylabel='IW2 − IW1 azimuth link mean [original pixels]',
+        ax.set(ylabel=f'IW{high} − IW{low} azimuth link mean [original pixels]',
                title=f'Minimum {variant["minimum_windows"]} selected windows/link')
         ax.grid(axis='y', alpha=.2)
     axes[0].text(.02, .03, 'Hollow: fewer than 20 windows\nSize: selected windows; black bar: order mean\nDashed: descriptive spacecraft fit',

@@ -1,9 +1,10 @@
 """Fixed unspliced overlap ownership and matching-result association."""
 from copy import deepcopy
 import numpy as np
+from .swath_pair import names
 
 
-def burst_interior_mask(sources, line, sample, owners, dual, window, search):
+def burst_interior_mask(sources, line, sample, owners, dual, window, search, *, swaths=(1, 2)):
     """Exclude chip/search footprints crossing an along-track ownership change."""
     start_y=(line-(window[0]-1)/2).astype('int32')-search[0]
     start_x=(sample-(window[1]-1)/2).astype('int32')-search[1]
@@ -14,7 +15,7 @@ def burst_interior_mask(sources, line, sample, owners, dual, window, search):
     y1,x1=int(start_y[dual].max()+height),int(start_x[dual].max()+width)
     within=np.array(dual,copy=True)
     ordered=sorted(sources,key=lambda e:(e['offset'][0],e['burst_id']))
-    for swath in ('iw1','iw2'):
+    for swath in names(swaths):
         raster=np.zeros((y1-y0,x1-x0),'uint16')
         for i,e in enumerate(ordered,1):
             if not e['burst_id'].endswith(swath):continue
@@ -27,13 +28,14 @@ def burst_interior_mask(sources, line, sample, owners, dual, window, search):
     return within
 
 
-def select_views(sources, records, shape):
+def select_views(sources, records, shape, *, swaths=(1, 2)):
     """Freeze source ownership using support alone, before native matching."""
     views={s:{'owner':np.zeros(shape,'int16'),'support':np.zeros(shape,bool),
-        'geometry':np.full((*shape,5,2),np.nan)} for s in ('iw1','iw2')}
+        'geometry':np.full((*shape,5,2),np.nan)} for s in names(swaths)}
     source_numbers={}
     for i,e in enumerate(sorted(sources,key=lambda e:(e['offset'][0],e['burst_id'])),1):
         key=e['burst_id'];source_numbers[i]=key
+        if key[-3:] not in views:continue
         if key not in records:continue
         r=records[key];v=views[key[-3:]];section=np.ix_(r['rows'],r['cols']);take=r['support']
         for field,value in [('owner',np.full(take.shape,i)),('support',take),('geometry',r['geometry'])]:
@@ -49,7 +51,7 @@ def attach_results(selection, records, source_numbers, mode):
         v.update({key:np.zeros(shape,bool) for key in ('valid','finite','search_boundary','native_completed')})
         v.update(total=np.full((*shape,2),np.nan),peak=np.full(shape,np.nan),snr=np.full(shape,np.nan))
     for number,key in source_numbers.items():
-        if key not in records:continue
+        if key not in records or key[-3:] not in views:continue
         r=records[key];result=r['results'].get(mode)
         if result is None:continue
         v=views[key[-3:]];section=np.ix_(r['rows'],r['cols'])

@@ -13,6 +13,7 @@ from glacier_offsets.products import write_json, identity
 from glacier_offsets.stack_status import matching_status
 from glacier_offsets.swath_ownership import pure_swath_footprints
 from glacier_offsets.swath_experiment_io import Inputs, read_json, load_npz, save_npz
+from .swath_pair import recorded_pair, allocation, validate_pair
 
 MAPPING_POLICY = 'production-nearest-retain-raw-unsupported-v1'
 DISPLAY_LIMITS = {'displacement': 5., 'velocity': 5.}
@@ -39,6 +40,7 @@ def write_previews(out, arrays, predictions, uncertainty, metadata, mapper, grid
     metadata = metadata | {'mapping_policy': MAPPING_POLICY,
         'unsupported_policy': 'retain raw observations; correction_available=0',
         'display': 'no overlap outlines, smoothing, filling, or artificial masked strip'}
+    swaths = recorded_pair(metadata)
     products, mapped = [], {}
     for quantity, conversion, units in (('displacement', scale, 'm'), ('velocity', scale/(interval/86400), 'm/day')):
         mapped[f'raw_{quantity}'] = mapper.map(total*conversion)
@@ -46,7 +48,7 @@ def write_previews(out, arrays, predictions, uncertainty, metadata, mapper, grid
         write_geotiff(path, mapped[f'raw_{quantity}'], mapper.transform, grid['epsg'], metadata | {'units': units})
         products.append(path)
         for name, delta in predictions.items():
-            bias = symmetric_bias(delta, owner_swath)
+            bias = symmetric_bias(delta, owner_swath, swaths=swaths)
             corrected, applied = corrected_preview(total, bias, availability[name])
             # Radar correction-only fields remain masked by scientific availability.
             arrays[f'{name}_bias_to_subtract_px'] = np.where(availability[name], bias, np.nan)
@@ -116,8 +118,9 @@ def write_previews(out, arrays, predictions, uncertainty, metadata, mapper, grid
     return products
 
 
-def symmetric_bias(delta, swath):
-    return np.where(np.asarray(swath) == 1, -delta/2, np.where(np.asarray(swath) == 2, delta/2, np.nan))
+def symmetric_bias(delta, swath, *, swaths=(1, 2)):
+    low, high = validate_pair(swaths)
+    return np.where(np.asarray(swath) == low, -delta/2, np.where(np.asarray(swath) == high, delta/2, np.nan))
 
 
 def preview_predictions(primary, pair, missions=None):
@@ -198,7 +201,8 @@ def preview_link(experiment, link, primary):
     lookup = np.array([0]+[int(s[-1]) for s in manifest['assembly']['source_burst_ids']], dtype='uint8')
     owner_swath = lookup[owner]
     cross_swath = (pure == 0) & (owner > 0)
-    availability = {name: base & (pure == owner_swath) & (pure > 0) & np.isfinite(delta)
+    swaths = recorded_pair(experiment.spec)
+    availability = {name: base & (pure == owner_swath) & np.isin(pure, swaths) & np.isfinite(delta)
                     for name, delta in predictions.items()}
     common = np.logical_and.reduce(list(availability.values()))
     x, y = Transformer.from_crs(4326, experiment.cfg['geocoding']['epsg'], always_xy=True).transform(lon, lat)
@@ -218,7 +222,7 @@ def preview_link(experiment, link, primary):
     overlap[np.ix_(ri, ci)] = observed['dual_support']
     arrays['measured_overlap'] = overlap
     metadata = {'experiment_identity': experiment.key, 'base_match_identity': manifest['match_identity'],
-                'axis': 'later-minus-earlier azimuth', 'allocation': 'IW1=-delta/2, IW2=+delta/2; subtract',
+                'axis': 'later-minus-earlier azimuth', 'swaths': list(swaths), 'allocation': allocation(swaths),
                 'spatial_assumption': 'constant relative swath contrast outside measured overlap',
                 'physical_status': 'unvalidated candidate; scalar overlap-mean contrast',
                 'prediction': 'leave-one-link-out empirical; unfitted physical',
@@ -242,6 +246,8 @@ def refresh_preview_link(experiment, link, primary):
     old_inputs = Inputs()
     old_inputs.file(out/'report.json')
     previous = read_json(out/'report.json')
+    if recorded_pair(previous['metadata']) != recorded_pair(experiment.spec):
+        raise ValueError('Retained preview swaths differ from experiment')
     if previous.get('status') != 'complete' or previous.get('identity') != identity(previous['specification']):
         raise ValueError('A complete retained preview is required')
     root = experiment.stack/'pairs'/link['pair']

@@ -8,6 +8,7 @@ from glacier_offsets.products import write_json
 from glacier_offsets.swath_models import evaluate, error_metrics, paired_metrics
 from glacier_offsets.swath_physics import metadata, COMPONENTS
 from glacier_offsets.swath_experiment_io import read_json, load_npz, cohorts, COHORTS
+from .swath_pair import recorded_pair, names
 
 
 def observation_rows(experiment, cohort):
@@ -20,6 +21,10 @@ def observation_rows(experiment, cohort):
             continue
         experiment.checked_report(report)
         data = load_npz(root/'observations.npz')
+        swaths = recorded_pair(data)
+        if swaths != recorded_pair(experiment.spec):
+            raise ValueError('Measurement swaths differ from experiment')
+        low, high = names(swaths)
         mask = cohorts(data)[cohort]
         physical_root = experiment.output/'physics'/link['pair']
         if (physical_root/'predictions.npz').exists():
@@ -27,8 +32,8 @@ def observation_rows(experiment, cohort):
             predictions = load_npz(physical_root/'predictions.npz')
         else:
             predictions = {}
-        difference = data['iw2_total']-data['iw1_total']
-        owner1, owner2 = data['iw1_owner'], data['iw2_owner']
+        difference = data[f'{high}_total']-data[f'{low}_total']
+        owner1, owner2 = data[f'{low}_owner'], data[f'{high}_owner']
         groups = sorted(set(zip(owner1[mask].tolist(), owner2[mask].tolist())))
         counts = {'input_supported': int(data['dual_support'].sum()),
                   'geometry_eligible': int((data['dual_support'] & data['geometry_eligible']).sum()),
@@ -61,13 +66,17 @@ def closure_report(experiment, cohort):
             result[f'{a}_{b}_{c}'] = {'status': 'unavailable'}
             continue
         views = [observations[key] for key in keys]
+        swaths = recorded_pair(experiment.spec)
+        if any(recorded_pair(v) != swaths for v in views):
+            raise ValueError('Closure measurement swaths differ from experiment')
+        low, high = names(swaths)
         mask = np.logical_and.reduce([cohorts(view)[cohort] for view in views])
         for other in views[1:]:
             for key in ('center_line', 'center_sample'):
                 np.testing.assert_array_equal(views[0][key], other[key])
-            for swath in ('iw1', 'iw2'):
+            for swath in (low, high):
                 mask &= views[0][f'{swath}_owner'] == other[f'{swath}_owner']
-        delta = [view['iw2_total']-view['iw1_total'] for view in views]
+        delta = [view[f'{high}_total']-view[f'{low}_total'] for view in views]
         closure = delta[0]+delta[1]-delta[2]
         result[f'{a}_{b}_{c}'] = {'status': 'complete', 'n': int(mask.sum()),
             'azimuth_px': closure[..., 0][mask].tolist(), 'range_px': closure[..., 1][mask].tolist(),
@@ -175,7 +184,8 @@ def plot_comparison(experiment, record):
     physical = np.array([np.mean(r['physical']['combined']) for r in rows])
     axes[0, 0].scatter(x, observed, s=15, label='Observed burst-pair means')
     axes[0, 0].scatter(x, physical, s=15, label='Unfitted physical candidate')
-    axes[0, 0].set(xlabel='Later acquisition index', ylabel='IW2 − IW1 azimuth [px]')
+    low, high = names(recorded_pair(experiment.spec))
+    axes[0, 0].set(xlabel='Later acquisition index', ylabel=f'{high.upper()} − {low.upper()} azimuth [px]')
     axes[0, 0].legend()
     axes[0, 1].scatter(physical, observed, s=15)
     axes[0, 1].set(xlabel='Physical candidate [px]', ylabel='Observed burst-pair mean [px]')
@@ -221,7 +231,8 @@ def cross_validated_summary(record, kind):
 
 def report(experiment):
     root = experiment.output
-    lines = ['# Larsen unspliced range-2x swath experiment', '',
+    low, high = names(recorded_pair(experiment.spec))
+    lines = [f'# {low.upper()}/{high.upper()} unspliced range-2x swath experiment', '',
              f'Production source: `{experiment.stack}` (read only).',
              f'Planned acquisitions: {len(experiment.dates)}; links: {len(experiment.links)}.', '',
              'Physical candidates were generated before fitting the raw-data empirical models.',

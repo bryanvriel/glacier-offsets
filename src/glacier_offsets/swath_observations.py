@@ -16,6 +16,7 @@ from .matching_grid import MatchingGrid, invalid_samples
 from .products import identity, write_json
 from .range_oversampling import ROW_BLOCK, native_parameters, range_worker, resample_range
 from .stack_pairs import matching_template
+from .swath_pair import select_pair, names
 
 
 def prepare_strip(source, output, bounds, workers=1):
@@ -60,10 +61,11 @@ def support_arrays(path, grid):
     return result
 
 
-def overlap_grid(cfg, frame):
+def overlap_grid(cfg, frame, swaths=None):
     """Consecutive subset of production centers with nominal dual-swath support."""
     full = matching_template(cfg, frame)
-    sources = [e for e in frame['sources'] if e['burst_id'].endswith(('_iw1', '_iw2'))]
+    low, high = names(select_pair(frame['sources'], swaths))
+    sources = [e for e in frame['sources'] if e['burst_id'].endswith((low, high))]
     masks = {}
     for e in sources:
         dy, dx = e['offset']
@@ -73,11 +75,12 @@ def overlap_grid(cfg, frame):
             (full.starts_sample[None, :]-dx-full.search[1] >= c) &
             (full.starts_sample[None, :]-dx+full.window[1]+full.search[1] <= d))
     union = {s: np.logical_or.reduce([masks[e['burst_id']] for e in sources if e['burst_id'].endswith(s)])
-             for s in ('iw1', 'iw2')}
-    dual = union['iw1'] & union['iw2']
+             for s in (low, high)}
+    dual = union[low] & union[high]
     rows, cols = np.flatnonzero(dual.any(axis=1)), np.flatnonzero(dual.any(axis=0))
     if not rows.size or not cols.size:
-        raise ValueError('No complete dual-swath chip/search footprint on production centers')
+        raise ValueError(f'No complete dual-swath chip/search footprint on production centers for '
+                         f'{low.upper()}/{high.upper()} (window={list(full.window)}, search={list(full.search)})')
     rows, cols = np.arange(rows[0], rows[-1]+1), np.arange(cols[0], cols[-1]+1)
     grid = MatchingGrid(full.starts_line[rows], full.starts_sample[cols], full.window, full.search, full.stride)
     return grid, sources, {k: v[np.ix_(rows, cols)] & dual[np.ix_(rows, cols)] for k, v in masks.items()}
@@ -114,7 +117,9 @@ def measure_link(experiment, link, prepared_cache, wisdom):
     out = experiment.output/'measurements'/link['pair']
     days = [link['earlier'], link['later']]
     acquisitions = [experiment.verify_acquisition(day) for day in days]
-    grid, sources, masks = overlap_grid(experiment.cfg, experiment.frame)
+    swaths = select_pair(experiment.frame['sources'], getattr(experiment, 'swaths', None))
+    low, high = names(swaths)
+    grid, sources, masks = overlap_grid(experiment.cfg, experiment.frame, swaths)
     specification = {'experiment': experiment.key, 'link': link,
                      'alignments': [a['alignment_identity'] for a in acquisitions],
                      'wisdom_sha256': wisdom['sha256'],
@@ -186,7 +191,7 @@ def measure_link(experiment, link, prepared_cache, wisdom):
                                grid.window, grid.search, grid.stride)
         args = (*paths, out/key/'native', experiment.cfg['matching'], experiment.cfg, 'cpu')
         jobs.append((key, args, {'_grid': cropped, '_valid_input': accepted}))
-    selection, numbers = select_views(sources, records, grid.shape)
+    selection, numbers = select_views(sources, records, grid.shape, swaths=swaths)
     errors = []
     if jobs:
         with _native_executor(min(experiment.workers, len(jobs)), single_threaded=True, wisdom=wisdom) as pool:
@@ -209,16 +214,16 @@ def measure_link(experiment, link, prepared_cache, wisdom):
                     {'status': 'complete', 'effective_parameters': result['effective_parameters']}, [result_file])
                 logging.info('%s %s: %d native-valid', link['pair'], key, int(result['valid'].sum()))
     views = attach_results(selection, records, numbers, 0)
-    dual = selection['iw1']['support'] & selection['iw2']['support']
+    dual = selection[low]['support'] & selection[high]['support']
     interior = burst_interior_mask(sources, yy, xx, {s: v['owner'] for s, v in selection.items()},
-                                   dual, grid.window, grid.search)
-    a, b = selection['iw1']['geometry'], selection['iw2']['geometry']
+                                   dual, grid.window, grid.search, swaths=swaths)
+    a, b = selection[low]['geometry'], selection[high]['geometry']
     _, _, distance = Geod(ellps='WGS84').inv(a[..., 0], a[..., 1], b[..., 0], b[..., 1])
     geometry_eligible = np.isfinite(distance).all(axis=-1) & (distance.max(axis=-1) <= .1)
-    arrays = {'center_line': yy, 'center_sample': xx, 'dual_support': dual,
+    arrays = {'swaths': np.array(swaths), 'center_line': yy, 'center_sample': xx, 'dual_support': dual,
               'burst_interior': interior, 'geometry_eligible': geometry_eligible,
               'geometry_distance_m': distance, 'source_ids': np.array([numbers[i] for i in sorted(numbers)]),
-              'dual_valid': dual & views['iw1']['valid'] & views['iw2']['valid']}
+              'dual_valid': dual & views[low]['valid'] & views[high]['valid']}
     for swath, view in views.items():
         for field in ('owner', 'support', 'valid', 'finite', 'search_boundary', 'native_completed', 'total', 'peak', 'snr'):
             arrays[f'{swath}_{field}'] = view[field]
@@ -244,6 +249,7 @@ def measure_link(experiment, link, prepared_cache, wisdom):
     products.append(observation_file)
     products.extend(out.glob('*/observations.npz'))
     report = {'status': 'incomplete' if errors else 'complete', 'errors': errors,
+              'swaths': list(swaths),
               'counts': {name: int(mask.sum()) for name, mask in cohorts(arrays).items()},
               'dual_support_n': int(dual.sum()), 'source_ids': numbers,
               'geometry_gate_m': .1, 'geometry_max_m': float(np.max(distance[dual])) if dual.any() else None,

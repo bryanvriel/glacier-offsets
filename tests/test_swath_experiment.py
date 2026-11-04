@@ -370,9 +370,15 @@ class InputAndPreviewTests(unittest.TestCase):
 
 class NativeExperimentTests(unittest.TestCase):
     def test_real_measurement_path_without_template_pair_and_resume(self):
+        self.check_measurement((1, 2))
+
+    def test_iw23_measurement_and_resume(self):
+        self.check_measurement((2, 3))
+
+    def check_measurement(self, swaths):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            pair, _ = make_pair(root)
+            pair, _ = make_pair(root, swaths=swaths)
             manifest = json.loads((pair/'manifest.json').read_text())
             cfg = {'matching': manifest['matching']['matching'] | {'range_oversampling': 2},
                    'gross_offsets': {'mode': 'zero'}}
@@ -384,6 +390,7 @@ class NativeExperimentTests(unittest.TestCase):
                 source['coreg']['geometry']['z'] = str(height)
             exp = object.__new__(Experiment)
             exp.key, exp.cfg, exp.frame, exp.workers = 'synthetic', cfg, frame, 2
+            exp.swaths = swaths
             exp.output = root/'experiment'
             exp.stack = root/'stack'
             exp.inputs = Inputs()
@@ -404,7 +411,9 @@ class NativeExperimentTests(unittest.TestCase):
             result_path = exp.output/'measurements'/link['pair']/'observations.npz'
             obs = load_npz(result_path)
             self.assertTrue(obs['dual_support'].all())
-            np.testing.assert_allclose(obs['iw2_total']-obs['iw1_total'], 0, atol=1.e-10)
+            np.testing.assert_array_equal(obs['swaths'], swaths)
+            self.assertTrue(cohorts(obs)['native'].any())
+            np.testing.assert_allclose(obs[f'iw{swaths[1]}_total']-obs[f'iw{swaths[0]}_total'], 0, atol=1.e-10)
             stamp = result_path.stat().st_mtime_ns
             second = measure_link(exp, link, {}, wisdom)
             self.assertEqual(second['identity'], first['identity'])

@@ -1,4 +1,4 @@
-"""Estimate and export a relative IW1/IW2 spacecraft azimuth calibration."""
+"""Estimate and export a relative adjacent-swath spacecraft azimuth calibration."""
 import argparse
 from contextlib import ExitStack
 import json
@@ -25,6 +25,8 @@ def _parser(legacy):
         parser.add_argument('--stage', choices=STAGES, default='run')
         parser.add_argument('--output', required=True, type=Path, help='Separate calibration results directory')
     parser.add_argument('--workers', type=int, choices=range(1, 5), default=4)
+    parser.add_argument('--swaths', type=int, nargs=2, metavar=('LOW', 'HIGH'),
+                        help='Adjacent pair: 1 2 or 2 3; inferred for a two-swath reference')
     parser.add_argument('--pilot-only', action='store_true', help='Measure only the first three-date triangle; no export')
     parser.add_argument('--retained-previews', action='store_true',
                         help='Refresh verified retained previews without SLC reads (previews stage only)')
@@ -46,7 +48,7 @@ def _run(args, *, legacy=False):
                 locks.enter_context(stack_lock(cfg['output']['directory']))
             locks.enter_context(result_lock(args.output))
             return export_calibration(args.output, args.calibration_output, cfg=cfg, force=args.force)
-    experiment = Experiment(args.config, args.output, args.workers)
+    experiment = Experiment(args.config, args.output, args.workers, swaths=args.swaths)
     with experiment.lock():
         if args.stage != 'rescore' and not args.retained_previews:
             experiment.plan()
@@ -94,6 +96,14 @@ def _run(args, *, legacy=False):
 def main(argv=None, *, legacy=False):
     parser = _parser(legacy)
     args = parser.parse_args(argv)
+    if args.swaths is not None:
+        from .swath_pair import validate_pair
+        try:
+            validate_pair(args.swaths)
+        except ValueError as exc:
+            parser.error(str(exc))
+        if args.stage == 'export':
+            parser.error('Export uses the swaths recorded in the results; omit --swaths')
     if args.config is None and args.stage != 'export':
         parser.error('CONFIG.yaml is required except for --stage export')
     if args.retained_previews and args.stage != 'previews':

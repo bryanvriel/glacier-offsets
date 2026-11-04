@@ -1239,6 +1239,26 @@ glacier-offsets stack calibrate-swaths /path/to/configs/stack.yaml \
 ```
 
 The results directory must be outside the production stack and its ancestors.
+The estimator supports IW1/IW2 and IW2/IW3. It infers the pair when the pinned
+reference contains exactly two adjacent swaths. For a three-swath reference,
+select one overlap explicitly with `--swaths 1 2` or `--swaths 2 3`.
+For example, an Evans IW2/IW3 calibration can be run with:
+
+```bash
+glacier-offsets stack calibrate-swaths configs/stack.evans.yaml \
+  --output work/swath_calibration_iw23 --workers 4 --swaths 2 3
+```
+
+The contrast is higher-numbered minus lower-numbered swath (IW3 minus IW2 for
+Evans); its coefficient multiplies `S1B_later - S1B_earlier`. Symmetric allocation
+subtracts `-delta/2` from the lower swath and `+delta/2` from the higher swath.
+The selected pair is carried through measurements, physics, previews, export
+and correction application. Other swaths and unsupported footprints retain raw
+values. Legacy results without recorded swaths describe IW1/IW2 only. Use a new
+calibration output directory when changing the pair, including after an older
+IW1/IW2-only implementation failed on an IW2/IW3 stack. No production rematching
+is needed for this selection change.
+
 The estimator uses eligible acquisitions in the saved stack catalog and builds
 links between each date and its next two neighbors. It needs completed reference
 geometry, retained aligned per-burst SLCs and alignment products, SAFE inputs,

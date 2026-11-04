@@ -22,7 +22,7 @@ from glacier_offsets.swath_experiment_io import METHOD, Inputs, reference_metada
 from glacier_offsets.stack_lock import stack_lock
 
 
-def result_fixture(base):
+def result_fixture(base, swaths=(1, 2)):
     root = base/'results'
     root.mkdir()
     stack = base/'stack'
@@ -43,6 +43,8 @@ def result_fixture(base):
     write_json(stack/'stack_manifest.json', catalog)
     spec = {'method': METHOD, 'config': cfg, 'dates': dates, 'source_hashes': {},
             'geometry_identity': frame['geometry_identity'], 'layout_identity': 'layout'}
+    if swaths != (1, 2):
+        spec['swaths'] = list(swaths)
     key = identity({k:v for k,v in spec.items() if k!='source_hashes'})
     plan = {'status': 'complete', 'identity': key, 'specification': spec,
             'reference_metadata': reference_metadata(frame, catalog), 'primary_selection': 'primary fixed cohort'}
@@ -52,8 +54,8 @@ def result_fixture(base):
         c = int(metadata[b]['mission']=='S1B')-int(metadata[a]['mission']=='S1B')
         for group in ('x','y'):
             values = [c*.03-.01,c*.03+.01]
-            rows.append({'pair':a+'_'+b,'earlier':a,'later':b,'burst1':group+'_iw1',
-                         'burst2':group+'_iw2','mean':c*.03,'values':values})
+            rows.append({'pair':a+'_'+b,'earlier':a,'later':b,'burst1':group+f'_iw{swaths[0]}',
+                         'burst2':group+f'_iw{swaths[1]}','mean':c*.03,'values':values})
     analysis = evaluate(rows, dates, {day:v['mission'] for day,v in metadata.items()}, draws=12)
     analysis['rows'] = rows
     write_json(root/'analysis/primary.json', analysis)
@@ -77,6 +79,24 @@ class ExportTests(unittest.TestCase):
 
     def read(self, name):
         return json.loads((self.root/name).read_text())
+
+    def test_iw23_export_and_loader_roundtrip(self):
+        base = self.base/'iw23'; base.mkdir()
+        root, cfg, _ = result_fixture(base, swaths=(2, 3))
+        result = export_calibration(root)
+        cfg['stack']['swath_correction'] = result['settings']['stack']['swath_correction']
+        cal, _ = load_calibration(cfg)
+        self.assertEqual(cal['swaths'], [2, 3])
+        self.assertAlmostEqual(cal['beta_px'], .03)
+        self.assertIn('IW3 minus IW2', cal['provenance']['contrast'])
+        self.assertIn('IW2/IW3', cal['provenance']['label'])
+
+    def test_wrong_source_swaths_cannot_be_exported(self):
+        analysis = self.read('analysis/primary.json')
+        analysis['rows'][0]['burst2'] = 'x_iw3'
+        self.replace_analysis(analysis)
+        with self.assertRaisesRegex(ValueError, 'source swaths differ'):
+            export_calibration(self.root)
 
     def replace_analysis(self, analysis):
         write_json(self.root/'analysis/primary.json', analysis)

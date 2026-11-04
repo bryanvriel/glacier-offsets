@@ -13,6 +13,7 @@ import numpy as np
 
 from .geocode import sample_geometry
 from .products import identity, write_json
+from .swath_pair import recorded_pair, names
 
 C = 299792458.0
 COMPONENTS = ('bistatic', 'fm_rate', 'combined')
@@ -26,6 +27,8 @@ def orbit_seconds(burst, lines):
 
 def bistatic_seconds(burst, samples):
     rho = burst.starting_range+np.asarray(samples)*burst.range_pixel_spacing
+    # This is the sensor timing reference supplied by s1-reader for every IW;
+    # it is not the selected overlap's high/low swath.
     return (burst.iw2_mid_range+rho)/C-burst.rank/burst.prf_raw_data
 
 
@@ -274,7 +277,8 @@ def load_native(experiment, day):
             experiment.inputs.file(Path(safe)/relative)
     else:
         experiment.inputs.file(safe, acq['specification']['safe']['sha256'])
-    return {b.id: b.native for b in inventory(safe, orbit, experiment.cfg['inputs']['polarization'], [1, 2])}
+    return {b.id: b.native for b in inventory(safe, orbit, experiment.cfg['inputs']['polarization'],
+                                            list(recorded_pair(experiment.spec)))}
 
 
 def native_input_products(experiment, day):
@@ -326,14 +330,19 @@ def physics(experiment):
             records[link['pair']] = read_json(out/'report.json')
             continue
         data = load_npz(measured.parent/'observations.npz')
+        swaths = recorded_pair(data)
+        if swaths != recorded_pair(experiment.spec):
+            raise ValueError('Measurement swaths differ from experiment')
+        low, high = names(swaths)
         shape = data['dual_support'].shape
-        arrays = {f'{s}_{c}_{quantity}': np.full(shape, np.nan) for s in ('iw1', 'iw2')
+        arrays = {f'{s}_{c}_{quantity}': np.full(shape, np.nan) for s in (low, high)
                   for c in COMPONENTS for quantity in ('early_seconds', 'late_seconds', 'pair_px')}
+        arrays['swaths'] = np.array(swaths)
         link_checks, errors = {}, []
         for day in (link['earlier'], link['later']):
             if day not in native:
                 native[day] = load_native(experiment, day)
-        for swath in ('iw1', 'iw2'):
+        for swath in (low, high):
             for number, key in enumerate(data['source_ids'], 1):
                 key = str(key)
                 take = data['dual_support'] & (data[f'{swath}_owner'] == number)
@@ -385,9 +394,9 @@ def physics(experiment):
                 except Exception as exc:
                     errors.append({'swath': swath, 'burst': key, 'error': f'{type(exc).__name__}: {exc}'})
                     logging.error('Physical prediction %s %s: %s', link['pair'], key, exc)
-        observed = (data['iw2_total']-data['iw1_total'])[..., 0]
+        observed = (data[f'{high}_total']-data[f'{low}_total'])[..., 0]
         for component in COMPONENTS:
-            arrays[f'{component}_prediction_px'] = arrays[f'iw2_{component}_pair_px']-arrays[f'iw1_{component}_pair_px']
+            arrays[f'{component}_prediction_px'] = arrays[f'{high}_{component}_pair_px']-arrays[f'{low}_{component}_pair_px']
             arrays[f'{component}_residual_px'] = observed-arrays[f'{component}_prediction_px']
         output = out/'predictions.npz'
         save_npz(output, **arrays)

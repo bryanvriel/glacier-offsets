@@ -32,7 +32,7 @@ def fake_plot(stage, *args):
 
 
 class ProductionSwathCorrectionTests(unittest.TestCase):
-    def setUp(self):
+    def setUp(self, swaths=(1, 2)):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.folder = Path(self.temp.name).resolve()
@@ -48,11 +48,11 @@ class ProductionSwathCorrectionTests(unittest.TestCase):
             'processing': 'isce3_merge_first', 'swath_merge': 'midpoint',
             'safe_directory': str(self.folder / 'offline-safe'),
             'orbit_directory': str(self.folder / 'offline-orbits')})
-        self.cfg['inputs'].update(polarization='HH', subswaths=[1, 2])
+        self.cfg['inputs'].update(polarization='HH', subswaths=list(swaths))
         self.cfg['matching'].update(engine='isce3', backend='cpu', deramp=0,
                                     window=[8, 8], search=[2, 2], stride=[6, 6])
         self.cfg['geocoding'].update(epsg=3031, spacing_m=200, resampling='nearest', mask='input')
-        self.ids = ['t038_080975_iw1', 't038_080976_iw1', 't038_080975_iw2']
+        self.ids = [f't038_080975_iw{swaths[0]}', f't038_080976_iw{swaths[0]}', f't038_080975_iw{swaths[1]}']
         owner_image = np.ones((64, 128), 'uint16')
         owner_image[32:, :64] = 2
         owner_image[:, 64:] = 3
@@ -69,10 +69,10 @@ class ProductionSwathCorrectionTests(unittest.TestCase):
         self.line, self.sample = np.meshgrid([13.5, 31.5, 37.5, 49.5],
                                             [13.5, 31.5, 55.5, 61.5, 67.5, 85.5, 103.5], indexing='ij')
         self.owner = owner_image[np.rint(self.line).astype(int), np.rint(self.sample).astype(int)]
-        self.swath = np.where(self.owner == 3, 2, 1)
+        self.swath = np.where(self.owner == 3, swaths[1], swaths[0])
         self.interval = 6 * 86400 + self.owner.astype(float)
         self.scale = 14 + self.sample * .001
-        self.total = 3.25 + np.where(self.swath == 1, -.026 / 2, .026 / 2)
+        self.total = 3.25 + np.where(self.swath == swaths[0], -.026 / 2, .026 / 2)
         self.base = np.ones(self.total.shape, bool)
         self.base[0, 0] = False
         self.quality = self.base.copy()
@@ -131,7 +131,7 @@ class ProductionSwathCorrectionTests(unittest.TestCase):
         self.cal_path = self.folder / 'calibration.json'
         self.cal = {'method': METHOD, 'units': 'original_reference_azimuth_pixels',
                     'beta_px': .026, 'beta_std_px': .009, 'reference_prf_hz': 10.,
-                    'swaths': [1, 2], 'allocation': 'symmetric',
+                    'swaths': list(swaths), 'allocation': 'symmetric',
                     'scope': {'geometry_identity': self.frame['geometry_identity'],
                               'relative_orbit': 38, 'direction': 'DESCENDING', 'polarization': 'HH',
                               'processing': 'isce3_merge_first', 'swath_merge': 'midpoint',
@@ -196,6 +196,16 @@ class ProductionSwathCorrectionTests(unittest.TestCase):
         displacement = gdal.Open(str(self.corrected() / 'geo/azimuth_displacement_m.tif')).ReadAsArray()
         self.assertTrue(np.isnan(displacement).any())  # Input holes remain holes.
         self.assertEqual(correction_status(self.cfg, self.manifest, self.pair)['status'], 'complete')
+
+    def test_iw23_full_pair_and_resume(self):
+        self.setUp(swaths=(2, 3))
+        self.test_full_pair_scope_units_ownership_masks_and_raw_isolation()
+        self.assertEqual(execute_corrections(self.cfg), 0)
+        self.assertTrue(read(self.target / 'correction_status.json')['pairs'][self.pair]['reused'])
+        with h5py.File(self.corrected() / 'radar/offsets.h5') as h:
+            metadata = json.loads(h.attrs['swath_correction_json'])
+            self.assertEqual(metadata['swaths'], [2, 3])
+            self.assertIn('IW2=-delta/2, IW3=+delta/2', metadata['allocation'])
 
     def test_resume_ignores_global_progress_and_detects_damaged_outputs(self):
         self.assertEqual(execute_corrections(self.cfg), 0)

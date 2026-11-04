@@ -11,6 +11,7 @@ import yaml
 from .products import identity
 from .swath_correction_config import METHOD, MATCHING_KEYS, load_calibration
 from .swath_experiment_io import METHOD as EXPERIMENT_METHOD, Inputs, reference_metadata
+from .swath_pair import recorded_pair
 
 
 def _read(inputs, path, expected=None):
@@ -80,6 +81,9 @@ def export_calibration(output, destination=None, *, cfg=None, force=False):
     inputs = Inputs()
     plan = _read(inputs, root/'plan.json')
     spec = plan['specification']
+    swaths = recorded_pair(spec)
+    if 'swaths' in plan and recorded_pair(plan) != swaths:
+        raise ValueError('Calibration plan swath metadata is inconsistent')
     if spec.get('method') != EXPERIMENT_METHOD:
         raise ValueError('Unsupported swath estimation result format')
     experiment = identity({k: v for k, v in spec.items() if k != 'source_hashes'})
@@ -114,6 +118,10 @@ def export_calibration(output, destination=None, *, cfg=None, force=False):
                 raise ValueError('Invalid recorded pair identifier')
             _record(_read(inputs, root/directory/pair/'report.json', digest), experiment)
     analysis = _read(inputs, root/'analysis/primary.json')
+    for row in analysis.get('rows', []):
+        if not (row['burst1'].endswith(f'_iw{swaths[0]}') and
+                row['burst2'].endswith(f'_iw{swaths[1]}')):
+            raise ValueError('Analysis source swaths differ from calibration plan')
     model = analysis['models']['spacecraft']
     covariance = model.get('covariance')
     if (not analysis.get('rows') or model.get('rank') != 1 or
@@ -150,10 +158,11 @@ def export_calibration(output, destination=None, *, cfg=None, force=False):
     scope.update(processing=source_cfg['stack']['processing'], swath_merge=source_cfg['stack']['swath_merge'],
                  matching=matching, start_date=min(dates), end_date=max(dates))
     cal = {'method': METHOD, 'units': 'original_reference_azimuth_pixels', 'allocation': 'symmetric',
-           'swaths': [1, 2], 'beta_px': beta, 'beta_std_px': math.sqrt(variance),
+           'swaths': list(swaths), 'beta_px': beta, 'beta_std_px': math.sqrt(variance),
            'reference_prf_hz': reference['reference_prf_hz'], 'scope': scope,
            'provenance': {
-               'label': f'Spacecraft-order relative IW1/IW2 azimuth calibration, {min(dates)} to {max(dates)}',
+               'label': f'Spacecraft-order relative IW{swaths[0]}/IW{swaths[1]} azimuth calibration, {min(dates)} to {max(dates)}',
+               'contrast': f'IW{swaths[1]} minus IW{swaths[0]}; beta multiplies S1B_later minus S1B_earlier',
                'estimate': 'all-data descriptive primary spacecraft coefficient',
                'population': plan['primary_selection'],
                'weighting': 'equal total weight per link; equal burst-pair-group weights within each link',

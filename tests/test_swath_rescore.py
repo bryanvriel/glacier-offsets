@@ -155,6 +155,7 @@ class FrozenArtifactTests(unittest.TestCase):
             (root/'analysis').mkdir()
             experiment = object.__new__(Experiment)
             experiment.key, experiment.output, experiment.inputs = 'frozen-key', root, Inputs()
+            experiment.spec = {}
             (root/'plan.json').write_text(json.dumps({'identity': experiment.key}))
             (root/'summary.json').write_text('{"status":"complete"}')
             (root/'REPORT.md').write_text('Original report stays unchanged.\n')

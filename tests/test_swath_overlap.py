@@ -23,7 +23,7 @@ def write_raster(path, array, dtype):
     ds.GetRasterBand(1).WriteArray(array);ds=None
 
 
-def make_pair(root):
+def make_pair(root, swaths=(1, 2)):
     """Two swaths with identical, known one-pixel range motion."""
     root=root.resolve();gdal.UseExceptions()
     stack=root/'stack';pair=stack/'pairs/2020-01-01_2020-01-07'
@@ -41,7 +41,7 @@ def make_pair(root):
     rng=np.random.default_rng(231)
     ref=(rng.normal(size=shape)+1j*rng.normal(size=shape)).astype('complex64')
     sources=[];dates=['2020-01-01','2020-01-07']
-    keys=['t038_080975_iw1','t038_080975_iw2']
+    keys=[f't038_080975_iw{s}' for s in swaths]
     for key in keys:
         sources.append({'burst_id':key,'offset':[0,0],'valid_window':[0,shape[0],0,shape[1]],
                         'coreg':{'geometry_crs':3031,'geometry':geometry}})
