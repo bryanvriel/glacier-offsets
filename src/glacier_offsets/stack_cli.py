@@ -25,10 +25,14 @@ def main(argv=None):
     parser.add_argument('--output', help='New reference bundle directory (export-reference only)')
     parser.add_argument('--backend', choices=['cpu', 'gpu', 'auto'])
     parser.add_argument('--force', action='store_true')
+    parser.add_argument('--no-check', action='store_true',
+                        help='Trust recorded input/product hashes on an existing stack; skip content verification')
     parser.add_argument('--dry-run', action='store_true', help='Verify and preview rebuild-layout without changing files')
     parser.add_argument('--json', action='store_true', help='Machine-readable stack status')
     parser.add_argument('--pair', action='append', help='Saved pair to correct (repeatable; correct-swaths only)')
     args = parser.parse_args(argv)
+    if args.no_check and args.command not in ('coregister', 'assemble', 'match', 'geocode', 'diagnostics', 'run', 'recover-matching'):
+        parser.error('--no-check is supported by stack processing and recover-matching commands only')
     if args.output and args.command != 'export-reference':
         parser.error('--output is supported by export-reference')
     if args.command == 'export-reference' and (not args.output or args.force or args.backend):
@@ -88,7 +92,8 @@ def main(argv=None):
             print(json.dumps(plan.report, indent=2, sort_keys=True))
             return 0
         from .stack_workflow import execute_stack
-        return execute_stack(cfg, args.command, force=args.force)
+        options = {'no_check': True} if args.no_check else {}
+        return execute_stack(cfg, args.command, force=args.force, **options)
     except StackPreflightError as exc:
         print(json.dumps(exc.report, indent=2, sort_keys=True))
         logging.error('%s', exc)

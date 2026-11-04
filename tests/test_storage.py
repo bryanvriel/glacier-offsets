@@ -168,6 +168,35 @@ class StackStorageTests(unittest.TestCase):
         self.assertEqual(before, {p:(checksum(p), p.stat().st_mtime_ns) for p in before})
         self.assertEqual(len(self.calls), 3)
 
+    def test_no_check_restarts_without_hashing_registered_inputs_or_products(self):
+        with self.mocked_science(): self.assertEqual(execute_stack(self.cfg, 'run'), 0)
+        before = {p: (checksum(p), p.stat().st_mtime_ns) for p in self.root.glob('pairs/*/radar/offsets.h5')}
+        with self.mocked_science(), \
+             patch('glacier_offsets.products.checksum', side_effect=AssertionError('hashed registered product')), \
+             patch('glacier_offsets.stack_storage.checksum', side_effect=AssertionError('hashed raw input')):
+            for command in ('geocode', 'diagnostics', 'run'):
+                self.assertEqual(execute_stack(self.cfg, command, no_check=True), 0)
+        self.assertEqual(before, {p: (checksum(p), p.stat().st_mtime_ns) for p in before})
+        report = json.loads((self.root/'stack_manifest.json').read_text())
+        self.assertEqual(report['verification_mode'], 'trusted-recorded-checksums')
+        self.assertEqual(report['metrics']['product_checksum_bytes_hashed'], 0)
+        self.assertGreater(report['metrics']['product_checksums_trusted'], 0)
+        self.assertGreater(report['metrics']['source_checksums_trusted'], 0)
+        self.assertEqual(len(self.calls), 3)
+        # Parameter changes still invalidate matching despite trusted contents.
+        self.cfg['matching']['oversampling'] *= 2
+        with self.mocked_science():
+            self.assertEqual(execute_stack(self.cfg, 'geocode', no_check=True), 1)
+
+    def test_no_check_still_rejects_missing_alignment_products(self):
+        with self.mocked_science(): self.assertEqual(execute_stack(self.cfg, 'run'), 0)
+        day = self.f.acquisitions[0].date
+        saved = read_manifest(self.root/'acquisitions'/day)
+        product = next(iter(saved['alignment_products']))
+        Path(product).unlink()
+        with self.mocked_science():
+            self.assertEqual(execute_stack(self.cfg, 'geocode', no_check=True), 1)
+
     def test_stack_restart_hashes_each_unchanged_product_once_per_invocation(self):
         with self.mocked_science():
             self.assertEqual(execute_stack(self.cfg, 'run'), 0)
@@ -220,6 +249,10 @@ class StackStorageTests(unittest.TestCase):
         self.assertEqual((checksum(offsets), offsets.stat().st_mtime_ns), before)
         self.assertEqual(len(self.calls), 1)
         self.assertNotIn('assembly_identity', read_manifest(orphan))
+        with self.mocked_science(), \
+             patch('glacier_offsets.products.checksum', side_effect=AssertionError('hashed product')), \
+             patch('glacier_offsets.stack_storage.checksum', side_effect=AssertionError('hashed raw input')):
+            self.assertEqual(execute_stack(self.cfg, 'geocode', no_check=True), 0)
         # Explicit assembly must still materialize every requested acquisition.
         with self.mocked_science():
             self.assertEqual(execute_stack(self.cfg, 'assemble'), 0)

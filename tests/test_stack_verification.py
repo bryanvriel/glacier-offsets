@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from glacier_offsets.products import ChecksumCache, checksum, identity, write_json
 from glacier_offsets.stack_storage import SourceHashes, alignment_verified, read_manifest
-from glacier_offsets.stack_verification import acquisition_checks
+from glacier_offsets.stack_verification import acquisition_checks, trusted_restart_caches
 
 
 class StackVerificationTests(unittest.TestCase):
@@ -99,3 +99,38 @@ class StackVerificationTests(unittest.TestCase):
             results = list(pool.map(hashes, paths*2))
         self.assertEqual(digest.call_count, 2)
         self.assertEqual(results[:2], results[2:])
+
+    def test_explicit_trust_skips_reads_but_new_revisions_and_files_are_hashed(self):
+        path, new = self.root/'recorded', self.root/'new'
+        path.write_bytes(b'original'); digest = checksum(path)
+        # --no-check explicitly trusts the manifest even if contents changed
+        # before invocation; it cannot detect pre-existing silent corruption.
+        path.write_bytes(b'operator trusts this')
+        cache = ChecksumCache(); cache.trust_existing({str(path): digest})
+        sources = SourceHashes(checksums=cache)
+        with patch('glacier_offsets.products.checksum', side_effect=AssertionError('read trusted file')):
+            self.assertEqual(cache(path), digest)
+            self.assertEqual(sources(path)['sha256'], digest)
+        path.write_bytes(b'rewritten during invocation')
+        new.write_bytes(b'new output')
+        with patch('glacier_offsets.products.checksum', wraps=checksum) as read:
+            self.assertEqual(cache(path), checksum(path))
+            self.assertEqual(cache(new), checksum(new))
+            self.assertEqual(sources(path)['sha256'], checksum(path))
+            self.assertEqual(read.call_count, 2)
+        path.unlink()
+        with self.assertRaises(FileNotFoundError): cache(path)
+
+    def test_trust_directory_does_not_read_members_and_conflicts_are_rejected(self):
+        safe = self.root/'raw.SAFE'; safe.mkdir()
+        (safe/'measurement').write_bytes(b'large image')
+        digest = checksum(safe)
+        cache = ChecksumCache(); cache.trust_existing({str(safe): digest})
+        with patch('glacier_offsets.products.checksum', side_effect=AssertionError('read SAFE members')):
+            self.assertEqual(cache(safe), digest)
+        with self.assertRaisesRegex(ValueError, 'Conflicting recorded checksums'):
+            cache.trust_existing({str(safe): 'different'})
+
+    def test_no_check_requires_a_previously_completed_reference(self):
+        with self.assertRaisesRegex(ValueError, 'existing complete reference'):
+            trusted_restart_caches(self.root, [])

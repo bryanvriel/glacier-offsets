@@ -28,15 +28,39 @@ class ChecksumCache:
     Every lookup stats the file. Rewrites, replacements and deletions cannot
     reuse a digest merely because the manifest or pathname is unchanged.
     Directories are deliberately not cached: their own timestamps do not
-    describe changes to descendants. No cache is persisted between runs.
+    describe changes to descendants. Explicit trusted-restart seeding is the
+    exception; no cache is persisted between runs.
     """
     def __init__(self):
         self._files = {}
+        self._trusted = {}
         self._locks = {}
         self._guard = Lock()
         self.hits = 0
         self.files_hashed = 0
         self.bytes_hashed = 0
+        self.trusted_hits = 0
+        self.trusted_mode = False
+
+    def trust_existing(self, products):
+        """Explicitly trust recorded digests at the current filesystem revision.
+
+        This does not establish content integrity. Directories are trusted as a
+        unit, without inspecting their members. Changed revisions fall back to
+        hashing; new outputs must never inherit an old digest after a rewrite.
+        Seed before starting concurrent readers.
+        """
+        self.trusted_mode = True
+        for name, digest in products.items():
+            path = Path(name).resolve()
+            old = self._trusted.get(path)
+            if old is not None and old[1] != digest:
+                raise ValueError(f'Conflicting recorded checksums for {path}; rerun without --no-check')
+            try:
+                revision = self._revision(path.stat())
+            except FileNotFoundError:
+                continue
+            self._trusted[path] = (revision, digest)
 
     @staticmethod
     def _revision(info):
@@ -53,6 +77,11 @@ class ChecksumCache:
 
     def _digest(self, path):
         before = path.stat()
+        trusted = self._trusted.get(path)
+        if trusted is not None and trusted[0] == self._revision(before):
+            with self._guard:
+                self.trusted_hits += 1
+            return trusted[1]
         if not stat.S_ISREG(before.st_mode):
             return checksum(path)
         revision = self._revision(before)

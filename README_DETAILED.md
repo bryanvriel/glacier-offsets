@@ -131,6 +131,29 @@ help an SSD, but the speedup is limited by drive bandwidth; try 2 or 1 if the
 drive slows down under concurrent reads. An already-running process keeps its
 existing behavior until the next invocation.
 
+For a trusted restart on slow storage, processing commands accept `--no-check`:
+
+```bash
+glacier-offsets stack geocode CONFIG.yaml --no-check
+glacier-offsets stack diagnostics CONFIG.yaml --no-check
+# Or complete pending stages in one invocation:
+glacier-offsets stack run CONFIG.yaml --no-check
+```
+
+This explicitly trusts input and product SHA-256 values recorded in the existing
+reference/acquisition manifests, skipping reads of those file contents. SAFE
+directories are trusted as a whole; their members are not inspected for checksum
+verification. Use it when you know the existing data have not changed: pre-existing
+modifications or corruption will not be detected. File existence, recorded stage
+identities, configuration compatibility and normal processing preflight still
+apply. A complete reference must already exist. New inputs, new outputs, or files
+whose filesystem revision changes during the invocation are hashed normally.
+Full verification remains the default on the next command unless the flag is
+supplied again. The stack catalog records `no_check`, `verification_mode`, and
+counts of trusted checksums. Recovery also accepts the flag but still reads and
+validates the offset HDF5 being recovered. Swath calibration/correction, validation,
+reference export and layout rebuilding do not accept it.
+
 ## Local inputs
 
 ### Download bursts for an AOI

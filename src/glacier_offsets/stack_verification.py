@@ -5,9 +5,30 @@ from contextlib import contextmanager
 import logging
 from pathlib import Path
 
-from .products import identity
+from .products import ChecksumCache, identity
 from .stack_config import verification_workers
 from .stack_storage import alignment_verified, date_specification, read_manifest, verified
+
+
+def trusted_restart_caches(root, acquisitions):
+    """Seed explicitly trusted digests from an existing stack's manifests."""
+    root = Path(root)
+    frame = read_manifest(root/'geometry')
+    if frame.get('status') != 'complete' or not frame.get('products'):
+        raise ValueError('--no-check requires an existing complete reference; run without it first')
+    products, sources = ChecksumCache(), ChecksumCache()
+    products.trust_existing(frame['products'])
+    records = [frame['specification'].get('inputs', {})]
+    for acquisition in acquisitions:
+        saved = read_manifest(root/'acquisitions'/acquisition.date)
+        for key in ('alignment_products', 'products'):
+            products.trust_existing(saved.get(key, {}))
+        records.append(saved.get('specification', {}))
+    for record in records:
+        for value in record.values():
+            if isinstance(value, dict) and 'path' in value and 'sha256' in value:
+                sources.trust_existing({value['path']: value['sha256']})
+    return products, sources
 
 
 def check_acquisition(cfg, acquisition, frame, hashes, checksums, number, total):
@@ -35,7 +56,10 @@ def acquisition_checks(cfg, acquisitions, frame, hashes, checksums):
     active read-only checks finish before the stack lock can be released.
     """
     count = min(verification_workers(cfg), len(acquisitions))
-    logging.info('Verifying stack acquisitions with %d worker(s)', count)
+    if checksums.trusted_mode:
+        logging.info('Checking stack acquisition metadata with %d worker(s); recorded hashes trusted', count)
+    else:
+        logging.info('Verifying stack acquisitions with %d worker(s)', count)
     pool = ThreadPoolExecutor(max_workers=max(1, count), thread_name_prefix='stack-check')
     inventory = iter(enumerate(acquisitions, 1))
     pending = deque()

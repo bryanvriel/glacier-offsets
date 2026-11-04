@@ -18,7 +18,7 @@ from .inputs import select_pair
 from .products import ChecksumCache, identity, write_json
 from .stack import plan_stack, read_catalog, validate_stack
 from .stack_config import verification_workers
-from .stack_verification import acquisition_checks
+from .stack_verification import acquisition_checks, trusted_restart_caches
 from .stack_pairs import common_map_grid, matching_template, prepared_pair
 from .stack_stages import STAGES
 from .stack_lock import stack_lock
@@ -51,9 +51,11 @@ def invalidate_date(root, alignment=False):
     write_json(Path(root)/'manifest.json', manifest)
 
 
-def execute_stack(cfg, command, force=False):
+def execute_stack(cfg, command, force=False, *, no_check=False):
     from .swath_correction_config import settings as correction_settings
     if command == 'correct-swaths':
+        if no_check:
+            raise ValueError('--no-check is not supported by correct-swaths')
         from .swath_correction import execute_corrections
         return execute_corrections(cfg, force=force)
     enabled_correction = command == 'run' and correction_settings(cfg)['enabled']
@@ -61,14 +63,14 @@ def execute_stack(cfg, command, force=False):
         from .swath_correction_config import load_calibration
         load_calibration(cfg)  # Reject a missing/changed pin before upstream work, including --force.
     with stack_lock(cfg['output']['directory'], create=True):
-        result = _execute_stack(cfg, command, force=force)
+        result = _execute_stack(cfg, command, force=force, no_check=no_check)
     if enabled_correction:
         from .swath_correction import execute_corrections
         result = max(result, execute_corrections(cfg, force=force))
     return result
 
 
-def _execute_stack(cfg, command, force=False):
+def _execute_stack(cfg, command, force=False, *, no_check=False):
     from .stack_mosaic import enabled, prepare_common_layout
     isce2 = enabled(cfg)
     invocation_started = time.perf_counter()
@@ -82,6 +84,10 @@ def _execute_stack(cfg, command, force=False):
     retain_slcs = keep_merged_slcs(cfg)
     old = read_catalog(root)
     plan = plan_stack(cfg, previous=old)
+    source_checksums = None
+    if no_check:
+        logging.warning('--no-check: trusting recorded input/product checksums; existing contents are not verified')
+        checksums, source_checksums = trusted_restart_caches(root, plan.acquisitions)
     # Native reference placement/DEM checks happen before any scientific mutation.
     validate_stack(cfg, plan, check_dates=False)
     if cfg.get('_reference_bundle'):
@@ -92,7 +98,7 @@ def _execute_stack(cfg, command, force=False):
     if cfg['matching'].get('engine') == 'isce2':
         from .isce2_matching import provenance
         provenance(cfg)  # Fail before scientific mutation if the native runtime is unavailable.
-    hashes = SourceHashes()
+    hashes = SourceHashes(checksums=source_checksums)
     software = inspect_environment()
     specification = reference_specification(cfg, plan, hashes, software)
     fingerprint = identity(specification)
@@ -111,7 +117,8 @@ def _execute_stack(cfg, command, force=False):
     for key, value in old.get('pairs', {}).items():
         if key not in report['pairs']:
             report['pairs'][key] = value | {'active': False}
-    report.update(command=command, force=force, outcome='running')
+    report.update(command=command, force=force, no_check=no_check,
+                  verification_mode='trusted-recorded-checksums' if no_check else 'full-checksums', outcome='running')
     if 'anchor' not in old:
         report.pop('anchor', None)  # Pin only after complete reference preparation.
     for key in ('anchor', 'reference_specification_identity', 'geometry_identity', 'layout_identity', 'map_grid'):
@@ -128,6 +135,8 @@ def _execute_stack(cfg, command, force=False):
             'product_checksum_files_hashed': checksums.files_hashed,
             'product_checksum_bytes_hashed': checksums.bytes_hashed,
             'product_checksum_cache_hits': checksums.hits,
+            'product_checksums_trusted': checksums.trusted_hits,
+            'source_checksums_trusted': source_checksums.trusted_hits if source_checksums is not None else 0,
             'parent_peak_rss_bytes': int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss*scale),
             'children_peak_rss_bytes': int(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss*scale),
             'rss_scope': 'process lifetime high-water marks; child processes reported separately',
@@ -158,7 +167,7 @@ def _execute_stack(cfg, command, force=False):
     save()
     failed = False
     try:
-        logging.info('Verifying stack reference products')
+        logging.info('Using recorded hashes for stack reference products' if no_check else 'Verifying stack reference products')
         reference_previous = read_manifest(root/'geometry')
         if not verified(reference_previous, 'geometry_identity', fingerprint, checksums=checksums):
             invalidate_pairs()

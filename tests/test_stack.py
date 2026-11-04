@@ -58,6 +58,16 @@ class StackPlanningTests(unittest.TestCase):
             main(['stack', 'recover-matching', str(self.path), '--force'])
         self.assertEqual(error.exception.code, 2)
 
+    def test_no_check_cli_dispatch_and_unsupported_commands(self):
+        with patch('glacier_offsets.stack_workflow.execute_stack', return_value=0) as execute:
+            self.assertEqual(main(['stack', 'geocode', str(self.path), '--no-check']), 0)
+            execute.assert_called_once_with(self.cfg, 'geocode', force=False, no_check=True)
+        for command in ('validate', 'plan', 'status', 'rebuild-layout', 'export-reference', 'correct-swaths'):
+            with self.subTest(command=command), contextlib.redirect_stderr(io.StringIO()), \
+                 self.assertRaises(SystemExit) as error:
+                main(['stack', command, str(self.path), '--no-check'])
+            self.assertEqual(error.exception.code, 2)
+
     def test_verification_workers_default_inheritance_and_validation(self):
         self.assertEqual(verification_workers(self.cfg), 4)
         self.assertNotIn('verification_workers', self.cfg['stack'])

@@ -23,8 +23,9 @@ SLC_STORAGE = 'stripped-complex-tiff-external-mask-v1'
 
 class SourceHashes:
     """Hash each distinct immutable input only once during an invocation."""
-    def __init__(self):
+    def __init__(self, *, checksums=None):
         self.hashes = {}
+        self.checksums = checksums
         self._locks = {}
         self._guard = Lock()
 
@@ -33,7 +34,9 @@ class SourceHashes:
         with self._guard:
             lock = self._locks.setdefault(path, Lock())
         with lock:
-            if path not in self.hashes:
+            if self.checksums is not None:
+                self.hashes[path] = self.checksums(path)
+            elif path not in self.hashes:
                 self.hashes[path] = checksum(path)
             return {'path': path, 'sha256': self.hashes[path]}
 
