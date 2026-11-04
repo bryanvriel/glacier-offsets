@@ -83,8 +83,10 @@ def load_settings(path):
 
 
 def implementation():
-    names = ('basis','fit','io','inspect','pilot','recovery','calibration')
-    return {f'velocity_{name}.py':digest(Path(__file__).with_name(f'velocity_{name}.py')) for name in names}
+    from .velocity_temporal import backend_fingerprints
+    names = ('basis','temporal','fit','io','inspect','pilot','recovery','calibration')
+    local = {f'velocity_{name}.py':digest(Path(__file__).with_name(f'velocity_{name}.py')) for name in names}
+    return local | backend_fingerprints()
 
 
 def reviewed_regions(cfg, collection):
@@ -161,10 +163,12 @@ def cv_numerical_recipe(cfg,recipe):
     import hashlib
     import inspect
     from . import velocity_pilot
+    from .velocity_temporal import BACKEND_MODULES
     names=('select_models','point_arrays','fit_point','control_residuals','learn_noise','candidate_bank')
+    files=('velocity_basis.py','velocity_temporal.py','velocity_fit.py','velocity_io.py','velocity_inspect.py')+BACKEND_MODULES
     return {'sources':recipe['source_fingerprints'],'regions_sha256':recipe['regions_sha256'],
             'settings':{k:cfg[k] for k in ('start','end','sampling','models')},
-            'files':{k:recipe['implementation'][k] for k in ('velocity_basis.py','velocity_fit.py','velocity_io.py','velocity_inspect.py')},
+            'files':{k:recipe['implementation'][k] for k in files},
             'functions':{k:hashlib.sha256(inspect.getsource(getattr(velocity_pilot,k)).encode()).hexdigest() for k in names}}
 
 

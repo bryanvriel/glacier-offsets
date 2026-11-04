@@ -32,7 +32,7 @@ from .velocity_workflow_config import impossible_settings, load_workflow_config,
 RUN_MANIFEST = 'run-manifest.json'
 FIT_FILE = 'source_coefficients.h5'
 FIT_PARTIAL = 'source_coefficients.partial.h5'
-FIT_MODULES = ('velocity_pixel_general', 'velocity_basis', 'velocity_systematics', 'velocity_quality',
+FIT_MODULES = ('velocity_pixel_general', 'velocity_basis', 'velocity_temporal', 'velocity_systematics', 'velocity_quality',
                'velocity_vertical')
 STAGES = 'stages'
 
@@ -85,6 +85,8 @@ def preflight(config, stages):
                 missing.append(module)
     if missing:
         raise ValueError(f'Missing Python dependencies for this workflow: {missing}')
+    from .velocity_temporal import timefn
+    timefn()
     try:
         from pyproj import Transformer
         Transformer.from_crs(4326, 3031, always_xy=True).transform(0., -70.)

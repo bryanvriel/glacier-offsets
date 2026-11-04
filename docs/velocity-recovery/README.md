@@ -2,7 +2,7 @@
 
 The `fit-velocity` workflow reads self-contained horizontal netCDF displacement
 packages and compares free EN and along-flow Msf models. It runs in the existing
-`ice` environment. It does not import packaging, GDAL, COMPASS or ISCE3, discover
+`ice` environment. It does not import packaging, COMPASS or ISCE3, discover
 raw SAR inputs, or load the processing environment's `.runtime/deps` directory.
 
 ```bash
@@ -19,10 +19,31 @@ The workspace launcher and main console/module dispatcher remove the workspace
 `.runtime/deps` path before importing numerical fitting modules. A caller that
 already imported numerical modules from that overlay must start a clean process.
 The selected interpreter supplies NumPy/SciPy/h5netcdf; packages
-are not installed or changed. The code uses SciPy for the coupled EN solve,
-because scalar iceutils time-series inversions cannot represent a full 2×2
-observation covariance. Scalar weights retain iceutils' **1/sigma** convention;
-Huber factors multiply those weights by their square roots.
+are not installed or changed by the workflow. Install the velocity dependencies
+once in that interpreter with `python -m pip install -e '.[velocity]'`. The extra
+pins iceutils to PR #28 commit `2c95cba3e85ba6073f889203c927e8a1f98c5d45`,
+which supplies temporal observation operators; older installed copies fail with
+an explicit upgrade message. iceutils imports its rasterio/xarray dependencies,
+but no processing environment or raw SAR inputs are needed.
+
+Temporal matrices use an explicit iceutils `TimefnCollection`: horizontal
+velocity is integrated over exact burst intervals in days, residual vertical
+height uses endpoint differences, and pair-average/instantaneous predictions
+use the average/sample operators. The adapter converts elapsed days to naive
+UTC datetimes, preserves the 2000-01-01 phase origin, cubic spline centers and
+scales, broadcasts source/pair arrays, and masks missing endpoints. It reuses
+collections and caches repeated endpoint evaluations within bounded caches.
+Annual velocity regimes use bounded constant functions; gaps belong to the
+preceding regime, with open-ended first/last regimes. Integral boundaries do
+not double-count a year transition. Instantaneous annual regime selection must
+retain half-open boundaries rather than sampling adjacent closed constants.
+
+The coupled EN solve, geometry projection, full 2×2 covariance whitening,
+penalty normalization, robust weighting and cluster uncertainty remain local.
+Scalar weights retain iceutils' **1/sigma** convention; Huber factors multiply
+those weights by their square roots. Fit recipes and affected cache/product
+identities include hashes of the actual imported iceutils operator files as
+well as local modules, so an implementation change invalidates prior fits.
 
 ## Inputs and preservation
 

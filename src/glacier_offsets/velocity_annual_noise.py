@@ -27,7 +27,7 @@ from .velocity_systematics import order_residual, order_screen
 NOISE = 'noise.json'
 SCHEMA = 'glacier-offsets-annual-noise-v1'
 ESTIMATOR_MODULES = ('velocity_annual_noise', 'velocity_fit', 'velocity_systematics', 'velocity_quality',
-                     'velocity_pixel_general')
+                     'velocity_pixel_general', 'velocity_basis', 'velocity_temporal', 'velocity_vertical')
 
 
 def check_covariance(matrix, label):

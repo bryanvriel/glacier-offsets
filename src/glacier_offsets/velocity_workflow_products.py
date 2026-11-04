@@ -23,7 +23,8 @@ from .velocity_pixel_general import Layout, load_field, screen, solve, predict, 
 from .velocity_pixel_runtime import module_fingerprints
 
 
-EXPORT_MODULES = ('velocity_workflow_products', 'velocity_pixel_maps', 'velocity_pixel_plot', 'velocity_pixel_series')
+EXPORT_MODULES = ('velocity_workflow_products', 'velocity_pixel_maps', 'velocity_pixel_plot', 'velocity_pixel_series',
+                  'velocity_basis', 'velocity_temporal', 'velocity_vertical', 'velocity_pixel_general')
 
 
 class RunView:

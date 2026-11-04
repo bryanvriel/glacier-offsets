@@ -13,10 +13,8 @@ from .velocity_quality import cluster_weights
 def vertical_columns(early,late):
     columns=[]
     for period in (M2_PERIOD,O1_PERIOD):
-        omega=2*np.pi/period
-        columns.extend([np.cos(omega*late)-np.cos(omega*early),
-                        np.sin(omega*late)-np.sin(omega*early)])
-    return np.nan_to_num(np.stack(columns,axis=-1))
+        columns.append(harmonic(early,late,period,observation='difference'))
+    return np.nan_to_num(np.concatenate(columns,axis=-1))
 
 
 class VerticalRegionalDesign:

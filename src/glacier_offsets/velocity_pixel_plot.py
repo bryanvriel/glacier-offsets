@@ -21,7 +21,7 @@ import matplotlib.dates as mdates
 import h5py
 import numpy as np
 from pyproj import Transformer
-from glacier_offsets.velocity_basis import PERIOD,utc_days
+from glacier_offsets.velocity_basis import utc_days,harmonic
 from glacier_offsets.velocity_io import digest,write_json
 from glacier_offsets.velocity_pixel_general import screen
 from glacier_offsets.velocity_pixel_series import evaluate_named
@@ -61,8 +61,8 @@ def draw_along_model(ax,t,model,year,valid_time,baseline,target,duration):
     for k,base in enumerate(baseline):
         mask=(year==k)&valid_time&np.isfinite(model)
         if not mask.any():continue
-        dense=np.linspace(t[mask].min(),t[mask].max(),2500);interval=float(np.median(duration[mask]));w=2*np.pi/PERIOD
-        prediction=base+np.sinc(interval/PERIOD)*(target[0]*np.cos(w*dense)+target[1]*np.sin(w*dense))
+        dense=np.linspace(t[mask].min(),t[mask].max(),2500);interval=float(np.median(duration[mask]))
+        prediction=base+harmonic(dense-interval/2,dense+interval/2,observation='average')@target
         ax.plot(dates(dense),prediction,color='#d66c20',lw=1.15,zorder=3)
         ax.scatter(dates(t[mask]),model[mask],s=10,facecolors='none',edgecolors='#d66c20',linewidths=.6,zorder=3)
 
@@ -198,7 +198,8 @@ def run_view(view,targets):
         'screen':'stored-run yearwise screen; retained observations untrimmed; out-of-range rejected values explicitly marked',
         'inversion_parameters':parameters,
         'maximum_reconstructed_RMS_difference_m':max(replay),'regions_sha256':digest(view.regions_file),
-        'software_sha256':module_fingerprints(('velocity_pixel_plot','velocity_pixel_series'))})
+        'software_sha256':module_fingerprints(('velocity_pixel_plot','velocity_pixel_series','velocity_basis',
+                                             'velocity_temporal','velocity_vertical'))})
     files+=['point_timeseries/series.npz','point_timeseries/points.json']+[f"point_timeseries/{p['label']}.csv" for p in points]
     print(json.dumps(points,indent=2,default=lambda x:x.tolist() if hasattr(x,'tolist') else str(x)))
     return files

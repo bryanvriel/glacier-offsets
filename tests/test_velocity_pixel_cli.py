@@ -27,7 +27,8 @@ class PortablePixelTests(unittest.TestCase):
                 self.assertEqual(main(['velocity-pixels','fit',str(config)]),0)
             output=root/'result';before=digest(output/'source_coefficients.h5')
             recipe=json.loads((output/'recipe.json').read_text())
-            self.assertTrue(all(key.startswith('glacier_offsets.') for key in recipe['code_sha256']))
+            self.assertTrue(all(key.startswith(('glacier_offsets.', 'iceutils.')) for key in recipe['code_sha256']))
+            self.assertIn('iceutils.tseries.timefn.Collection', recipe['code_sha256'])
             self.assertEqual(recipe['auxiliary_sha256']['regions.reviewed.json'],digest(regions))
             with chdir(root):
                 self.assertEqual(main(['velocity-pixels','fit',str(config)]),0)

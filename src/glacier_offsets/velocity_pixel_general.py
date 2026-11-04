@@ -17,6 +17,7 @@ from .velocity_collection import year_start
 from .velocity_quality import quiet_median
 from .velocity_systematics import order_screen, weighted_median
 from .velocity_vertical import vertical_columns
+from .velocity_temporal import matrix as temporal_matrix
 
 
 VERTICAL_NAMES = ('vertical_M2_C', 'vertical_M2_S', 'vertical_O1_C', 'vertical_O1_S')
@@ -65,10 +66,11 @@ class Layout:
 
     def overlaps(self, early, late):
         """Exact days of each pair interval inside each regime (NaN for missing endpoints)."""
-        early = np.asarray(early, float)[..., None]
-        late = np.asarray(late, float)[..., None]
-        overlap = np.minimum(late, self.bounds[1:])-np.maximum(early, self.bounds[:-1])
-        return np.where(np.isnan(overlap), np.nan, np.maximum(overlap, 0.))
+        specs = tuple(('constant', None if k == 0 else float(self.bounds[k]),
+                       None if k == len(self.years)-1 else float(self.bounds[k+1]))
+                      for k in range(len(self.years)))
+        overlap = temporal_matrix(specs, early, late, observation='integral')
+        return np.maximum(overlap, 0.)
 
     def order_sign(self, year):
         partner = self.order_spacecraft.get(str(year), {}).get('partner') or 'S1B'

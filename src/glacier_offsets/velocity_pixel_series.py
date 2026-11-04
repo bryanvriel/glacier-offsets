@@ -7,7 +7,7 @@ by name; annual secular terms are integrated over each pair's overlap with
 every calendar-year regime.
 """
 import numpy as np
-from .velocity_basis import harmonic,PERIOD
+from .velocity_basis import harmonic
 from .velocity_vertical import vertical_columns
 
 VERTICAL=('vertical_M2_C','vertical_M2_S','vertical_O1_C','vertical_O1_S')
@@ -51,11 +51,10 @@ def evaluate_named(field,coefficients,names,axis,years,overlap=None):
         modeled_radar=prediction/dt[...,None]
         denominator=dt*projection[...,1]
         along_observed=(field['data'][...,1]-order[...,1]-vertical[...,1]-cross_secular[...,1])/denominator
-        along_msf=displacement/dt
+        along_msf=np.einsum('stj,sj->st',harmonic(early,late,observation='average'),target)
         along_modeled=baseline+along_msf
     mid=(early+late)/2
-    omega=2*np.pi/PERIOD
-    instantaneous=baseline+target[:,0,None]*np.cos(omega*mid)+target[:,1,None]*np.sin(omega*mid)
+    instantaneous=baseline+np.einsum('stj,sj->st',harmonic(mid,observation='sample'),target)
     return {'duration_days':dt,'midpoint_days':mid,'predicted_radar_displacement_m':prediction,
         'observed_radar_velocity_m_day':observed_radar,'modeled_radar_velocity_m_day':modeled_radar,
         'secular_radar_displacement_m':secular,'order_radar_displacement_m':order,

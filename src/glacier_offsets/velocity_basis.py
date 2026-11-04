@@ -1,10 +1,10 @@
 """Exact displacement and velocity bases in UTC elapsed days.
 
-No processing/native modules are imported by the temporal fitting package.
+Temporal observation matrices are evaluated by iceutils; EN layout stays local.
 """
 from datetime import datetime, timezone
 import numpy as np
-from scipy.interpolate import BSpline
+from .velocity_temporal import matrix as temporal_matrix
 
 PERIOD = 14.765294
 ORIGIN = '2000-01-01T00:00:00+00:00'
@@ -26,15 +26,9 @@ def utc_days(values):
     return np.array([convert(x) for x in array.flat]).reshape(array.shape)
 
 
-def harmonic(early, late, period=PERIOD):
-    """Integrate velocity cosine/sine analytically, returning metres per m/day."""
-    early, late = np.broadcast_arrays(early, late)
-    omega = 2*np.pi/period
-    mid = (early+late)/2
-    duration = late-early
-    # sinc form avoids cancellation for short intervals and retains the sign.
-    factor = duration*np.sinc(duration/period)
-    return np.stack((factor*np.cos(omega*mid), factor*np.sin(omega*mid)), -1)
+def harmonic(early, late=None, period=PERIOD, *, observation='integral'):
+    """Observe fixed-origin cosine/sine velocity (integrals use elapsed days)."""
+    return temporal_matrix((('periodic', 0., float(period)),), early, late, observation=observation)
 
 
 def definition(early, late, background='constant', scales=(60., 120., 240.)):
@@ -55,31 +49,32 @@ def definition(early, late, background='constant', scales=(60., 120., 240.)):
             'spline_degree': 3, 'time_units': 'UTC elapsed days since 2000-01-01'}
 
 
-def _spline(t, spec, integrated):
-    center, scale = spec['center'], spec['scale']
-    knots = center+scale*np.arange(-2, 3)
-    b = BSpline.basis_element(knots, extrapolate=False)
-    t = np.asarray(t)
-    if integrated:
-        integral = b.antiderivative()
-        return integral(np.clip(t, knots[0], knots[-1]))-integral(knots[0])
-    return np.where((t >= knots[0]) & (t <= knots[-1]), b(np.clip(t, knots[0], knots[-1])), 0.)
+def background_specs(basis):
+    """Rebuild the stored velocity dictionary without changing its coordinates."""
+    specs = [('constant',)]
+    if basis['background'] != 'constant':
+        specs.append(('linear', basis['reference_day']))
+    specs.extend(('bspline', spec['center'], spec['scale'], basis['spline_degree'])
+                 for spec in basis['splines'])
+    return tuple(specs)
 
 
 def background_columns(t, basis, *, displacement=False):
     """Velocity dictionary or its analytic primitive (unobservable constant omitted)."""
-    t = np.asarray(t, dtype=float)
-    dt = t-basis['reference_day']
-    columns = [dt if displacement else np.ones_like(t)]
-    if basis['background'] != 'constant':
-        columns.append(dt**2/2 if displacement else dt)
-    columns.extend(_spline(t, spec, displacement) for spec in basis['splines'])
+    specs = background_specs(basis)
+    if not displacement:
+        return temporal_matrix(specs, t)
+    # Retain historical primitive offsets for callers evaluating a primitive.
+    columns = []
+    for spec in specs:
+        origin = spec[1]-2*spec[2] if spec[0] == 'bspline' else basis['reference_day']
+        columns.append(temporal_matrix((spec,), origin, t, observation='integral')[..., 0])
     return np.stack(columns, -1)
 
 
 def design(early, late, basis, parameterization, direction):
     """Return (pair, EN, parameter) design, names and spline penalty indices."""
-    bg = background_columns(late, basis, displacement=True)-background_columns(early, basis, displacement=True)
+    bg = temporal_matrix(background_specs(basis), early, late, observation='integral')
     ht = harmonic(early, late, basis['period_days'])
     nbg = bg.shape[-1]
     nt = 4 if parameterization == 'free_en' else 2
@@ -110,8 +105,7 @@ def evaluate(coefficients, basis, parameterization, direction, days):
     nbg = bg.shape[-1]
     coefficients = np.asarray(coefficients)
     velocity = bg @ coefficients[:2*nbg].reshape(nbg, 2)
-    omega = 2*np.pi/basis['period_days']
-    ht = np.stack((np.cos(omega*np.asarray(days)), np.sin(omega*np.asarray(days))), -1)
+    ht = harmonic(days, period=basis['period_days'], observation='sample')
     target = coefficients[2*nbg:]
     if parameterization == 'free_en':
         velocity += ht @ target.reshape(2, 2).T
