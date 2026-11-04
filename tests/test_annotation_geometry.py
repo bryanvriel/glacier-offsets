@@ -1,6 +1,6 @@
 """Boundary joins must recover metadata without concealing conflicting grids."""
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 import tempfile
@@ -12,6 +12,7 @@ import zipfile
 from s1reader.s1_reader import get_burst_centers_and_boundaries
 
 from glacier_offsets.annotation_geometry import boundary_grid, normalize_burst_geometry
+from glacier_offsets.annotation_geometry import source_boundary_row
 from glacier_offsets.inputs import inventory
 from glacier_offsets.products import checksum
 
@@ -24,6 +25,7 @@ class Native:
     center: object
     border: object
     radar_metadata: object
+    orbit: object = None
 
 
 def annotation(duplicate='row', dateline=False):
@@ -69,7 +71,84 @@ def natives(tree):
                    centers[i], borders[i], object()) for i in range(3)]
 
 
+def reference_surface_annotation(full_following=False):
+    """Independent range-Doppler geometry, with two source reference heights."""
+    import isce3
+    import numpy as np
+    start=datetime(2018,9,17)
+    radius=7071000.;rate=.001
+    states=[]
+    for t in range(-60,61,10):
+        states.append(isce3.core.StateVector(isce3.core.DateTime(start+timedelta(seconds=t)),
+            [radius*np.cos(rate*t),radius*np.sin(rate*t),0],
+            [-radius*rate*np.sin(rate*t),radius*rate*np.cos(rate*t),0]))
+    orbit=isce3.core.Orbit(states,isce3.core.DateTime(start))
+    tree=annotation(None)
+    grid=tree.find('geolocationGrid/geolocationGridPointList');grid[:]=[]
+    for index in range(4):
+        surfaces=(0.,400.) if index==1 else ((0.,) if index==0 else (400.,))
+        for surface in surfaces:
+            pixels=(0,100,200)
+            if index==1 and surface==400. and not full_following:pixels=(200,)
+            for pixel in pixels:
+                t=2.*index+(1e-6 if index==1 and surface==400. else 0.)
+                distance=850000.+500*pixel
+                llh=isce3.geometry.rdr2geo(t,distance,orbit,'right',dem=isce3.geometry.DEMInterpolator(surface))
+                point=ET.SubElement(grid,'geolocationGridPoint')
+                for key,value in [('azimuthTime',(start+timedelta(seconds=t)).isoformat()),
+                    ('slantRangeTime',2*distance/isce3.core.speed_of_light),
+                    ('line',index*1000),('pixel',pixel),('longitude',np.rad2deg(llh[0])),
+                    ('latitude',np.rad2deg(llh[1])),('height',200. if index==1 else surface)]:
+                    ET.SubElement(point,key).text=str(value)
+    grid.set('count',str(len(grid)))
+    return tree,orbit
+
+
 class AnnotationGeometryTests(unittest.TestCase):
+    def test_orbit_validated_source_join_keeps_a_whole_row_without_synthesizing_points(self):
+        for full in (False,True):
+            with self.subTest(full_following=full):
+                tree,orbit=reference_surface_annotation(full)
+                before=ET.tostring(tree)
+                selected,report=source_boundary_row(tree,1000,orbit)
+                self.assertEqual(report['source'],'following' if full else 'previous')
+                self.assertAlmostEqual(report['previous']['height_m'],0.,places=5)
+                self.assertAlmostEqual(report['following']['height_m'],400.,places=5)
+                self.assertLess(report['selected']['height_span_m'],1e-5)
+                self.assertLess(report['selected']['max_zero_doppler_distance_m'],1e-5)
+                normalized,affected=boundary_grid(tree,orbit)
+                self.assertEqual(affected,{0,1})
+                actual=[p for p in normalized.findall('.//geolocationGridPoint') if p.findtext('line')=='1000']
+                self.assertEqual([ET.tostring(p) for p in actual],[ET.tostring(p) for p in selected])
+                self.assertEqual(ET.tostring(tree),before)
+                original=[replace(b,orbit=orbit) for b in natives(tree)]
+                fixed=normalize_burst_geometry('unused.SAFE',2,'HH',original,tree)
+                expected=natives(normalized)
+                for index in (0,1):
+                    self.assertTrue(fixed[index].border[0].equals_exact(expected[index].border[0],0))
+                    self.assertIs(fixed[index].orbit,original[index].orbit)
+                    self.assertIs(fixed[index].radar_metadata,original[index].radar_metadata)
+                self.assertIs(fixed[2],original[2])
+                with self.assertRaisesRegex(ValueError,'coordinates disagree'):
+                    boundary_grid(tree)
+
+    def test_orbit_join_does_not_accept_arbitrary_conflicts_or_partial_rows(self):
+        for problem in ('position','range','doppler','height','fragment','neighbour','time'):
+            with self.subTest(problem=problem):
+                tree,orbit=reference_surface_annotation()
+                grid=tree.find('geolocationGrid/geolocationGridPointList')
+                point=grid[3]
+                if problem=='position':point.find('latitude').text='-60'
+                elif problem=='range':point.find('slantRangeTime').text='.007'
+                elif problem=='doppler':point.find('longitude').text='10'
+                elif problem=='height':point.find('height').text='nan'
+                elif problem=='fragment':
+                    del grid[3:5];grid.set('count',str(len(grid)))
+                elif problem=='neighbour':grid[8].find('latitude').text='-60'
+                elif problem=='time':point.find('azimuthTime').text='2018-09-17T00:00:01'
+                with self.assertRaises((ValueError,RuntimeError)):
+                    boundary_grid(tree,orbit)
+
     def test_duplicate_row_and_endpoint_recover_expected_border_and_center(self):
         expected = natives(annotation(None))
         for mode in ('row', 'endpoint'):

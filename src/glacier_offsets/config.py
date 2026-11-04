@@ -4,12 +4,15 @@ import math
 from pathlib import Path
 import yaml
 
+from .paths import absolute_path
+
 
 DEFAULT_CONFIG_PATH = Path(__file__).with_name('defaults.yaml')
 PATH_FIELDS = (
     *(('inputs', key) for key in ('reference_safe', 'secondary_safe',
                                  'reference_orbit', 'secondary_orbit', 'dem')),
     ('output', 'directory'),
+    ('storage', 'scratch_directory'),
     ('packaging', 'output'),
     ('aoi', 'path'),
     ('gross_offsets', 'velocity', 'vx', 'path'),
@@ -37,8 +40,7 @@ def resolve_config_paths(cfg: dict, directory: Path) -> dict:
             continue  # Leave missing required values to stage-specific validation.
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f'{".".join(field)} must be a nonempty local path string')
-        local = Path(value).expanduser()
-        section[field[-1]] = str(local if local.is_absolute() else (directory / local).resolve())
+        section[field[-1]] = str(absolute_path(value, directory))
     return cfg
 
 
@@ -54,7 +56,7 @@ def _read_mapping(path: Path) -> dict:
 
 def load_defaults() -> dict:
     """Read the single packaged defaults file, also linked from configs/."""
-    return resolve_config_paths(_read_mapping(DEFAULT_CONFIG_PATH), DEFAULT_CONFIG_PATH.resolve().parent)
+    return resolve_config_paths(_read_mapping(DEFAULT_CONFIG_PATH), absolute_path(DEFAULT_CONFIG_PATH).parent)
 
 
 def merge_config(base: dict, overrides: dict) -> dict:
@@ -84,8 +86,9 @@ def config_overrides(cfg: dict, defaults: dict | None = None) -> dict:
 
 
 def _load_overrides(path: Path, ancestors: tuple[Path, ...] = ()) -> dict:
-    path = path.expanduser().resolve()
-    if path in ancestors:
+    path = absolute_path(path)
+    # Physical identity is used only to detect cycles through symlink aliases.
+    if path.resolve() in (ancestor.resolve() for ancestor in ancestors):
         raise ValueError('Configuration inheritance cycle: ' + ' -> '.join(map(str, (*ancestors, path))))
     cfg = resolve_config_paths(_read_mapping(path), path.parent)
     parent = cfg.pop('extends', 'defaults')

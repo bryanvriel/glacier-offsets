@@ -4,6 +4,7 @@ import importlib.util
 import io
 from pathlib import Path
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 from zipfile import ZipFile
@@ -80,9 +81,9 @@ class InitializationTests(unittest.TestCase):
             orbit(d/'restituted.EOF', self.time-timedelta(hours=8), kind='AUX_RESORB', created='2023-01-01T00:00:00')
             orbit(d/'invalid.EOF', self.time-timedelta(hours=8), reversed_vectors=True)
             catalog = OrbitCatalog(d)
-            self.assertEqual(catalog.resolve(s).path, new.resolve())
+            self.assertEqual(catalog.resolve(s).path, new.absolute())
             new.unlink()
-            self.assertEqual(OrbitCatalog(d).resolve(s).path, old.resolve())
+            self.assertEqual(OrbitCatalog(d).resolve(s).path, old.absolute())
             old.unlink()
             with self.assertRaisesRegex(ValueError, 'No precise orbit'):
                 OrbitCatalog(d).resolve(s)
@@ -104,6 +105,32 @@ class InitializationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'relative orbit'):
                 order_pair([a, wrong])
 
+    def test_orbit_catalog_checks_files_concurrently_and_keeps_selection(self):
+        from glacier_offsets.initialization import read_precise_orbit
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder).resolve()
+            orbit(root/'a.EOF',self.time-timedelta(hours=8))
+            newest=orbit(root/'b.EOF',self.time-timedelta(hours=8),created='2022-01-01T00:00:00')
+            s=read_scene(scene(root/'scene.zip',self.time))
+            barrier=threading.Barrier(2,timeout=5)
+            threads=set()
+            def read(path):
+                threads.add(threading.get_ident())
+                barrier.wait()
+                return read_precise_orbit(path)
+            with patch('glacier_offsets.initialization.read_precise_orbit',side_effect=read) as checked:
+                parallel=OrbitCatalog(root,workers=2)
+            self.assertEqual(checked.call_count,2)
+            self.assertEqual(len(threads),2)
+            sequential=OrbitCatalog(root,workers=1)
+            self.assertEqual(parallel.orbits,sequential.orbits)
+            self.assertEqual(parallel.resolve(s).path,newest)
+            (root/'bad.EOF').write_text('bad XML')
+            self.assertEqual(OrbitCatalog(root,workers=2).orbits,sequential.orbits)
+            for invalid in (0,-1,True,1.5):
+                with self.assertRaisesRegex(ValueError,'positive integer'):
+                    OrbitCatalog(root,workers=invalid)
+
     def test_orbit_catalog_ignores_hidden_files_and_directories(self):
         from glacier_offsets.initialization import read_precise_orbit
         with tempfile.TemporaryDirectory() as d:
@@ -116,8 +143,8 @@ class InitializationTests(unittest.TestCase):
             orbit(hidden/'newer.EOF',self.time-timedelta(hours=8),created='2025-01-01T00:00:00')
             with patch('glacier_offsets.initialization.read_precise_orbit',wraps=read_precise_orbit) as read:
                 catalog=OrbitCatalog(d)
-            read.assert_called_once_with(visible.resolve())
-            self.assertEqual(catalog.resolve(s).path,visible.resolve())
+            read.assert_called_once_with(visible.absolute())
+            self.assertEqual(catalog.resolve(s).path,visible.absolute())
 
     def fixture(self, d, polarizations=('HH',), epsg=3031):
         a = scene(d/'ref.zip', self.time, polarizations=polarizations)
@@ -136,7 +163,7 @@ class InitializationTests(unittest.TestCase):
             d = Path(d)
             paths, dem, orbits = self.fixture(d)
             cfg = make_pair_config(paths, dem, orbits, d/'work', max_separation_days=12)
-            self.assertEqual(cfg['inputs']['reference_safe'], str(paths[1].resolve()))
+            self.assertEqual(cfg['inputs']['reference_safe'], str(paths[1].absolute()))
             self.assertEqual(cfg['inputs']['polarization'], 'HH')
             self.assertNotIn('burst_id', cfg['inputs'])
             self.assertNotIn('first_center', cfg['matching'])
@@ -213,6 +240,34 @@ class InitializationTests(unittest.TestCase):
                 loaded = load_config(output, discovery=True)
             expected = make_pair_config(paths, dem, orbits, d/'work')
             self.assertEqual(loaded, expected)
+
+    def test_pair_init_preserves_symlinked_safe_orbit_dem_and_output_paths(self):
+        spec=importlib.util.spec_from_file_location('init_pair_config',Path(__file__).resolve().parents[1]/'tools/init_pair_config.py')
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder).resolve()
+            drive=root/'drive';drive.mkdir()
+            paths,dem,orbits=self.fixture(drive)
+            project=root/'project';project.mkdir()
+            (project/'data').symlink_to(drive,target_is_directory=True)
+            (drive/'configs').mkdir()
+            (project/'configs').symlink_to(drive/'configs',target_is_directory=True)
+            for relative in (False,True):
+                output=project/'configs'/f'pair-{relative}.yaml'
+                args=[str(project/'data'/p.name) for p in paths]+[
+                    '--dem',str(project/'data/dem.tif'),'--orbit-dir',str(project/'data/orbits'),
+                    '--output',str(output),'--output-directory',str(project/'data/work')]
+                if relative:args.append('--relative-paths')
+                with contextlib.redirect_stdout(io.StringIO()):module.main(args)
+                cfg=load_config(output,discovery=True)
+                self.assertEqual(cfg['inputs']['reference_safe'],str(project/'data/ref.zip'))
+                self.assertEqual(cfg['inputs']['secondary_safe'],str(project/'data/sec.zip'))
+                self.assertEqual(cfg['inputs']['dem'],str(project/'data/dem.tif'))
+                for side in ('reference','secondary'):
+                    self.assertTrue(cfg['inputs'][side+'_orbit'].startswith(str(project/'data/orbits')+'/'))
+                self.assertEqual(cfg['output']['directory'],str(project/'data/work'))
+                with self.assertRaisesRegex(ValueError,'distinct'):
+                    order_pair([read_scene(paths[0]),read_scene(project/'data'/paths[0].name)])
 
 
 if __name__ == '__main__':

@@ -523,7 +523,11 @@ def _download(request, groups, root, converter):
                                       all_anns=True, keep_files=True, work_dir=scratch)).resolve()
                 if not safe.is_relative_to(scratch) or not safe.is_dir() or safe.suffix != '.SAFE':
                     raise ValueError('burst2safe returned an invalid staged SAFE path')
+                from .burst_download_repair import repair_annotation_widths
+                repairs = repair_annotation_widths(safe, group, scratch)
                 validation = validate_safe(safe, group, request)
+                if repairs:
+                    validation['annotation_repairs'] = repairs
                 downloaded = [p for p in scratch.rglob('*') if p.is_file() and not p.is_relative_to(safe)
                               and not filesystem_metadata(p.relative_to(scratch))]
                 group['downloaded_bytes'] = sum(p.stat().st_size for p in downloaded)

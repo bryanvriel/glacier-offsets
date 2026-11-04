@@ -228,6 +228,13 @@ Collections contain `download_manifest.json`, visible completed SAFEs beneath
 validate XML, complex TIFF dimensions/readability and required helper annotations
 before publishing a complete acquisition directory. The manifest records
 granules/parents, coverage, context, checksums, package versions and group status.
+For the known `burst2safe` mixed-slice width issue, the downloader repairs an
+inherited `numberOfSamples` only when retained source annotations prove a
+one-sample width difference and the complex TIFF already matches the larger
+`samplesPerBurst` width. It updates the SAFE manifest checksum/size and records
+the repair under the acquisition's `validation.annotation_repairs`. Image samples
+are unchanged; all other dimension errors remain failures and full validation
+still runs before publication.
 Rerunning the same request verifies checksums and reuses unchanged files;
 incomplete/corrupt groups are retried and independent groups continue after a
 failure. Resume checkpoints preserve completed acquisition records even when
@@ -251,9 +258,23 @@ Reconstructed SAFEs can contain overlapping geolocation records at internal
 burst joins. During inventory, KML export and COMPASS processing, these records
 are interpreted in memory: for a repeated line/pixel, use the record nearest
 the following burst's annotated start. Normalization requires an assembled
-product, a regular burst-boundary grid, timestamps within 1.1 azimuth samples,
-and coordinates within two ground azimuth pixels. Conflicting records and
-invalid resulting footprints still fail validation. Downloaded XML and imagery
+product, a regular burst-boundary grid and timestamps within 1.1 azimuth samples.
+Coordinates normally must agree within two ground azimuth pixels. Larger
+differences can arise when source slices use different nominal reference-height
+surfaces. With an orbit available, the reader checks the zero-Doppler/range
+equations, requires each adjacent complete row to fit one reference height
+(at most 1 m height spread), and requires every boundary fragment to match one
+of those two surfaces within 1 m. Reference heights must lie within the annotated
+grid's height envelope (including zero), with a two-azimuth-pixel allowance;
+zero-Doppler residuals must also be within two azimuth pixels. Only complete,
+matching range-sample rows qualify. The reader retains a complete following-source
+row when available, otherwise a complete preceding-source row. It copies that
+entire row without averaging, interpolation or coordinate changes. The logged
+reference heights describe nominal footprint surfaces, not measured ice height.
+Without an orbit, large conflicts still fail (supply `--orbit-dir` or `--orbit`
+for KML export). Conflicting records and invalid resulting footprints still fail
+validation. This affects approximate discovery footprints and centers only;
+precise-orbit/DEM coregistration and radar metadata are unchanged. Downloaded XML and imagery
 remain unchanged; existing collections do not need downloading or preparation
 again for this correction. Regenerate saved stack plans to update coverage.
 
@@ -290,6 +311,13 @@ the same XML, state-vector, interpolation-margin and latest-creation selection
 rules as processing. RESORB fallback is rejected. Downloads are staged and
 validated before cached precise files are replaced. `--refresh-orbits` queries
 the provider even if the cache is valid.
+Cached orbit XML/state-vector checks run in parallel with four workers by
+default. Set `--orbit-workers 8` to change this, or `--orbit-workers 1` for
+sequential verification. Preparation indexes the orbit directory once per
+invocation and reuses that validated catalog across scenes; newly downloaded
+orbits are validated before promotion and added to the same catalog. Downloads,
+auxiliary preparation and scene reports remain sequential, with the same orbit
+selection, failure and refresh behavior. `--skip-orbit` skips the catalog checks.
 
 DEM defaults are one shared GeoTIFF, a 5 km footprint buffer, and automatic
 source selection: REMA for buffered bounds entirely south of 55°S, otherwise
@@ -387,6 +415,19 @@ matching:
 Mappings merge recursively; lists such as window/stride/subswaths replace the whole list. Absolute parent paths and further parent/child layers are supported. Cycles, missing parents and malformed inheritance raise clear errors. `extends: defaults` selects the packaged default file without a filesystem-relative path; the initializer writes this portable form, and omitting `extends` also inherits the packaged defaults for compatibility with earlier YAMLs. `extends` is removed from the resolved processing configuration. If the example YAML is copied to another directory, adjust its `extends` path or use `extends: defaults`.
 
 Local paths may be absolute or relative to the directory of the YAML that declares them, regardless of where you run the command. This applies to SAFE files/directories, orbit files, the DEM, `output.directory`, and `gross_offsets.velocity.vx.path` / `vy.path`. Inherited paths remain relative to their parent YAML; a child override is relative to the child YAML. `~` expands to the current user's home directory. For a YAML in `configs/`, `../data/...` and `../work/...` refer to the project's `data/` and `work/` directories. Keep that layout when syncing between machines. Input paths must exist; the output directory may be created during processing. `load_config()` returns absolute paths for downstream processing.
+
+Configuration loading, pair/stack initialization and preparation handoffs preserve
+symbolic-link paths. For example, if `/project/data` links to an external drive,
+an input remains `/project/data/evans` (or `../data/evans` in a YAML under
+`/project/configs`) instead of being rewritten to `/Volumes/...`. Relative paths
+use the YAML's visible location, including when the YAML or its directory is a
+symlink; parent YAMLs retain their own visible locations. Home and dot components
+are normalized without following links. Input existence checks still follow the
+links, and internal identity/ownership checks may use physical paths. Previously
+saved physical paths are not automatically mapped back to symlinks; regenerate
+the configuration or supply the desired alias explicitly. For `stack init
+--prepared-inputs`, explicit `--safe-dir`, `--orbit-dir` and `--dem` override older
+manifest paths.
 
 All maintained pair YAMLs now inherit from the shared file. Changing a default affects pairs that have not explicitly overridden it. Existing result files are not rewritten on edit; processing identities use resolved settings when stages are next run. Archived validation configs/results retain their as-run parameters. The initializer writes only overrides, including an explicit EPSG inferred from the DEM; it does not duplicate matching defaults or a default map spacing. To freeze a configuration for archival reproducibility, save the resolved config from `load_config()` rather than a live inheritance document.
 
@@ -606,6 +647,21 @@ OMP_NUM_THREADS=4 glacier-offsets stack run configs/stack.generated.yaml --backe
 ```
 
 `python tools/init_stack_config.py` accepts the same initialization options.
+Stack initialization writes all resolved production settings into the YAML,
+including matching values, storage and ISCE2 runtime options, geocoding,
+packaging, pairing, verification workers and disabled swath-correction settings.
+New stack YAMLs explicitly select production range-2x matching:
+`matching.engine: isce3`, `backend: cpu`, `deramp: 0` and `range_oversampling: 2`.
+It writes a complete configuration rather than compact `extends: defaults`
+overrides, so existing values stay explicit when packaged defaults change.
+The generated file can be passed directly to `plan`, `validate` and `run`.
+Absolute paths are the default; `--relative-paths` makes declared paths relative
+to the output YAML, including a configured `storage.scratch_directory`.
+Runtime product directories (`geometry`, dated `acquisitions`, dated `pairs`,
+and `packages`) are derived from `output.directory` and described in the YAML
+header. Null optional paths keep their automatic behavior; initialization does
+not create processing directories. Pair initialization still writes compact
+overrides.
 
 List processing stages or inspect completion without running them:
 
@@ -1086,8 +1142,10 @@ internal SSD), range-2x took 164 s against 93 s for `deramp: 0`: 33 s of
 preparation and 131 s of matching. Peak worker RSS was 1.2 GB against 0.85 GB. Segment metadata and `native_parameters.range_oversampling`
 record the treatment.
 
-The default, 1, keeps existing matching identities, so completed pairs are not
-rematched. Setting 2 changes the matching identity: rerunning a root rematches
+The shared default remains 1 for configurations that omit this setting;
+`stack init` explicitly writes 2 for new production stacks. Existing YAMLs are
+not rewritten. Changing an existing stack to 2 changes the matching identity:
+rerunning a root rematches
 its pairs, reusing geometry, aligned bursts and assemblies. Standalone pair/AOI
 matching, GPU matching and the ISCE2 engine reject `range_oversampling: 2`.
 

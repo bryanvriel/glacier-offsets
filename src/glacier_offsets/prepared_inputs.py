@@ -1,11 +1,12 @@
 """Resolve a successful preparation manifest into stack initializer inputs."""
 import json
 from pathlib import Path
+from .paths import absolute_path
 
 
 def prepared_paths(path, safe_directory=None, orbit_directory=None, dem=None):
     supplied_dem = dem
-    path = Path(path).expanduser().resolve(strict=True)
+    path = absolute_path(path, strict=True)
     with path.open() as stream:
         m = json.load(stream)
     if not isinstance(m,dict) or m.get('method') != 's1-input-preparation-v1':
@@ -24,8 +25,7 @@ def prepared_paths(path, safe_directory=None, orbit_directory=None, dem=None):
                 collection_identity(current) != download['identity']):
             raise ValueError('Burst download collection changed; rerun prepare-inputs before stack init')
     def local(value):
-        p = Path(value).expanduser()
-        return str((p if p.is_absolute() else path.parent/p).resolve())
+        return str(absolute_path(value, path.parent))
     safe = safe_directory or m.get('safe_directory')
     orbits = orbit_directory or m.get('orbit_directory')
     dem = dem or m.get('dem')
@@ -35,6 +35,6 @@ def prepared_paths(path, safe_directory=None, orbit_directory=None, dem=None):
         raise ValueError('A shared DEM and orbit directory are required; provide --dem/--orbit-dir '
                          'when preparation skipped them or used per-safe DEMs')
     # Explicit CLI paths retain their usual current-directory interpretation.
-    return (str(Path(safe_directory).expanduser().resolve()) if safe_directory else local(safe),
-            str(Path(orbit_directory).expanduser().resolve()) if orbit_directory else local(orbits),
-            str(Path(supplied_dem).expanduser().resolve()) if supplied_dem else local(dem))
+    return (str(absolute_path(safe_directory)) if safe_directory else local(safe),
+            str(absolute_path(orbit_directory)) if orbit_directory else local(orbits),
+            str(absolute_path(supplied_dem)) if supplied_dem else local(dem))

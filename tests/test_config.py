@@ -9,6 +9,41 @@ from glacier_offsets.config import load_config, gross_values, load_defaults, con
 
 
 class ConfigTests(unittest.TestCase):
+    def test_config_and_inheritance_preserve_visible_symlink_locations(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder).resolve()
+            drive=root/'drive';drive.mkdir()
+            project=root/'project';project.mkdir()
+            data=project/'data';data.symlink_to(drive,target_is_directory=True)
+            (drive/'input').touch()
+            (drive/'configs').mkdir()
+            configs=project/'configs';configs.symlink_to(drive/'configs',target_is_directory=True)
+            base=self.full_config(drive)
+            base['inputs'].update({key:'../data/input' for key in (
+                'reference_safe','secondary_safe','reference_orbit','secondary_orbit','dem')})
+            base['output']['directory']='../data/work'
+            (configs/'base.yaml').write_text(yaml.safe_dump(base))
+            child=configs/'pair.yaml';child.write_text('extends: base.yaml\n')
+            loaded=load_config(child)
+            self.assertEqual(loaded['inputs']['dem'],str(data/'input'))
+            self.assertEqual(loaded['output']['directory'],str(data/'work'))
+            # Absolute aliases survive too; no mapping back to drive paths.
+            base['inputs']['dem']=str(data/'input')
+            (configs/'base.yaml').write_text(yaml.safe_dump(base))
+            self.assertEqual(load_config(child)['inputs']['dem'],str(data/'input'))
+            # A symlink to the YAML itself uses its visible parent directory.
+            linked=project/'linked.yaml';linked.symlink_to(child)
+            linked.write_text('extends: configs/base.yaml\n')
+            self.assertEqual(load_config(linked)['inputs']['dem'],str(data/'input'))
+
+    def test_inheritance_cycle_through_a_symlink_is_rejected(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder).resolve()
+            (root/'again').symlink_to(root,target_is_directory=True)
+            path=root/'base.yaml';path.write_text('extends: again/base.yaml\n')
+            with self.assertRaisesRegex(ValueError,'inheritance cycle'):
+                load_config(path)
+
     def full_config(self, directory):
         p=directory/'input';p.touch()
         return {'inputs':{k:str(p) for k in ['reference_safe','secondary_safe','reference_orbit','secondary_orbit','dem']}
@@ -54,9 +89,9 @@ class ConfigTests(unittest.TestCase):
             pair.write_text(yaml.safe_dump({'extends': '../base/pair.yaml',
                 'inputs': {'dem': 'dem.tif'}, 'matching': {'backend': 'cpu'}}))
             cfg = load_config(pair)
-            self.assertEqual(cfg['inputs']['reference_safe'], str((root/'base/input').resolve()))
-            self.assertEqual(cfg['inputs']['dem'], str((root/'child/dem.tif').resolve()))
-            self.assertEqual(cfg['output']['directory'], str((root/'base/work').resolve()))
+            self.assertEqual(cfg['inputs']['reference_safe'], str(root/'base/input'))
+            self.assertEqual(cfg['inputs']['dem'], str(root/'child/dem.tif'))
+            self.assertEqual(cfg['output']['directory'], str(root/'base/work'))
 
     def test_home_paths_and_invalid_path_values(self):
         with tempfile.TemporaryDirectory() as root:
@@ -96,8 +131,8 @@ class ConfigTests(unittest.TestCase):
             pair.write_text(yaml.safe_dump({'extends': '../base.yaml', 'gross_offsets': {
                 'velocity': {'vy': {'path': 'velocity.tif', 'variable': 'north'}}}}))
             velocity = load_config(pair)['gross_offsets']['velocity']
-            self.assertEqual(velocity['vx']['path'], str((root/'input').resolve()))
-            self.assertEqual(velocity['vy']['path'], str((root/'nested/velocity.tif').resolve()))
+            self.assertEqual(velocity['vx']['path'], str(root/'input'))
+            self.assertEqual(velocity['vy']['path'], str(root/'nested/velocity.tif'))
             self.assertEqual(velocity['vy']['variable'], 'north')
 
     def test_recursive_inheritance_relative_to_yaml_and_list_replacement(self):
