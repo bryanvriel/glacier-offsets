@@ -205,12 +205,44 @@ class ExportTests(unittest.TestCase):
 
 
 class CommandTests(unittest.TestCase):
+    def test_relabelled_legacy_geometry_is_rejected_before_experiment_construction(self):
+        from glacier_offsets.stack_ownership import POLICY
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);(root/'stack/geometry').mkdir(parents=True)
+            geometry=root/'stack/geometry/manifest.json'
+            geometry.write_text(json.dumps({'specification':{'ownership_policy':POLICY}}))
+            original=geometry.read_bytes()
+            cfg={'stack':{'processing':'isce3_merge_first','swath_merge':'midpoint'},
+                 'output':{'directory':str(root/'stack')}}
+            with patch('glacier_offsets.stack_config.load_status_config',return_value=cfg), \
+                 patch('glacier_offsets.swath_experiment_io.Experiment',side_effect=AssertionError('read products')), \
+                 redirect_stdout(io.StringIO()),self.assertLogs(level='ERROR') as logs:
+                self.assertEqual(main(['config.yaml','--output',str(root/'results')]),2)
+            self.assertIn('retained geometry/ownership layout',logs.output[0])
+            self.assertFalse((root/'results').exists())
+            self.assertEqual(geometry.read_bytes(),original)
+
+    def test_legacy_stack_is_rejected_before_any_calibration_inputs_or_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output=Path(tmp)/'new-results'
+            for mode in ('isce3',None):
+                cfg={'stack':{'processing':mode}}
+                with self.subTest(mode=mode), \
+                     patch('glacier_offsets.stack_config.load_status_config',return_value=cfg), \
+                     patch('glacier_offsets.swath_experiment_io.Experiment',side_effect=AssertionError('read products')), \
+                     redirect_stdout(io.StringIO()),self.assertLogs(level='ERROR') as logs:
+                    self.assertEqual(main(['config.yaml','--output',str(output)]),2)
+                self.assertIn('Swath calibration requires stack.processing: isce3_merge_first',logs.output[0])
+                self.assertFalse(output.exists())
+
     def test_full_run_exports_and_never_silently_enables_rescoring(self):
         with tempfile.TemporaryDirectory() as tmp:
             exp = SimpleNamespace(output=Path(tmp), cfg={}, lock=lambda:nullcontext(),
                                   inputs=Inputs(), plan=lambda:{'status':'complete'})
             done = {'status':'complete'}
             with patch('glacier_offsets.swath_experiment_io.Experiment', return_value=exp), \
+                 patch('glacier_offsets.stack_config.load_status_config',return_value={
+                     'stack':{'processing':'isce3_merge_first'},'output':{'directory':tmp}}), \
                  patch('glacier_offsets.swath_physics.audit', return_value=done), \
                  patch('glacier_offsets.swath_observations.measure', return_value=done), \
                  patch('glacier_offsets.swath_physics.physics', return_value=done), \
@@ -227,6 +259,8 @@ class CommandTests(unittest.TestCase):
             exp = SimpleNamespace(output=Path(tmp), cfg={}, lock=lambda:nullcontext(),
                                   inputs=Inputs(), plan=lambda:{'status':'complete'})
             with patch('glacier_offsets.swath_experiment_io.Experiment', return_value=exp), \
+                 patch('glacier_offsets.stack_config.load_status_config',return_value={
+                     'stack':{'processing':'isce3_merge_first'},'output':{'directory':tmp}}), \
                  patch('glacier_offsets.swath_physics.audit', return_value={'status':'complete'}), \
                  patch('glacier_offsets.swath_observations.measure', return_value={'status':'incomplete'}), \
                  patch('glacier_offsets.swath_physics.physics', side_effect=AssertionError('Must stop')), \

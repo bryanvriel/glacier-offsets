@@ -1,6 +1,10 @@
+# Legacy interior-ownership example; kept for existing inheriting configurations.
+# New production stacks: use stack init or stack.merge-first.example.yaml.
 # One SAFE per UTC date; one orbit/direction/polarization group.
 extends: defaults
 stack:
+  processing: isce3
+  swath_merge: overwrite
   safe_directory: ../data/pig/safe
   orbit_directory: ../data/pig/orbits
   start_date: null

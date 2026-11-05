@@ -1,5 +1,6 @@
-"""Initialize a stack YAML from local SAFE/orbit directories and a burst selector."""
+"""Initialize a production merge-first/midpoint stack YAML from local inputs."""
 import argparse
+import json
 import os
 from pathlib import Path
 import sys
@@ -7,19 +8,44 @@ import yaml
 
 from .config import PATH_FIELDS, load_defaults, merge_config
 from .stack import plan_stack
-from .stack_config import STACK_DEFAULTS, validate_stack_config, verification_workers
+from .stack_config import validate_stack_config, verification_workers
 from .swath_correction_config import settings as correction_settings
 from .paths import absolute_path
 
 
 CONFIG_HEADER = '''# Complete stack settings, ready for stack plan, validate and run.
+# Production preset: glacier_offsets/stack_production.yaml (explicit new-stack values).
 # Matching arrays are [azimuth, range]. Null values retain automatic behavior.
+# Production stack: isce3_merge_first with midpoint ownership between swaths.
 # Production matching: ISCE3 CPU, deramp 0, complex range oversampling 2x.
+# Window [64, 256], search [10, 40], stride [32, 128], raw 2, refinement 32, zoom 16.
+# Zero gross offsets; nearest-source geocoding; quality filtering is downstream.
+# Swath correction is disabled until a stack-specific calibration is exported.
+# Use a new output root when changing an existing stack's processing/ownership.
+# Pairing caps exact elapsed scene-start days; reference defaults to earliest eligible.
 # Runtime directories are derived from output.directory:
 #   geometry/, acquisitions/<date>/, pairs/<earlier>_<later>/, packages/
 # storage.scratch_directory: null keeps temporary matching inputs with the pair.
 # Null matching.isce2 runtime paths use the current interpreter/environment.
 '''
+
+
+def production_defaults():
+    """Load the explicit new-stack preset independently of legacy defaults."""
+    path = Path(__file__).with_name('stack_production.yaml')
+    with path.open() as stream:
+        return yaml.safe_load(stream)
+
+
+def check_output_layout(cfg):
+    """Initialization cannot turn an existing geometry into a different layout."""
+    path = Path(cfg['output']['directory'])/'geometry/manifest.json'
+    if path.is_file():
+        from .stack_mosaic import policy
+        saved = json.loads(path.read_text()).get('specification', {}).get('ownership_policy')
+        if saved != policy(cfg):
+            raise ValueError('Output directory contains a different stack processing/ownership layout; '
+                             'choose a new --output-directory. stack init does not migrate existing products.')
 
 
 def make_stack_config(safe_directory, orbit_directory, dem, output_directory, polarization,
@@ -39,16 +65,15 @@ def make_stack_config(safe_directory, orbit_directory, dem, output_directory, po
         raise ValueError('DEM must declare a CRS and ellipsoidal heights')
     if epsg is None:
         epsg = CRS.from_wkt(ds.GetProjection()).to_epsg()
-    cfg = merge_config(load_defaults(), {
-        'stack': merge_config(STACK_DEFAULTS, {
+    defaults = merge_config(load_defaults(), production_defaults())
+    cfg = merge_config(defaults, {
+        'stack': {
             'safe_directory': str(absolute_path(safe_directory)),
             'orbit_directory': str(absolute_path(orbit_directory)),
             'start_date': start_date, 'end_date': end_date, 'reference_date': reference_date,
             'pairing': {'neighbors': neighbors, 'max_separation_days': max_separation_days,
-                        'pairs_file': str(absolute_path(pairs_file)) if pairs_file else None}}),
+                        'pairs_file': str(absolute_path(pairs_file)) if pairs_file else None}},
         'inputs': {'dem': str(dem), 'polarization': polarization, 'burst_id': burst_id},
-        'matching': {'engine': 'isce3', 'backend': 'cpu', 'deramp': 0,
-                     'range_oversampling': 2},
         'output': {'directory': str(absolute_path(output_directory))},
         'geocoding': {'epsg': epsg}})
     if spacing_m is not None:
@@ -60,6 +85,7 @@ def make_stack_config(safe_directory, orbit_directory, dem, output_directory, po
     cfg = validate_stack_config(cfg)
     from .geocode import validate_geocoding
     validate_geocoding(cfg['geocoding'])
+    check_output_layout(cfg)
     plan = plan_stack(cfg)
     if validate_dem_coverage:
         from .batch import dem_extent, validate_burst
@@ -132,6 +158,10 @@ def main(argv=None):
     except (ValueError, RuntimeError, OSError, ImportError) as exc:
         parser.error(str(exc))
     print(f'Wrote {output}')
+    stack, matching = document['stack'], document['matching']
+    print(f"Production: {stack['processing']}, swath_merge={stack['swath_merge']}; "
+          f"{matching['engine']} {matching['backend']}, deramp={matching['deramp']}, "
+          f"range_oversampling={matching['range_oversampling']}")
     return 0
 
 

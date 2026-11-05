@@ -3,7 +3,7 @@
 extends: stack.example.yaml
 stack:
   processing: isce3_merge_first
-  swath_merge: midpoint  # overwrite (default) lets later swaths overwrite the whole overlap.
+  swath_merge: midpoint  # Production default from stack init; overwrite remains an explicit alternative.
 output:
   directory: ../work/pig/stack-merge-first-example
 matching:

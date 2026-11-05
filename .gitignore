@@ -13,6 +13,7 @@
 !/requirements-diagnostics.txt
 !/bin/glacier-offsets
 !/src/glacier_offsets/defaults.yaml
+!/src/glacier_offsets/stack_production.yaml
 
 # Reference configurations. Other local/generated configs remain ignored.
 !/configs/defaults.yaml

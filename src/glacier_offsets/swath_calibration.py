@@ -38,6 +38,24 @@ def _parser(legacy):
 def _run(args, *, legacy=False):
     from .swath_experiment_io import Experiment, result_lock
     from .products import write_json
+    # Check metadata before constructing an experiment or consuming products.
+    # Keep this orchestration guard out of numerical module fingerprints so
+    # supported stacks can retain their existing measurement checkpoints.
+    if args.stage not in ('export', 'report', 'rescore') and not args.retained_previews:
+        from .stack_config import load_status_config, MERGE_FIRST
+        cfg = load_status_config(args.config)
+        if cfg['stack'].get('processing') not in MERGE_FIRST:
+            raise ValueError('Swath calibration requires stack.processing: isce3_merge_first '
+                             '(isce2_merge_first is the legacy alias). The isce3 stack mode lacks '
+                             'the retained validity/offset metadata needed by physics and correction. '
+                             'Use a new output root for a merge-first stack; editing the YAML does not migrate it.')
+        geometry = Path(cfg['output']['directory'])/'geometry/manifest.json'
+        if geometry.is_file():
+            from .stack_mosaic import policy
+            frame = json.loads(geometry.read_text())
+            if frame.get('specification', {}).get('ownership_policy') != policy(cfg):
+                raise ValueError('Configured merge-first processing differs from the retained geometry/ownership layout. '
+                                 'Use a new output root; editing the YAML does not migrate existing products.')
     if args.stage == 'export':
         from .stack_config import load_status_config
         from .stack_lock import stack_lock

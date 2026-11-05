@@ -1,0 +1,52 @@
+# Explicit production preset for newly initialized stacks.
+# Keep separate from legacy pair/config-loading defaults: changing those would
+# silently change the interpretation of existing YAMLs and cached products.
+# Arrays are [azimuth, range] in original reference SLC pixels.
+inputs:
+  subswaths: [1, 2, 3]
+stack:
+  processing: isce3_merge_first
+  swath_merge: midpoint
+  reference_directory: null
+  verification_workers: 4
+  swath_correction:
+    enabled: false
+    calibration: null
+    calibration_sha256: null
+    pairs_directory: null
+gross_offsets:
+  mode: zero
+  constant:
+    azimuth_px: 0
+    range_px: 0
+burst_merge:
+  enabled: true
+  alignment_tolerance_px: 0.001
+storage:
+  keep_merged_slcs: false
+  scratch_directory: null
+matching:
+  engine: isce3
+  backend: cpu
+  deramp: 0
+  range_oversampling: 2
+  window: [64, 256]
+  search: [10, 40]
+  stride: [32, 128]
+  raw_oversampling: 2
+  oversampling: 32
+  zoom: 16
+  batch: [1, 8]
+  snr_threshold: 0.0
+  correlation_threshold: 0.0
+  isce2:
+    python: null
+    packages: null
+    library_path: null
+geocoding:
+  spacing_m: 200
+  resampling: nearest
+  mask: input
+packaging:
+  source: raw
+  output: null

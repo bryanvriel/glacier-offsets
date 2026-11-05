@@ -657,7 +657,7 @@ products survive interruption.
 
 If you have only SAFE scenes, first use the [input preparation command](#prepare-orbits-and-a-dem).
 
-Use [stack.example.yaml](configs/stack.example.yaml) or initialize a separate stack
+Use [stack.merge-first.example.yaml](configs/stack.merge-first.example.yaml) or initialize a separate stack
 configuration; no pair-specific SAFE/orbit fields are required:
 
 ```bash
@@ -673,8 +673,29 @@ OMP_NUM_THREADS=4 glacier-offsets stack run configs/stack.generated.yaml --backe
 Stack initialization writes all resolved production settings into the YAML,
 including matching values, storage and ISCE2 runtime options, geocoding,
 packaging, pairing, verification workers and disabled swath-correction settings.
-New stack YAMLs explicitly select production range-2x matching:
-`matching.engine: isce3`, `backend: cpu`, `deramp: 0` and `range_oversampling: 2`.
+New stack YAMLs select the explicit packaged
+[production preset](src/glacier_offsets/stack_production.yaml), independently of
+legacy pair/config-loading defaults:
+
+| Setting | Production value |
+| --- | --- |
+| `stack.processing` | `isce3_merge_first` |
+| `stack.swath_merge` | `midpoint` |
+| `matching.engine`, `backend` | `isce3`, `cpu` |
+| `matching.deramp`, `range_oversampling` | `0`, `2` |
+| `matching.window`, `search`, `stride` | `[64, 256]`, `[10, 40]`, `[32, 128]` |
+| `matching.raw_oversampling`, `oversampling`, `zoom` | `2`, `32`, `16` |
+| `gross_offsets.mode` | `zero` |
+| `geocoding.resampling`, `mask` | `nearest`, `input` |
+| Matching SNR/peak thresholds | `0.0`; apply scientific quality screening downstream |
+| `storage.keep_merged_slcs` | `false`; aligned per-burst inputs remain retained |
+| `stack.swath_correction.enabled` | `false`; enable only after estimating and pinning a calibration |
+
+The initializer prints the selected production mode and matching treatment.
+Optional `--epsg`, `--spacing-m`, date, reference, and pairing selections still
+override their corresponding defaults. Hardware-dependent scratch directories
+remain null rather than guessing a local SSD path.
+
 It writes a complete configuration rather than compact `extends: defaults`
 overrides, so existing values stay explicit when packaged defaults change.
 The generated file can be passed directly to `plan`, `validate` and `run`.
@@ -685,6 +706,13 @@ and `packages`) are derived from `output.directory` and described in the YAML
 header. Null optional paths keep their automatic behavior; initialization does
 not create processing directories. Pair initialization still writes compact
 overrides.
+
+Earlier generated YAMLs are not automatically rewritten. Config-loading defaults
+and the legacy [stack.example.yaml](configs/stack.example.yaml) remain unchanged
+in meaning for existing stacks. Initialization refuses an output root whose
+recorded ownership policy differs from the production preset, including when
+`--force` permits replacing a YAML. Select a new `--output-directory`; changing
+the YAML does not migrate existing geometry, validity or pair products.
 
 List processing stages or inspect completion without running them:
 
@@ -1037,7 +1065,8 @@ No native processing libraries or mounted input volumes are needed to plot.
 
 ### Merge-first stacks
 
-Set `stack.processing: isce3_merge_first` in a stack YAML to use stack-common
+New `stack init` YAMLs use `stack.processing: isce3_merge_first` and
+`stack.swath_merge: midpoint`. This uses stack-common
 valid rectangles and later-source overwrite merging, assembled by the
 ISCE3-backed compositor. This selector uses the ISCE3 matcher unless
 `matching.engine: isce2` is given explicitly. See
@@ -1094,7 +1123,8 @@ matching:
 
 #### Swath ownership and layout rebuilds
 
-`swath_merge` defaults to `overwrite`. The `midpoint` option resolves burst
+`stack init` selects `swath_merge: midpoint`; older YAMLs that omit it retain
+the config-loading default `overwrite`. The `midpoint` option resolves burst
 overwrites within each swath first, then cuts adjacent swath support at the
 range midpoint for each azimuth interval. It retains unshared coverage and
 requires at least 16 samples of overlap (eight per side). The same fixed owner
@@ -1300,12 +1330,22 @@ is needed for this selection change.
 The estimator uses eligible acquisitions in the saved stack catalog and builds
 links between each date and its next two neighbors. It needs completed reference
 geometry, retained aligned per-burst SLCs and alignment products, SAFE inputs,
-precise orbits and the configured DEM. It requires ISCE3 CPU matching,
+precise orbits and the configured DEM. It requires a merge-first stack
+(`stack.processing: isce3_merge_first`, or its legacy `isce2_merge_first` alias),
+ISCE3 CPU matching,
 `deramp: 0`, `range_oversampling: 2`, zero gross offsets and nearest geocoding.
 It performs unspliced overlap matching and physical comparisons, then fits and
 validates empirical models. Stack and calibration locks protect retained inputs;
 production pairs remain unchanged. Estimation is independently invoked and is
 not added to `stack run`.
+
+New estimation runs reject the legacy `stack.processing: isce3` mode before
+reading reference products or starting overlap matching. That layout does not
+retain the validity/offset metadata required by the physics and correction
+stages. It also checks that the retained geometry's ownership policy matches
+the YAML, so relabeling an existing legacy stack cannot bypass this check.
+Report/rescore and retained-preview inspection remain available for
+existing results, and export-only keeps its own compatibility checks.
 
 The full command runs `plan`, `audit`, `measure`, `physics`, `fit`, `previews`,
 `report` and `export`. Select one with `--stage STAGE`. Use `--pilot-only` to

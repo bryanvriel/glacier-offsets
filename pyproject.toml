@@ -25,4 +25,4 @@ glacier-offsets = "glacier_offsets.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-glacier_offsets = ["defaults.yaml"]
+glacier_offsets = ["defaults.yaml", "stack_production.yaml"]

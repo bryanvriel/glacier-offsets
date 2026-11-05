@@ -491,6 +491,9 @@ class PreparationTests(unittest.TestCase):
                 '--burst-id','burst','--output',str(config),'--output-directory',str(self.root/'work')]),0)
         cfg=load_stack_config(config)
         self.assertEqual(cfg['inputs']['dem'],m['dem']);self.assertEqual(cfg['geocoding']['epsg'],3031)
+        self.assertEqual(cfg['stack']['processing'],'isce3_merge_first')
+        self.assertEqual(cfg['stack']['swath_merge'],'midpoint')
+        self.assertEqual(cfg['matching']['range_oversampling'],2)
         self.assertFalse((self.root/'work').exists())
         # A larger selected burst must fail before emitting a misleading config.
         def larger(path,*args):

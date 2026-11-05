@@ -28,6 +28,7 @@ class SwathPairTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); stack = root/'stack'; (stack/'geometry').mkdir(parents=True)
             cfg = {'output': {'directory': str(stack)},
+                   'stack': {'processing': 'isce3_merge_first'},
                    'matching': {'engine': 'isce3', 'backend': 'cpu', 'deramp': 0, 'range_oversampling': 2,
                                 'window': [64, 256], 'search': [10, 40], 'stride': [32, 128]},
                    'gross_offsets': {'mode': 'zero'}, 'geocoding': {'resampling': 'nearest'}}

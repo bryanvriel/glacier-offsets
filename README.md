@@ -91,16 +91,25 @@ glacier-offsets stack run configs/stack.generated.yaml --backend cpu
 If you used `prepare-inputs`, replace `--safe-dir`, `--orbit-dir` and `--dem`
 with `--prepared-inputs /path/to/prepared/manifest.json` at initialization.
 
+`stack init` writes the complete production preset: `isce3_merge_first`,
+midpoint swath ownership, ISCE3 CPU matching, `deramp: 0`, and
+`range_oversampling: 2`, with the matching window, search, stride and refinement
+settings explicitly pinned. It is compatible with the optional swath-calibration
+and correction workflow. Correction remains disabled until a calibration is
+estimated and pinned. Use a new output root for a stack built with a different
+processing/ownership layout; initialization does not migrate existing products.
+
 Review the plan before processing. Defaults pair each date with its next neighbor
 when the exact separation is at most 12 days. The earliest eligible date supplies
 the reference geometry; use `--reference-date YYYY-MM-DD` to choose another.
 For partial collections, choose a reference covering all desired bursts. Keep
 the reference pinned when extending a stack. See [stack configuration and stages](README_DETAILED.md#reference-geometry-stacks).
 
-For merge-first matching and swath calibration, review the
-[configuration example](configs/stack.merge-first.example.yaml) before processing.
-It includes `matching.range_oversampling: 2`; matching changes can require
-rematching existing pairs. The [reference](README_DETAILED.md#merge-first-stacks)
+For manual configuration, review the production
+[merge-first example](configs/stack.merge-first.example.yaml) before processing.
+The older `stack.example.yaml` retains legacy settings for existing inheriting
+configurations. Matching changes can require rematching existing pairs.
+The [reference](README_DETAILED.md#merge-first-stacks)
 explains ownership, matching settings and the optional ISCE2 engine.
 
 To inspect pair coverage visually:

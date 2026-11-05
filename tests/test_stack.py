@@ -281,7 +281,9 @@ class StackPlanningTests(unittest.TestCase):
                 self.assertEqual(document['geocoding'],defaults['geocoding']|{'epsg':3031})
                 self.assertEqual(document['stack']['verification_workers'],4)
                 self.assertFalse(document['stack']['swath_correction']['enabled'])
-                self.assertEqual(document['stack']['processing'],'isce3')
+                self.assertEqual(document['stack']['processing'],'isce3_merge_first')
+                self.assertEqual(document['stack']['swath_merge'],'midpoint')
+                self.assertIn('Production stack: isce3_merge_first',output.read_text())
                 self.assertEqual(document['stack']['pairing']['max_separation_days'],12)
                 self.assertEqual(Path(document['output']['directory']).is_absolute(),not relative)
                 resolved=load_stack_config(output)
@@ -296,6 +298,13 @@ class StackPlanningTests(unittest.TestCase):
                 changed['storage']['keep_merged_slcs']=True
                 with patch('glacier_offsets.stack_config.load_defaults',return_value=changed):
                     self.assertEqual(load_stack_config(output),resolved)
+                # The emitted stack must satisfy the real correction settings
+                # gate without changing its scientific processing parameters.
+                from glacier_offsets.swath_correction_config import settings
+                corrected=deepcopy(resolved)
+                corrected['stack']['swath_correction'].update(enabled=True,
+                    calibration=str(self.root/'calibration.json'),calibration_sha256='0'*64)
+                self.assertTrue(settings(corrected)['enabled'])
                 # Plan uses real synthetic scene discovery; native validation and
                 # execution boundaries are mocked to avoid processing imagery.
                 with contextlib.redirect_stdout(io.StringIO()), \
@@ -307,6 +316,85 @@ class StackPlanningTests(unittest.TestCase):
                 self.assertEqual(validate.call_args.args[0],resolved)
                 run.assert_called_once_with(resolved,'run',force=False)
                 self.assertFalse((self.root/'run').exists())
+
+    def test_new_stack_preset_is_independent_of_legacy_default_changes(self):
+        from osgeo import gdal
+        from pyproj import CRS
+        from glacier_offsets.stack_initialization import make_stack_config
+        dem=self.root/'dem.tif'
+        ds=gdal.GetDriverByName('GTiff').Create(str(dem),10,10,1,gdal.GDT_Float32)
+        ds.SetProjection(CRS.from_epsg(3031).to_wkt());ds=None
+        expected_matching={'engine':'isce3','backend':'cpu','deramp':0,'range_oversampling':2,
+            'window':[64,256],'search':[10,40],'stride':[32,128],'raw_oversampling':2,
+            'oversampling':32,'zoom':16,'batch':[1,8],'snr_threshold':0.,'correlation_threshold':0.,
+            'isce2':{'python':None,'packages':None,'library_path':None}}
+        changed=deepcopy(load_defaults())
+        changed['matching'].update(engine='isce2',backend='auto',deramp=1,range_oversampling=1,
+            window=[128,512],search=[20,80],stride=[64,256],raw_oversampling=4,
+            oversampling=64,zoom=32,batch=[2,16],snr_threshold=10,correlation_threshold=.5)
+        changed['gross_offsets']['mode']='constant'
+        changed['gross_offsets']['constant']['azimuth_px']=7
+        changed['storage'].update(keep_merged_slcs=True,scratch_directory='/wrong-runtime')
+        changed['geocoding'].update(mask='valid',resampling='linear',spacing_m=400)
+        changed['packaging'].update(source='swath_corrected',output='/wrong-package.nc')
+        changed['burst_merge']['enabled']=False
+        with patch('glacier_offsets.stack_initialization.load_defaults',return_value=changed):
+            cfg=make_stack_config(self.safe,self.orbits,dem,self.root/'run','HH',burst_id='burst',epsg=3031)
+            custom=make_stack_config(self.safe,self.orbits,dem,self.root/'other','HH',burst_id='burst',
+                epsg=3413,spacing_m=100,neighbors=2,max_separation_days=None,
+                start_date='2020-01-13',reference_date='2020-01-13')
+        self.assertEqual(cfg['matching'],expected_matching)
+        self.assertEqual(cfg['stack']['processing'],'isce3_merge_first')
+        self.assertEqual(cfg['stack']['swath_merge'],'midpoint')
+        self.assertEqual(cfg['gross_offsets'],{'mode':'zero','constant':{'azimuth_px':0,'range_px':0}})
+        self.assertEqual(cfg['storage'],{'keep_merged_slcs':False,'scratch_directory':None})
+        self.assertEqual(cfg['geocoding'],{'epsg':3031,'spacing_m':200,'resampling':'nearest','mask':'input'})
+        self.assertEqual(cfg['packaging'],{'source':'raw','output':None})
+        self.assertTrue(cfg['burst_merge']['enabled'])
+        self.assertFalse(cfg['stack']['swath_correction']['enabled'])
+        self.assertEqual(custom['matching'],expected_matching)
+        self.assertEqual(custom['geocoding']['epsg'],3413)
+        self.assertEqual(custom['geocoding']['spacing_m'],100)
+        self.assertEqual(custom['stack']['pairing']['neighbors'],2)
+        self.assertIsNone(custom['stack']['pairing']['max_separation_days'])
+        self.assertEqual(custom['stack']['reference_date'],'2020-01-13')
+        # Reading an older YAML still uses the legacy defaults. It is not
+        # silently converted into a different geometry/layout by this change.
+        self.assertEqual(self.cfg['stack']['processing'],'isce3')
+        self.assertEqual(self.cfg['stack']['swath_merge'],'overwrite')
+
+    def test_init_rejects_an_existing_incompatible_layout_without_mutation(self):
+        from osgeo import gdal
+        from pyproj import CRS
+        from glacier_offsets.stack_initialization import main as initialize
+        from glacier_offsets.stack_ownership import POLICY as legacy
+        from glacier_offsets.stack_mosaic import SWATH_MIDPOINT_POLICY
+        dem=self.root/'dem.tif'
+        ds=gdal.GetDriverByName('GTiff').Create(str(dem),10,10,1,gdal.GDT_Float32)
+        ds.SetProjection(CRS.from_epsg(3031).to_wkt());ds=None
+        root=self.root/'run';(root/'geometry').mkdir(parents=True)
+        manifest=root/'geometry/manifest.json'
+        manifest.write_text(json.dumps({'specification':{'ownership_policy':legacy}}))
+        original=manifest.read_bytes()
+        output=self.root/'new.yaml'
+        args=['--safe-dir',str(self.safe),'--orbit-dir',str(self.orbits),'--dem',str(dem),
+              '--burst-id','burst','--polarization','HH','--output',str(output),'--output-directory',str(root)]
+        with contextlib.redirect_stderr(io.StringIO()) as errors,self.assertRaises(SystemExit) as error:
+            initialize(args)
+        self.assertEqual(error.exception.code,2)
+        self.assertIn('choose a new --output-directory',errors.getvalue())
+        self.assertFalse(output.exists())
+        self.assertEqual(manifest.read_bytes(),original)
+        output.write_text('previous YAML must survive\n')
+        with contextlib.redirect_stderr(io.StringIO()),self.assertRaises(SystemExit):
+            initialize([*args,'--force'])
+        self.assertEqual(output.read_text(),'previous YAML must survive\n')
+        self.assertEqual(manifest.read_bytes(),original)
+        output.unlink()
+        manifest.write_text(json.dumps({'specification':{'ownership_policy':SWATH_MIDPOINT_POLICY}}))
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(initialize(args),0)
+        self.assertEqual(load_stack_config(output)['stack']['swath_merge'],'midpoint')
 
     def test_yaml_relative_scratch_directory_and_generated_path_roundtrip(self):
         from glacier_offsets.stack_initialization import main as initialize
@@ -385,6 +473,8 @@ class StackPlanningTests(unittest.TestCase):
         self.assertEqual(cfg['matching']['range_oversampling'],2)
         self.assertEqual(cfg['matching']['deramp'],0)
         self.assertEqual(cfg['matching']['backend'],'cpu')
+        self.assertEqual(cfg['stack']['processing'],'isce3_merge_first')
+        self.assertEqual(cfg['stack']['swath_merge'],'midpoint')
         plan=plan_stack(cfg)
         for acquisition in plan.acquisitions:
             native=acquisition.bursts['burst'].native
