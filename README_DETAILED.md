@@ -1948,6 +1948,37 @@ python tools/plot_radar_offsets.py work/jan10_jan22/t038_080975_iw2/radar --fiel
 
 It saves three vertically stacked panels (3×1) for azimuth offset, range offset and SNR. Axes use full-resolution reference range samples and azimuth lines at matching-window centers, with increasing azimuth downward. Offsets are in SLC pixels. The default is unfiltered observations; `--mask input` excludes invalid inputs, and `--mask valid` selects quality-valid observations. Color limits use the 98th percentile; `--percentile 100` shows the full range. `--output figure.png` selects the output file, and `--show` also opens an interactive window. By default the PNG is saved beside `offsets.h5`.
 
+### Dated displacement previews for every pair
+
+Render all geocoded displacement rasters into separate azimuth and range PNG
+directories, with chronological filenames and date-pair titles:
+
+```bash
+python tools/render_pair_displacements.py /path/to/stack/pairs \
+  --output-dir /path/to/previews --clim -12 12
+
+# Optionally use different color limits for each component.
+python tools/render_pair_displacements.py /path/to/stack/pairs \
+  --output-dir /path/to/previews --azimuth-clim -12 12 --range-clim -3 3
+```
+
+The input can also be a stack root containing `pairs/`, or a single pair
+directory containing `geo/`. Outputs are `<output-dir>/azimuth/<pair>.png` and
+`<output-dir>/range/<pair>.png`. Without `--output-dir`, the preview root is
+`<input-directory>/displacement_previews`. Missing components are reported and
+skipped, so an available range or azimuth raster is still rendered on its own.
+
+Defaults are `--cmap RdBu_r`, `--clim -12 12` metres and `--dpi 150`. All images
+use the same map bounds, and each component retains fixed color limits across
+dates. Nodata, nonfinite values and raster-mask exclusions appear gray; no
+additional quality screening is applied. Inputs must be north-up geocoded
+rasters with a common CRS. Products are read only; rerunning replaces the
+corresponding preview PNGs.
+
+The script requires NumPy, Matplotlib and rasterio. It does not import the
+project package and can run outside the checkout by supplying the absolute
+path to `tools/render_pair_displacements.py`.
+
 ## Troubleshooting
 
 Use `stack status CONFIG.yaml` to inspect the saved active plan and stage
