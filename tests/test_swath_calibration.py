@@ -15,7 +15,7 @@ import yaml
 from glacier_offsets.config import load_defaults
 from glacier_offsets.products import checksum, identity, write_json
 from glacier_offsets.swath_models import evaluate
-from glacier_offsets.swath_calibration import main
+from glacier_offsets.swath_calibration import main, RUN_STAGES
 from glacier_offsets.swath_calibration_export import export_calibration
 from glacier_offsets.swath_correction_config import load_calibration
 from glacier_offsets.swath_experiment_io import METHOD, Inputs, reference_metadata, result_lock
@@ -79,6 +79,16 @@ class ExportTests(unittest.TestCase):
 
     def read(self, name):
         return json.loads((self.root/name).read_text())
+
+    def test_verification_worker_override_and_validation(self):
+        from glacier_offsets.swath_calibration import _parser
+        args = _parser(False).parse_args(['config.yaml', '--output', 'results', '--verification-workers', '7'])
+        self.assertEqual(args.verification_workers, 7)
+        for value in ('0', '-1'):
+            with redirect_stdout(io.StringIO()), patch('sys.stderr', new_callable=io.StringIO), \
+                    self.assertRaises(SystemExit) as error:
+                main(['config.yaml', '--output', 'results', '--verification-workers', value])
+            self.assertEqual(error.exception.code, 2)
 
     def test_iw23_export_and_loader_roundtrip(self):
         base = self.base/'iw23'; base.mkdir()
@@ -241,6 +251,7 @@ class CommandTests(unittest.TestCase):
                                   inputs=Inputs(), plan=lambda:{'status':'complete'})
             done = {'status':'complete'}
             with patch('glacier_offsets.swath_experiment_io.Experiment', return_value=exp), \
+                 patch('glacier_offsets.swath_verification.prefetch_verification') as prefetch, \
                  patch('glacier_offsets.stack_config.load_status_config',return_value={
                      'stack':{'processing':'isce3_merge_first'},'output':{'directory':tmp}}), \
                  patch('glacier_offsets.swath_physics.audit', return_value=done), \
@@ -253,12 +264,15 @@ class CommandTests(unittest.TestCase):
                  patch('glacier_offsets.swath_calibration_export.export_calibration', return_value=done) as export:
                 self.assertEqual(main(['config.yaml','--output',tmp]),0)
                 export.assert_called_once()
+                prefetch.assert_called_once_with(exp, (*RUN_STAGES, 'export'),
+                                                workers=None, pilot_only=False)
 
     def test_pilot_does_not_export_and_incomplete_measurement_stops_run(self):
         with tempfile.TemporaryDirectory() as tmp:
             exp = SimpleNamespace(output=Path(tmp), cfg={}, lock=lambda:nullcontext(),
                                   inputs=Inputs(), plan=lambda:{'status':'complete'})
             with patch('glacier_offsets.swath_experiment_io.Experiment', return_value=exp), \
+                 patch('glacier_offsets.swath_verification.prefetch_verification'), \
                  patch('glacier_offsets.stack_config.load_status_config',return_value={
                      'stack':{'processing':'isce3_merge_first'},'output':{'directory':tmp}}), \
                  patch('glacier_offsets.swath_physics.audit', return_value={'status':'complete'}), \

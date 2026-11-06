@@ -1327,6 +1327,17 @@ calibration output directory when changing the pair, including after an older
 IW1/IW2-only implementation failed on an IW2/IW3 stack. No production rematching
 is needed for this selection change.
 
+Calibration restarts prefetch checksums of registered geometry, alignment and
+cached result products using `stack.verification_workers` (default 4). Override
+it with `--verification-workers N`; use 1 for sequential reads. This is independent
+of `--workers`, which controls native matching and strip preparation. Prefetch
+uses threads and the invocation-local, revision-aware checksum cache; stages
+still validate expected hashes and recheck file revisions before reuse. It does
+not trust recorded hashes or invalidate completed numerical checkpoints. Readers
+finish before stack/calibration locks are released. Plan/audit-only, export,
+report/rescore and `--retained-previews` do not prefetch alignment files. Pilot-only
+runs prefetch only the first three dates and their links.
+
 The estimator uses eligible acquisitions in the saved stack catalog and builds
 links between each date and its next two neighbors. It needs completed reference
 geometry, retained aligned per-burst SLCs and alignment products, SAFE inputs,

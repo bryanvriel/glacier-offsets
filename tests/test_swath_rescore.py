@@ -139,6 +139,7 @@ class FrozenArtifactTests(unittest.TestCase):
                 inputs=SimpleNamespace(unchanged=lambda: None), plan=lambda: {'status': 'complete'})
             done = {'status': 'complete'}
             with patch('tools.swath_experiment_io.Experiment', return_value=experiment), \
+                 patch('glacier_offsets.swath_verification.prefetch_verification'), \
                  patch('glacier_offsets.stack_config.load_status_config',return_value={
                      'stack':{'processing':'isce3_merge_first'},'output':{'directory':tmp}}), \
                  patch('glacier_offsets.swath_physics.audit', return_value=done), \

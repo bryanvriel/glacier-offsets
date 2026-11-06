@@ -25,6 +25,8 @@ def _parser(legacy):
         parser.add_argument('--stage', choices=STAGES, default='run')
         parser.add_argument('--output', required=True, type=Path, help='Separate calibration results directory')
     parser.add_argument('--workers', type=int, choices=range(1, 5), default=4)
+    parser.add_argument('--verification-workers', type=int,
+                        help='Parallel checksum readers; default: stack.verification_workers (4). Use 1 for sequential reads')
     parser.add_argument('--swaths', type=int, nargs=2, metavar=('LOW', 'HIGH'),
                         help='Adjacent pair: 1 2 or 2 3; inferred for a two-swath reference')
     parser.add_argument('--pilot-only', action='store_true', help='Measure only the first three-date triangle; no export')
@@ -72,6 +74,10 @@ def _run(args, *, legacy=False):
             experiment.plan()
         stages = (*RUN_STAGES, 'export') if args.stage == 'run' and not legacy else (
             RUN_STAGES if args.stage == 'run' else (args.stage,))
+        if not args.retained_previews and set(stages).intersection(('measure', 'physics', 'fit', 'previews')):
+            from .swath_verification import prefetch_verification
+            prefetch_verification(experiment, stages, workers=args.verification_workers,
+                                  pilot_only=args.pilot_only)
         result = None
         for stage in stages:
             logging.info('Swath calibration stage: %s', stage)
@@ -114,6 +120,8 @@ def _run(args, *, legacy=False):
 def main(argv=None, *, legacy=False):
     parser = _parser(legacy)
     args = parser.parse_args(argv)
+    if args.verification_workers is not None and args.verification_workers < 1:
+        parser.error('--verification-workers must be a positive integer')
     if args.swaths is not None:
         from .swath_pair import validate_pair
         try:
