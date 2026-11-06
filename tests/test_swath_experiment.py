@@ -22,6 +22,7 @@ from glacier_offsets.swath_observations import measure_link
 from glacier_offsets.swath_physics import apparent_bias, bistatic_seconds, mapping
 from glacier_offsets.swath_physics import fm_rate_seconds
 from glacier_offsets.swath_physics import native_input_products
+from glacier_offsets.swath_physics import physics, verify_mapping_products
 from tools.swath_experiment_io import Inputs, Experiment, save_npz, load_npz, cohorts
 from tools.swath_experiment_previews import (symmetric_bias, pure_swath_footprints,
     preview_predictions, corrected_preview, write_previews)
@@ -112,6 +113,64 @@ class ModelTests(unittest.TestCase):
 
 
 class PhysicalContractTests(unittest.TestCase):
+    def test_physics_uses_canonical_offset_checksums_through_symlink_paths(self):
+        from glacier_offsets.products import checksum
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp).resolve();actual=root/'disk';actual.mkdir()
+            alias=root/'cold-data';alias.symlink_to(actual,target_is_directory=True)
+            products=[]
+            for name,value in [('azimuth',.2),('range',-.1)]:
+                path=actual/f'{name}.off'
+                ds=gdal.GetDriverByName('ENVI').Create(str(path),32,32,1,gdal.GDT_Float64)
+                ds.GetRasterBand(1).Fill(value)
+                products.extend(ds.GetFileList());ds=None
+            registered={str(Path(p).resolve()):checksum(p) for p in products}
+            keys=['t065_139082_iw2','t065_139082_iw3']
+            observations={'dual_support':np.ones((1,1),bool),'source_ids':np.array(keys),
+                'swaths':np.array([2,3]),'center_line':np.array([[10.]]),'center_sample':np.array([[12.]])}
+            for swath,index in [('iw2',1),('iw3',2)]:
+                observations[f'{swath}_owner']=np.full((1,1),index)
+                observations[f'{swath}_geometry_llh']=np.zeros((1,1,5,3))
+                observations[f'{swath}_total']=np.zeros((1,1,2))
+            measured=root/'measurements/a_b';measured.mkdir(parents=True)
+            (measured/'report.json').write_text('{"status":"complete","identity":"measurement"}')
+            save_npz(measured/'observations.npz',**observations)
+            audit={'executed_radar_path_recognized':True,'identity':'audit','physical_validation_status':'candidate'}
+            burst=SimpleNamespace(azimuth_time_interval=.002)
+            for spelling in (actual,alias):
+                with self.subTest(spelling=spelling.name):
+                    secondary={'alignment_products':registered,'valid_windows':{k:{
+                        'offset_paths':[str(spelling/'azimuth.off'),str(spelling/'range.off')],
+                        'offset_products':[str(spelling/Path(p).name) for p in products]} for k in keys}}
+                    reference={'alignment_products':{},'valid_windows':{}}
+                    exp=SimpleNamespace(output=root,key='experiment',spec={'swaths':[2,3]},dates=['a','b'],
+                        links=[{'pair':'a_b','earlier':'a','later':'b'}],inputs=Inputs(),
+                        frame={'sources':[{'burst_id':k,'offset':[0,0]} for k in keys],
+                               'specification':{'anchor':{'reference_date':'a'}}},
+                        cfg={'matching':{'window':[8,8]},'inputs':{'dem':'unused'}},
+                        acquisition=lambda day:reference if day=='a' else secondary,
+                        checked_report=lambda *a:audit,implementation=lambda *a:{},current=lambda *a:False,
+                        finish=lambda path,spec,report,files:report)
+                    with patch('glacier_offsets.swath_physics.native_input_products',return_value={}), \
+                         patch('glacier_offsets.swath_physics.load_native',return_value={k:burst for k in keys}), \
+                         patch('glacier_offsets.swath_physics.native_geometry_check',return_value={'passed':True}), \
+                         patch('glacier_offsets.swath_physics.coefficient_check',return_value={'passed':True}), \
+                         patch('glacier_offsets.swath_physics.installed_grid_check',return_value={'status':'complete'}), \
+                         patch('glacier_offsets.swath_physics.bistatic_seconds',side_effect=lambda b,x:np.zeros_like(x)), \
+                         patch('glacier_offsets.swath_physics.fm_rate_seconds',side_effect=lambda b,y,x,llh:np.zeros_like(y)):
+                        result=physics(exp)
+                    self.assertEqual(result['status'],'complete')
+                    self.assertEqual(result['links']['a_b']['available_n'],{'bistatic':1,'fm_rate':1,'combined':1})
+                    self.assertEqual(set(exp.inputs.products),set(registered))
+                    self.assertTrue(any(p.endswith('.hdr') for p in exp.inputs.products))
+                    exp.inputs.unchanged()
+            # Aliases must not bypass registration or checksums.
+            with self.assertRaisesRegex(ValueError,'not registered'):
+                verify_mapping_products(Inputs(),secondary|{'alignment_products':{}},keys[0])
+            damaged=actual/'azimuth.off';damaged.write_bytes(damaged.read_bytes()+b'changed')
+            with self.assertRaisesRegex(ValueError,'checksum mismatch'):
+                verify_mapping_products(Inputs(),secondary,keys[0])
+
     def test_positive_and_negative_timing_perturbations_through_native_resampler(self):
         import isce3
         with tempfile.TemporaryDirectory() as tmp:

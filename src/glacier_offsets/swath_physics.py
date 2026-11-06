@@ -100,6 +100,20 @@ def mapping(record, key, lines, samples, reference=False):
     return *values, jacobian
 
 
+def verify_mapping_products(inputs, record, key):
+    """Match offset aliases to the canonical keys written by product_hashes.
+
+    Keep the saved spelling for reads; resolve only for checksum identity,
+    just as overlap measurement does for aligned SLCs. Headers are products too.
+    """
+    registered = record['alignment_products']
+    for path in record['valid_windows'].get(key, {}).get('offset_products', []):
+        canonical = str(Path(path).resolve(strict=True))
+        if canonical not in registered:
+            raise ValueError(f'{key}: resampling offset product is not registered: {path}')
+        inputs.file(path, registered[canonical])
+
+
 def apparent_bias(seconds, jacobian, acquisition_dt):
     """A positive tagged-time correction means a negative native image bias.
 
@@ -356,8 +370,7 @@ def physics(experiment):
                     llh5 = data[f'{swath}_geometry_llh'][take]
                     for day in (link['earlier'], link['later']):
                         acq = experiment.acquisition(day)
-                        for path in acq['valid_windows'].get(key, {}).get('offset_products', []):
-                            experiment.inputs.file(path, acq['alignment_products'][path])
+                        verify_mapping_products(experiment.inputs, acq, key)
                         burst = native[day][key]
                         reference = day == experiment.frame['specification']['anchor']['reference_date']
                         line, sample, jac = mapping(acq, key, ref_line, ref_sample, reference)
