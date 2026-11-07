@@ -234,6 +234,16 @@ def cross_year_screen(field, layout, t, trainings, screening):
             & (abs(residual[:, 1]) <= screening['max_azimuth_residual_m']))
 
 
+def pair_covariance(field, covariances):
+    """Resolve covariance in observation order, preserving annual inputs."""
+    if isinstance(covariances, dict):
+        values = np.asarray(covariances['by_pair'])
+        if values.shape != (field['early'].shape[1],2,2):
+            raise ValueError('Pair covariance must match the observation pair axis')
+        return values
+    return covariances[field['year_index']]
+
+
 def design(field, layout, axis, covariances, model='residual_vertical'):
     early, late = field['early'], field['late']
     year = field['year_index']
@@ -258,7 +268,7 @@ def design(field, layout, axis, covariances, model='residual_vertical'):
         start = names.index(VERTICAL_NAMES[0])
         a[:, :, :, start:start+4] = vertical_columns(early, late)[:, :, None, :]*geom[..., 2, None]
         a[:, :, :, -2:] = hb[:, :, None, :]*np.einsum('stci,si->stc', geom[..., :2], axis)[..., None]
-        inv = np.linalg.inv(np.linalg.cholesky(covariances)[year])
+        inv = np.linalg.inv(np.linalg.cholesky(pair_covariance(field,covariances)))
         y = field['data']
     else:
         for k, yr in enumerate(layout.years):
@@ -266,28 +276,33 @@ def design(field, layout, axis, covariances, model='residual_vertical'):
             if yr in order_columns:
                 a[:, :, 0, order_columns[yr]] = order[None]*(year == k)[None]
         a[:, :, 0, -2:] = hb
-        inv = (1/np.sqrt(covariances[year, 1, 1]))[:, None, None]
+        inv = (1/np.sqrt(pair_covariance(field,covariances)[:, 1, 1]))[:, None, None]
         y = field['data'][:, :, [1]]
     a = np.nan_to_num(np.einsum('tij,stjk->stik', inv, a))
     y = np.nan_to_num(np.einsum('tij,stj->sti', inv, y))
     return a, y, geom, names
 
 
-def solve(field, layout, good, axis, covariances, model='residual_vertical', *, cluster_days=30.):
+def solve(field, layout, good, axis, covariances, model='residual_vertical', *, cluster_days=30., robust_cutoff=3.):
     """Independent-source GLS with calendar-cluster diagnostic covariance."""
     a, y, geom, names = design(field, layout, axis, covariances, model)
     ns, nt, nc, np_ = a.shape
     w = good.astype(float)
-    normal = np.einsum('st,stci,stcj->sij', w, a, a)
-    rhs = np.einsum('st,stci,stc->si', w, a, y)
-    scale = np.sqrt(np.maximum(np.diagonal(normal, axis1=1, axis2=2), 1e-30))
-    unit = normal/scale[:, :, None]/scale[:, None, :]
-    eig = np.linalg.eigvalsh(unit)
-    rank = np.sum(eig > np.maximum(eig[:, -1, None]*1e-10, 1e-12), axis=1)
-    inverse = np.linalg.pinv(unit, rcond=1e-10, hermitian=True)/scale[:, :, None]/scale[:, None, :]
-    coef = np.einsum('sij,sj->si', inverse, rhs)
-    prediction = np.einsum('stci,si->stc', a, coef)
-    residual = y-prediction
+    for iteration in range(30 if isinstance(covariances,dict) else 1):
+        normal = np.einsum('st,stci,stcj->sij', w, a, a)
+        rhs = np.einsum('st,stci,stc->si', w, a, y)
+        scale = np.sqrt(np.maximum(np.diagonal(normal, axis1=1, axis2=2), 1e-30))
+        unit = normal/scale[:, :, None]/scale[:, None, :]
+        eig = np.linalg.eigvalsh(unit)
+        rank = np.sum(eig > np.maximum(eig[:, -1, None]*1e-10, 1e-12), axis=1)
+        inverse = np.linalg.pinv(unit, rcond=1e-10, hermitian=True)/scale[:, :, None]/scale[:, None, :]
+        coef = np.einsum('sij,sj->si', inverse, rhs)
+        prediction = np.einsum('stci,si->stc', a, coef)
+        residual = y-prediction
+        updated = good*np.minimum(1.,robust_cutoff/np.maximum(np.linalg.norm(residual,axis=2),1e-12))
+        if not isinstance(covariances,dict) or np.max(abs(updated-w))<1e-5 or iteration==29:
+            break
+        w = updated
     # Target information after marginalizing all nuisance coefficients.
     nn = normal[:, :-2, :-2]
     nh = normal[:, :-2, -2:]
@@ -320,18 +335,19 @@ def solve(field, layout, good, axis, covariances, model='residual_vertical', *, 
                                out=np.zeros_like(cs), where=amplitude[:, None] > 1e-12)
     phase_sigma = np.degrees(np.sqrt(np.maximum(0, np.einsum('si,sij,sj->s', phase_gradient, cov, phase_gradient))))
     if nc == 2:
-        physical = np.einsum('tij,stj->sti', np.linalg.cholesky(covariances)[field['year_index']], residual)
+        physical = np.einsum('tij,stj->sti', np.linalg.cholesky(pair_covariance(field,covariances)), residual)
     else:
-        physical = residual*np.sqrt(covariances[field['year_index'], 1, 1])[None, :, None]
+        physical = residual*np.sqrt(pair_covariance(field,covariances)[:, 1, 1])[None, :, None]
     count = good.sum(1)
-    rms = np.sqrt(np.einsum('st,stc->sc', w, physical**2)/np.maximum(count[:, None], 1))
+    rms = np.sqrt(np.einsum('st,stc->sc', good.astype(float), physical**2)/np.maximum(count[:, None], 1))
     sse = np.einsum('st,stc->s', w, residual**2)
     improvement = np.einsum('si,sij,sj->s', cs, info, cs)
     partial_r2 = improvement/np.maximum(sse+improvement, 1e-30)
     return {'coefficients': coef, 'names': names, 'cs': cs, 'amplitude': amplitude, 'phase_deg': phase,
             'coefficient_covariance': cov, 'amplitude_sigma': amplitude_sigma, 'phase_sigma_deg': phase_sigma,
             'target_condition': condition, 'rank': rank, 'estimable': estimable, 'rms_m': rms,
-            'partial_r2': partial_r2, 'calendar_clusters': nb}
+            'partial_r2': partial_r2, 'calendar_clusters': nb,
+            'downweighted_pairs':np.sum(good & (w < .999),axis=1)}
 
 
 def coverage(field, layout, good, options):
@@ -380,7 +396,10 @@ def fit_sources(h, body, layout, covariances, parameters, index):
     """Screen, coverage and both model fits for one bounded source chunk."""
     s, c = parameters['screening'], parameters['coverage']
     f = load_field(h, body, index, s['remove_mixed_windows'])
-    good, axis, velocities, speed, angle = screen(f, layout, s)
+    screen_options = s
+    if isinstance(covariances,dict):
+        screen_options = s | {'max_range_residual_m':np.inf,'max_azimuth_residual_m':np.inf}
+    good, axis, velocities, speed, angle = screen(f, layout, screen_options)
     support = coverage(f, layout, good, c)
     values = {'clean_pairs_by_year': support['counts'], 'span_days': support['span_days'],
               'phase_bins': support['phase_bins'], 'fit_support': support['fit_support'],
@@ -389,7 +408,8 @@ def fit_sources(h, body, layout, covariances, parameters, index):
               'year_direction_change_deg': angle, 'azimuth_flow_projection_by_year': projections(f, layout, axis)}
     fits = {}
     for model in MODELS:
-        fitted = solve(f, layout, good, axis, covariances, model, cluster_days=parameters['uncertainty']['cluster_days'])
+        fitted = solve(f, layout, good, axis, covariances, model, cluster_days=parameters['uncertainty']['cluster_days'],
+                       robust_cutoff=s['robust_cutoff'])
         estimable = fitted['estimable'] & support['fit_support']
         fitted['estimable'] = estimable
         for name, value in fitted.items():

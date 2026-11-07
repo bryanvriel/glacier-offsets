@@ -461,8 +461,13 @@ def verify_v2(view):
                 raise ValueError('No estimable sources to verify')
             selected = np.sort(rng.choice(eligible, min(512, len(eligible)), replace=False))
             covariances = fits['covariance_by_year'][:]
+            if 'covariance_by_pair' in fits:
+                covariances = {'by_year':covariances, 'by_pair':fits['covariance_by_pair'][:]}
             f = load_field(h, body, selected, parameters['screening']['remove_mixed_windows'])
-            good, axis, _, _, _ = screen(f, view.layout, parameters['screening'])
+            screen_options = parameters['screening']
+            if isinstance(covariances,dict):
+                screen_options = screen_options | {'max_range_residual_m':np.inf,'max_azimuth_residual_m':np.inf}
+            good, axis, _, _, _ = screen(f, view.layout, screen_options)
             stored_axis = fits['flow_axis_EN'][selected]
             if not np.allclose(axis, stored_axis, rtol=0, atol=1e-12):
                 raise ValueError('Stored flow axes do not reproduce')
@@ -470,7 +475,8 @@ def verify_v2(view):
             for model in MODELS:
                 original = fits[model]['coefficients'][selected]
                 repeated = solve(f, view.layout, good, axis, covariances, model,
-                                 cluster_days=parameters['uncertainty']['cluster_days'])
+                                 cluster_days=parameters['uncertainty']['cluster_days'],
+                                 robust_cutoff=parameters['screening']['robust_cutoff'])
                 if list(repeated['names']) != _names(fits[model]):
                     raise ValueError(f'{model} parameter names changed')
                 errors[model] = float(np.nanmax(abs(repeated['coefficients']-original)))
@@ -541,8 +547,11 @@ def report_v2(view, series=None):
              'Ocean tides: existing CATS correction required and verified by provenance. Solid Earth: '
              + (f"PySolid full-ENU correction artifact `{solid['id']}`." if 'id' in solid else 'not applied.'), '',
              f"Observation cache `{manifest['artifacts']['observations']['id']}`; noise `{manifest['artifacts']['noise']['id']}`.", '',
-             '## Annual noise', '',
+             '## Noise calibration', '',
              f"Mode: {noise['mode']}.", '',
+             (f"Pair-specific covariance for {len(noise['pair_ids'])} pairs; the annual rows below contain the pooled fallback. "
+              'Control biases are recorded, not subtracted. Per-source counts of downweighted pairs are stored with the fits.'
+              if noise['mode']=='pair' else 'Annual range/azimuth covariances:'), '',
              _table(['Year', 'σ range (m)', 'σ azimuth (m)', 'Correlation', 'Samples'], noise_rows), '',
              '## Effective settings', '',
              'Screen: '+recipe['screen']+'.', '',

@@ -71,11 +71,21 @@ def calibrate_noise(residual_ra, snr, peak, groups, *, minimum=40):
             'uncertainty_scope': 'empirical residual noise; correction sensitivity remains separate'}
 
 
-def covariance_ra(noise, snr, peak, quality=False):
+def covariance_ra(noise, snr, peak, quality=False, pair_ids=None):
     baseline = np.asarray(noise['covariance_ra_m2'])
     if baseline.shape != (2, 2) or not np.isfinite(baseline).all() or np.linalg.eigvalsh(baseline).min() <= 0:
         raise ValueError('Control covariance must be finite positive definite')
     result = np.broadcast_to(baseline, (len(snr), 2, 2)).copy()
+    if 'pair_calibration' in noise:
+        from .velocity_pair_noise import pair_covariances, pooled_noise
+        if pair_ids is None or len(pair_ids) != len(snr):
+            raise ValueError('Pair-aware noise requires one pair_id per observation')
+        pairs = pair_covariances(noise, pair_ids)
+        if not quality:
+            return pairs
+        quality_cov = covariance_ra(pooled_noise(noise), snr, peak, quality=True)
+        transform = np.linalg.cholesky(pairs) @ np.linalg.inv(np.linalg.cholesky(baseline))
+        return transform @ quality_cov @ transform.swapaxes(-1, -2)
     if not quality:
         return result
     floors = np.maximum(noise['floors_m'], np.sqrt(np.diag(baseline))/10)

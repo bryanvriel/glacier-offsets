@@ -17,6 +17,8 @@ from .velocity_pilot import (candidate_bank, learn_noise, select_models, paired_
                              acceptance, fit_point, tune_shortlist, bootstrap_intervals)
 
 DEFAULTS = {'regions': None, 'start': None, 'end': None, 'calibration_validation': None,
+            'noise': {'mode': 'pooled', 'control_points_per_region': 30,
+                      'min_pair_blocks': 8, 'shrinkage_blocks': 20.},
             'sampling': {'points_per_region': 3},
             'pilot': {'bootstrap_draws': 1000, 'validation_draws': 200, 'tuning_draws': 100, 'seed': 12345},
             'models': {'backgrounds': ['constant','linear','spline_l2','spline_l1'],
@@ -65,6 +67,14 @@ def load_settings(path):
     for key,value in cfg['sampling'].items():
         if type(value) is not int or value < 1:
             raise ValueError(f'sampling.{key} must be positive')
+    noise = cfg['noise']
+    if noise['mode'] not in ('pooled', 'pair'):
+        raise ValueError('noise.mode must be pooled or pair')
+    for key in ('control_points_per_region', 'min_pair_blocks'):
+        if type(noise[key]) is not int or noise[key] < (3 if key == 'min_pair_blocks' else 1):
+            raise ValueError(f'noise.{key} must be a positive integer (at least 3 for min_pair_blocks)')
+    if isinstance(noise['shrinkage_blocks'],bool) or not isinstance(noise['shrinkage_blocks'],(int,float)) or not np.isfinite(noise['shrinkage_blocks']) or noise['shrinkage_blocks']<=0:
+        raise ValueError('noise.shrinkage_blocks must be finite and positive')
     if type(cfg['map']['tile_size']) is not int or not 1 <= cfg['map']['tile_size'] <= 128:
         raise ValueError('map.tile_size must be between 1 and 128')
     for key,value in cfg['map'].items():
@@ -84,7 +94,7 @@ def load_settings(path):
 
 def implementation():
     from .velocity_temporal import backend_fingerprints
-    names = ('basis','temporal','fit','io','inspect','pilot','recovery','calibration')
+    names = ('basis','temporal','pair_noise','fit','io','inspect','pilot','recovery','calibration')
     local = {f'velocity_{name}.py':digest(Path(__file__).with_name(f'velocity_{name}.py')) for name in names}
     return local | backend_fingerprints()
 
@@ -177,9 +187,9 @@ def cv_numerical_recipe(cfg,recipe):
     from . import velocity_pilot
     from .velocity_temporal import BACKEND_MODULES
     names=('select_models','point_arrays','fit_point','control_residuals','learn_noise','candidate_bank')
-    files=('velocity_basis.py','velocity_temporal.py','velocity_fit.py','velocity_io.py','velocity_inspect.py')+BACKEND_MODULES
+    files=('velocity_basis.py','velocity_temporal.py','velocity_pair_noise.py','velocity_fit.py','velocity_io.py','velocity_inspect.py')+BACKEND_MODULES
     return {'sources':recipe['source_fingerprints'],'regions_sha256':recipe['regions_sha256'],
-            'settings':{k:cfg[k] for k in ('start','end','sampling','models')},
+            'settings':{k:cfg[k] for k in ('start','end','sampling','models','noise')},
             'files':{k:recipe['implementation'][k] for k in files},
             'functions':{k:hashlib.sha256(inspect.getsource(getattr(velocity_pilot,k)).encode()).hexdigest() for k in names}}
 
@@ -220,19 +230,41 @@ def pilot(cfg, collection):
     points = sample_points(collection, regions, cfg['sampling']['points_per_region'])
     if set(p['region'] for p in points) != set(r['id'] for r in regions):
         raise ValueError('At least one unique, covered 3 km source block is required in every supplied region')
+    calibration_points = points
+    if cfg['noise']['mode'] == 'pair':
+        calibration_points = sample_points(collection, [r for r in regions if r['role']=='control'],
+                                           cfg['noise']['control_points_per_region'])
     directory = Path(cfg['output'])
     recipe=run_recipe(cfg,collection)
     progress=PilotProgress(directory,recipe,cv_identity=fingerprint(cv_numerical_recipe(cfg,recipe)))
     write_json(directory/'sampling.json',[{k:p[k] for k in ('region','role','source_id','row','col','spatial_block')} for p in points])
-    noise,residuals = learn_noise(points)
+    noise,residuals = learn_noise(calibration_points, options=cfg['noise'])
     write_json(directory/'noise.json',noise)
+    pair_artifact = None
+    if 'pair_calibration' in noise:
+        from .velocity_pair_noise import SCHEMA
+        pair_artifact = {'schema':SCHEMA, 'noise':noise, 'recipe':recipe,
+                   'source_sha256': [s['sha256'] for s in collection.sources],
+                   'pair_ids': [p[2] for p in collection.pairs],
+                   'controls': [{'region':p['region'],'source_id':p['source_id'],'spatial_block':p['spatial_block']}
+                                for p in calibration_points],
+                   'correction_policy':'input package corrections; pair biases recorded, not subtracted',
+                   'pilot_validation':{'completed':False}}
+        write_json(directory/'pair-noise.json', pair_artifact)
     early = collection.selected_early
     late = collection.selected_late
     bank = candidate_bank(early,late,**cfg['models'])
     cached=progress.read('cross_validation.json')
     if cached is None:
-        comparisons,ledger = select_models(points,bank)
-        progress.save('cross_validation.json',{'models':comparisons,'folds':ledger,'pair_ids':[p[2] for p in collection.pairs]})
+        comparisons,ledger = select_models(points,bank,noise_options=cfg['noise'],calibration_points=calibration_points)
+        comparison = None
+        if cfg['noise']['mode'] == 'pair':
+            pooled,_ = select_models(points,bank,noise_options={'mode':'pooled'},calibration_points=calibration_points)
+            comparison = {model:{'pair_mean_loss': comparisons[model]['scores'][comparisons[model]['selected_index']]['mean_predictive_loss'],
+                                 'pooled_mean_loss': pooled[model]['scores'][pooled[model]['selected_index']]['mean_predictive_loss'],
+                                 'pooled_scores':pooled[model]['scores']} for model in comparisons}
+        progress.save('cross_validation.json',{'models':comparisons,'folds':ledger,'pair_ids':[p[2] for p in collection.pairs],
+                                               'noise_comparison':comparison})
     else:
         comparisons,ledger=cached['models'],cached['folds']
     logging.info('Predictive selection complete; starting independent tuning recovery')
@@ -297,6 +329,10 @@ def pilot(cfg, collection):
               'scientific_interpretation':'Msf-frequency motion conditional on correction and nuisance-signal assumptions',
               'uncertainty_scope':'model-conditional covariance in netCDF; paired block draws in paired_bootstrap.json; correction/model sensitivity separate'}
     write_json(directory/'pilot.json',report)
+    if pair_artifact is not None:
+        pair_artifact['pilot_validation'] = {'completed':True, 'recovery_passed':accepted['passed'],
+                                            'tuning_passed':tuning['passed'], 'map_allowed':not reasons}
+        write_json(directory/'pair-noise.json',pair_artifact)
     lines = ['# Msf pilot', '', f'Map gate: {"passed" if report["map_allowed"] else "blocked"}.', '',
              'Results describe Msf-frequency motion conditional on correction and nuisance-signal assumptions.', '',
              '## Map blockers', '']+[f'- {reason}' for reason in reasons]
@@ -375,6 +411,7 @@ def map_stage(cfg,collection):
             if source not in cache:
                 point = {k:v[:,row,col] for k,v in tile.items() if k not in ('inverse','geometry')}
                 point['inverse'] = tile['inverse'][row,col]
+                point['pair_id'] = np.array([p[2] for p in collection.pairs])
                 cache[source] = {}
                 for model,candidate in selected.items():
                     try:

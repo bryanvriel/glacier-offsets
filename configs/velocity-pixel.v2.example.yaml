@@ -25,6 +25,11 @@ noise:
   mode: controls                # or: supplied
   regions: /data/regions.reviewed.json  # reviewed role: control regions only
   group_by: year
+  # Alternatively, replace this noise section with a fit-velocity calibration:
+  # mode: pair
+  # file: /data/velocity-pilot/pair-noise.json
+  # Pair mode accepts only mode/file, verifies exact input hashes and pair IDs,
+  # and replaces the fixed metre cuts with full-model robust weighting.
   # Supplied mode instead:
   # mode: supplied
   # files:

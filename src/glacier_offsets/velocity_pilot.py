@@ -6,6 +6,7 @@ from .velocity_basis import definition, design, harmonic
 from .velocity_fit import (WEIGHT_MODELS, calibrate_noise, covariance_ra, fit, diagnostics,
                            flow_direction, blocked_folds, quality_rule)
 from .velocity_inspect import M2_PERIOD, O1_PERIOD, phase_coverage
+from .velocity_pair_noise import calibrate_pairs, pooled_noise
 
 
 def point_arrays(point, noise, weighting, take=None):
@@ -14,7 +15,8 @@ def point_arrays(point, noise, weighting, take=None):
         good &= take
     if weighting=='quality_rule':
         good &= quality_rule(point['snr'], point['peak'])
-    ra = covariance_ra(noise, point['snr'][good], point['peak'][good], weighting=='quality_robust')
+    pair_ids = point['pair_id'][good] if 'pair_id' in point else None
+    ra = covariance_ra(noise, point['snr'][good], point['peak'][good], weighting=='quality_robust', pair_ids)
     covariance = point['inverse'][None] @ ra @ point['inverse'].T[None]
     return point['early'][good], point['late'][good], point['data'][good], covariance, good
 
@@ -78,9 +80,13 @@ def control_residuals(points, *, excluded_region=None, train=None):
     return np.array(residuals), np.array(snrs), np.array(peaks), np.array(groups), records
 
 
-def learn_noise(points, excluded_region=None, train=None):
+def learn_noise(points, excluded_region=None, train=None, options=None):
     arrays = control_residuals(points, excluded_region=excluded_region, train=train)
-    return calibrate_noise(*arrays[:4]), arrays[4]
+    noise = calibrate_noise(*arrays[:4])
+    if options and options['mode'] == 'pair':
+        noise['pair_calibration'] = calibrate_pairs(arrays[4], noise, min_blocks=options['min_pair_blocks'],
+                                                   shrinkage_blocks=options['shrinkage_blocks'])
+    return noise, arrays[4]
 
 
 def candidate_bank(early, late, backgrounds=None, weights=None, penalties=None):
@@ -96,7 +102,7 @@ def candidate_bank(early, late, backgrounds=None, weights=None, penalties=None):
     return result
 
 
-def select_models(points, candidates):
+def select_models(points, candidates, noise_options=None, calibration_points=None):
     """Paired 60-day CV, acquisition purging and leave-control-region-out noise.
 
     Every candidate is scored on the same held-out observations, including those
@@ -132,7 +138,8 @@ def select_models(points, candidates):
             continue
         noises = {}
         for region in sorted(heldout_controls | {None},key=lambda r:r or ''):
-            noises[region] = learn_noise(points, excluded_region=region, train=train)[0]
+            noises[region] = learn_noise(points if calibration_points is None else calibration_points,
+                                        excluded_region=region, train=train, options=noise_options)[0]
         fold_scores = {model: [[] for _ in candidates] for model in scores}
         for point in points:
             if point['role']=='control' and point['region'] not in heldout_controls:
@@ -142,7 +149,7 @@ def select_models(points, candidates):
             if not test_good.any():
                 continue
             # Fixed constant calibration for scoring; only training weights vary.
-            _, _, heldout, cov, _ = point_arrays(point, noise, 'constant', test_good)
+            _, _, heldout, cov, _ = point_arrays(point, pooled_noise(noise), 'constant', test_good)
             factor = np.linalg.cholesky(cov)
             for ci, candidate in enumerate(candidates):
                 for model in scores:
@@ -164,6 +171,7 @@ def select_models(points, candidates):
         ledger.append({'fold': fold, 'train_pair_indices': np.where(train)[0], 'test_pair_indices': np.where(test)[0],
                        'purged_pair_indices': np.where(~train & ~test)[0], 'excluded_control_regions': [k for k in noises if k],
                        'noise_only_control_regions': sorted(control_regions-heldout_controls)})
+        ledger[-1]['heldout_pair_policy'] = 'pooled; held-out acquisitions never calibrate training noise'
     reports = {}
     for model, losses in scores.items():
         mean = np.array([np.mean(v) if len(v) >= 3 else np.inf for v in losses])
@@ -307,7 +315,9 @@ def _noise_draw(rng, point, noise, residual_records,cache=None):
     if cached is None:
         residual=control['residual_ra'];available=control['valid']
         control_covariance=covariance_ra(noise,control['point']['snr'][available],
-                                         control['point']['peak'][available],quality=True)
+                                         control['point']['peak'][available],quality=True,
+                                         pair_ids=control['point'].get('pair_id',None)[available]
+                                         if 'pair_id' in control['point'] else None)
         centered=residual[available]-np.asarray(noise.get('control_bias_m',[0.,0.]))
         standard=np.linalg.solve(np.linalg.cholesky(control_covariance),centered[...,None])[...,0]
         control_times=(control['point']['early'][available]+control['point']['late'][available])/2
@@ -322,7 +332,8 @@ def _noise_draw(rng, point, noise, residual_records,cache=None):
     sampled = np.asarray(sampled[:len(point['early'])])
     factor=None if cache is None else cache.get(('target',id(point)))
     if factor is None:
-        factor=np.linalg.cholesky(covariance_ra(noise,point['snr'],point['peak'],quality=True))
+        factor=np.linalg.cholesky(covariance_ra(noise,point['snr'],point['peak'],quality=True,
+                                               pair_ids=point.get('pair_id')))
         if cache is not None:cache[('target',id(point))]=factor
     ra = np.einsum('nij,nj->ni', factor, sampled)
     return ra @ point['inverse'].T

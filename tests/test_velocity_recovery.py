@@ -562,6 +562,12 @@ class IOTests(unittest.TestCase):
         self.assertFalse(report['enough_for_alignments_alone'])
 
     def test_pilot_then_gated_tile_map_resume(self):
+        self._pilot_then_gated_tile_map_resume(pair_noise=False)
+
+    def test_pair_noise_pilot_exports_calibration_and_compares_pooled_fits(self):
+        self._pilot_then_gated_tile_map_resume(pair_noise=True)
+
+    def _pilot_then_gated_tile_map_resume(self, pair_noise):
         # Small but complete workflow with real held-out noise estimation, CV,
         # injections, bootstrap, fit products and standalone daily evaluation.
         rng=np.random.default_rng(4)
@@ -583,12 +589,22 @@ class IOTests(unittest.TestCase):
         config.write_text('inputs: [input.nc]\noutput: output\nregions: regions.json\n'
             'sampling: {points_per_region: 1}\nmodels: {backgrounds: [constant], weights: [constant], penalties: [0.0001]}\n'
             'pilot: {bootstrap_draws: 3, validation_draws: 2, tuning_draws: 2}\nmap: {tile_size: 2}\n')
+        if pair_noise:
+            with config.open('a') as stream:
+                stream.write('noise: {mode: pair, control_points_per_region: 2, min_pair_blocks: 3, shrinkage_blocks: 10}\n')
         cfg=load_settings(config)
         with Collection([self.path]) as c,writer_lock(cfg['output']):
             report=pilot(cfg,c)
             self.assertEqual({p['region'] for p in report['sampling']},{'r0','r1'})
             cv=json.loads((Path(cfg['output'])/'cross_validation.json').read_text())
             self.assertTrue(cv['folds'])
+            if pair_noise:
+                from glacier_offsets.velocity_annual_noise import read_pair_noise
+                pooled_cov,matrices,artifact=read_pair_noise(Path(cfg['output'])/'pair-noise.json',
+                                                          [p[2] for p in c.pairs],[s['sha256'] for s in c.sources])
+                self.assertEqual(matrices.shape,(len(c.pairs),2,2))
+                self.assertTrue(cv['noise_comparison'])
+                self.assertFalse(artifact['noise']['pair_calibration']['bias_applied'])
             for fold in cv['folds']:
                 self.assertEqual(fold['excluded_control_regions'],[])
                 self.assertEqual(fold['noise_only_control_regions'],['r1'])

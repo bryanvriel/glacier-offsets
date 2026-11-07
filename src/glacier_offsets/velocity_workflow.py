@@ -33,7 +33,7 @@ RUN_MANIFEST = 'run-manifest.json'
 FIT_FILE = 'source_coefficients.h5'
 FIT_PARTIAL = 'source_coefficients.partial.h5'
 FIT_MODULES = ('velocity_pixel_general', 'velocity_basis', 'velocity_temporal', 'velocity_systematics', 'velocity_quality',
-               'velocity_vertical')
+               'velocity_vertical', 'velocity_pair_noise')
 STAGES = 'stages'
 
 
@@ -100,8 +100,10 @@ def preflight(config, stages):
         if not Path(noise['regions']).is_file():
             raise ValueError(f'Missing control regions file: {noise["regions"]}')
         control_regions(noise['regions'])
-    else:
+    elif noise['mode'] == 'supplied':
         read_supplied(noise['files'])
+    elif not Path(noise['file']).is_file():
+        raise ValueError(f'Missing pair-noise calibration: {noise["file"]}')
     regions = config['diagnostics']['regions']
     if regions is not None and not Path(regions).is_file():
         raise ValueError(f'Missing diagnostics regions file: {regions}')
@@ -117,16 +119,20 @@ def fit_recipe(config, layout, artifacts):
             'model': 'independent local along-flow Msf C/S + shared residual vertical M2/O1 height C/S; '
                      'annual EN secular velocities integrated over exact endpoint overlaps; annual azimuth order offsets',
             'comparator': 'direct satellite-azimuth Msf with annual secular/order terms',
-            'screen': f"peak>={s['min_peak']:g} and acquisition-purged order-aware RA residual<="
+            'screen': (f"peak>={s['min_peak']:g}; no fixed metre cuts; full-model Huber cutoff={s['robust_cutoff']:g} "
+                       'in whitened residual units' if config['noise']['mode']=='pair' else
+                       f"peak>={s['min_peak']:g} and acquisition-purged order-aware RA residual<="
                       f"{s['max_range_residual_m']:g}/{s['max_azimuth_residual_m']:g} m within each year; cross-year pairs "
-                      'predicted from integrated purged annual training backgrounds',
+                      'predicted from integrated purged annual training backgrounds'),
             'mixed_window_policy': {'remove_mixed_windows': s['remove_mixed_windows']},
             'min_fit': f"{c['min_pairs_per_year']} clean pairs in each year, >={c['min_pairs_total']} total, "
                        f">={c['min_span_days']:g} days, >={c['min_phase_bins']}/{c['phase_bins']} Msf phase bins; full model rank",
             'standard_coverage': f"same and >={c['min_pairs_standard']} total clean pairs",
             'flow_axis': 'robust order-removed EN velocity per year, equally averaged over years; fixed during each point fit',
             'direction_change': 'maximum pairwise annual secular direction change; zero for one year',
-            'covariance': 'annual RA covariance assigned by pair calendar-midpoint year; constant within a year',
+            'covariance': ('pair-specific control RA covariance; final robust weights held fixed for cluster diagnostics'
+                           if config['noise']['mode']=='pair' else
+                           'annual RA covariance assigned by pair calendar-midpoint year; constant within a year'),
             'diagnostic_uncertainty': f"pointwise {parameters['uncertainty']['cluster_days']:g}-day calendar-cluster sandwich, CR1; "
                                       'no spatial resampling; unvalidated as calibrated pixelwise inference',
             'phase_origin': '2000-01-01 00:00 UTC; v=C*cos(omega*tau)+S*sin(omega*tau); phi=atan2(S,C)',
@@ -146,7 +152,9 @@ def _create_fit(path, h, layout, covariances, recipe_sha, ns):
         result['crs'] = np.int32(0)
         for key, value in h['crs'].attrs.items():
             result['crs'].attrs[key] = value
-        result.create_dataset('covariance_by_year', data=covariances)
+        result.create_dataset('covariance_by_year', data=covariances['by_year'] if isinstance(covariances,dict) else covariances)
+        if isinstance(covariances,dict):
+            result.create_dataset('covariance_by_pair',data=covariances['by_pair'])
         options = {'compression': 'gzip', 'compression_opts': 2}
         specs = {'clean_pairs_by_year': ((ns, ny), 'i2'), 'span_days': ((ns,), 'f4'), 'phase_bins': ((ns,), 'i1'),
                  'fit_support': ((ns,), '?'), 'standard_coverage': ((ns,), '?'), 'flow_axis_EN': ((ns, 2), 'f8'),
@@ -165,12 +173,14 @@ def _create_fit(path, h, layout, covariances, recipe_sha, ns):
                                        ('phase_sigma_deg', (ns,), 'f4'), ('coefficient_covariance', (ns, 2, 2), 'f8'),
                                        ('target_condition', (ns,), 'f4'), ('rank', (ns,), 'i1'), ('estimable', (ns,), '?'),
                                        ('rms_m', (ns, 2 if model == 'residual_vertical' else 1), 'f4'),
-                                       ('partial_r2', (ns,), 'f4'), ('calendar_clusters', (ns,), 'i4')]:
+                                       ('partial_r2', (ns,), 'f4'), ('calendar_clusters', (ns,), 'i4'),
+                                       ('downweighted_pairs', (ns,), 'i4')]:
                 group.create_dataset(name, shape, dtype=dtype, **options)
 
 
 def run_fit(out, observations, solid_earth, noise_file, layout, parameters, batch, recipe_sha, hook=None):
-    covariances = covariance_array(noise_file, layout.years)
+    with h5py.File(observations,'r') as h:
+        covariances = covariance_array(noise_file, layout.years, h['pair_id'][:].astype(str).tolist())
     destination = out/FIT_FILE
     partial = out/FIT_PARTIAL
     with h5py.File(observations, 'r') as h:
@@ -253,6 +263,10 @@ def run_workflow(config_path, stages='run', interrupt=None, batch_size=None, rem
             absent = [y for y in manifest['years'] if y not in supplied]
             if absent:
                 problems.append(f'supplied noise has no covariance for observed year(s) {absent}')
+        elif config['noise']['mode'] == 'pair':
+            from .velocity_annual_noise import read_pair_noise
+            read_pair_noise(config['noise']['file'], [p['pair_id'] for p in manifest['pairs']],
+                            [i['sha256'] for i in manifest['inputs']])
         if problems:
             raise ValueError('Settings cannot be satisfied by these inputs: '+'; '.join(problems))
         write_json(out/'collection-manifest.json', manifest)

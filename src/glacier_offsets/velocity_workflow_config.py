@@ -14,7 +14,7 @@ from .velocity_pixel_config import DEFAULT_PARAMETERS, _UniqueLoader, _number, v
 
 
 VERSION = 2
-NOISE_MODES = ('supplied', 'controls')
+NOISE_MODES = ('supplied', 'controls', 'pair')
 CONTROL_MINIMUM_SAMPLES = 40  # calibrate_noise's existing held-out residual minimum.
 EXECUTION_DEFAULTS = {'solid_earth_python': None, 'batch_size': 512,
                       'preparation_chunk_pairs': 8, 'solid_earth_spacing_deg': 0.1}
@@ -99,14 +99,21 @@ def load_workflow_config(path):
         raise ValueError('corrections.solid_earth must be true or false')
     result['corrections'] = {'ocean_tide': ocean, 'solid_earth': solid}
 
-    noise = _mapping(raw, 'noise', ('mode', 'regions', 'group_by', 'block_size_m', 'files'))
+    noise = _mapping(raw, 'noise', ('mode', 'regions', 'group_by', 'block_size_m', 'files', 'file'))
     mode = noise.get('mode')
     if mode not in NOISE_MODES:
-        raise ValueError('noise.mode must be supplied or controls')
+        raise ValueError('noise.mode must be supplied, controls or pair')
     if noise.get('group_by', 'year') != 'year':
         raise ValueError('noise.group_by supports only year')
     record = {'mode': mode, 'group_by': 'year'}
-    if mode == 'controls':
+    if mode == 'pair':
+        if set(noise)-{'mode','file'}:
+            raise ValueError('noise.mode: pair accepts only file')
+        record['file'] = _path(base, noise.get('file'), 'noise.file')
+        record.pop('group_by')  # Pair identity, not calendar year, determines alignment.
+    elif mode == 'controls':
+        if 'file' in noise:
+            raise ValueError('noise.file is only used with mode: pair')
         if 'files' in noise:
             raise ValueError('noise.files is only used with mode: supplied')
         record['regions'] = _path(base, noise.get('regions'), 'noise.regions')
@@ -115,6 +122,8 @@ def load_workflow_config(path):
         record['block_size_m'] = float(block)
         record['min_samples'] = CONTROL_MINIMUM_SAMPLES
     else:
+        if 'file' in noise:
+            raise ValueError('noise.file is only used with mode: pair')
         if 'regions' in noise or 'block_size_m' in noise:
             raise ValueError('noise.regions and block_size_m are only used with mode: controls')
         files = noise.get('files')

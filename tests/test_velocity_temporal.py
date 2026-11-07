@@ -94,7 +94,7 @@ class TemporalOperatorTests(unittest.TestCase):
 
     def test_cross_validation_cannot_reuse_a_changed_operator(self):
         from glacier_offsets.velocity_recovery import implementation, cv_numerical_recipe
-        cfg = {'start': None, 'end': None, 'sampling': {}, 'models': {}}
+        cfg = {'start': None, 'end': None, 'sampling': {}, 'models': {}, 'noise': {}}
         recipe = {'source_fingerprints': [], 'regions_sha256': 'regions', 'implementation': implementation()}
         original = cv_numerical_recipe(cfg, recipe)
         for module in ('velocity_temporal.py', 'iceutils.tseries.timefn.Spline'):

@@ -258,6 +258,7 @@ class Collection:
         result = {k: v[:, 0, 0] for k, v in tile.items() if k not in ('inverse', 'geometry')}
         result.update(inverse=tile['inverse'][0, 0], geometry=tile['geometry'][0, 0],
                       row=int(row), col=int(col), source_id=int(self.association[row, col]))
+        result['pair_id'] = np.array([p[2] for p in self.pairs])
         # Use physical observation positions, not copied map-cell positions, for blocks.
         h = self.handles[0]
         result['spatial_block'] = self.spatial_block(row,col)

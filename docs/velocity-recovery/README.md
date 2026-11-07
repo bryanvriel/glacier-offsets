@@ -123,6 +123,69 @@ multiple-testing count. All proposal and sampling choices precede harmonic fits.
 
 ## Observation and temporal models
 
+### Pair-specific control-noise calibration
+
+`fit-velocity` retains pooled noise by default. To estimate pair-specific
+range/azimuth covariance during the pilot, add:
+
+```yaml
+noise:
+  mode: pair
+  control_points_per_region: 30
+  min_pair_blocks: 8
+  shrinkage_blocks: 20
+```
+
+Control sampling is separate from `sampling.points_per_region`, which still
+controls the target/control points scored in the pilot. At most one median
+residual per physical 3 km block contributes to a pair's scatter estimate.
+Calibration uses the existing acquisition-purged control residuals, without
+the pixel workflow's 2 m / 5 m cuts. Pair covariance is a convex combination of
+robust pair scatter and the pooled covariance; its pair weight is
+`n_blocks / (n_blocks + shrinkage_blocks)`. Below `min_pair_blocks`, or for an
+unseen pair in CV, the covariance is exactly the pooled fallback. Correlation
+is retained. Pair median bias is recorded separately and never subtracted from
+glacier observations. This calibrates pair precision, not acquisition-level
+shared-error covariance or glacier-specific texture differences.
+
+Within each predictive fold, calibration uses training acquisitions only and
+excludes the scored control region. Held-out pairs receive pooled calibration;
+same-pair held-out control data are not used to tune training weights. The pilot
+compares pair-aware and pooled fits on identical observations using the same
+pooled scoring covariance. `cross_validation.json` includes `noise_comparison`
+and the pooled candidate scores. Selection follows the explicitly configured
+mode; the comparison does not switch modes automatically. Existing robust and
+quality weighting candidates and injection/recovery tests remain in use.
+
+The pilot writes `noise.json` and `pair-noise.json`. The latter contains matrices
+keyed by pair ID, bias, independent support counts, shrinkage weights, fallback
+flags, input hashes, the calibration recipe, and pilot validation status. A
+completed calibration does not imply the pilot's recovery or mapping gates
+passed; consult `pilot_validation` and `pilot.json`.
+
+To use the calibration in the **version-2** pixel workflow, replace its noise
+section with:
+
+```yaml
+noise:
+  mode: pair
+  file: /data/velocity-pilot/pair-noise.json
+screening:
+  robust_cutoff: 3.0
+```
+
+Use the exact input packages calibrated by the pilot (a subset of those files
+and pair IDs is allowed). Input SHA256s and pair IDs are verified; a changed
+package or absent pair fails rather than inheriting an unrelated covariance.
+In pair mode the pixel workflow retains validity, correlation-peak and mixed
+window screening, bypasses fixed metre residual cuts, and applies Huber IRLS
+to covariance-whitened residuals from its full annual/order/vertical/Msf model.
+`robust_cutoff` is the residual-vector norm in whitened units, not metres.
+The coefficient file stores `covariance_by_pair` and per-source/model
+`downweighted_pairs`; the report and numerical replay use this same model.
+Cluster uncertainties remain diagnostics conditional on final robust weights.
+Annual controls/supplied modes retain their existing screening and GLS behavior.
+
 Displacements satisfy `d = integral(v(t), early, late)` in local geographic EN.
 Every pixel uses its owning burst's exact UTC endpoints. Velocity harmonics use
 `P = 14.765294` days and phase origin 2000-01-01 00:00:00 UTC:

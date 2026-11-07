@@ -14,6 +14,7 @@ DEFAULT_PARAMETERS = {
         'min_peak': 0.08,
         'max_range_residual_m': 2.0,
         'max_azimuth_residual_m': 5.0,
+        'robust_cutoff': 3.0,
     },
     'coverage': {
         'min_pairs_per_year': 20,
@@ -88,7 +89,7 @@ def validate_parameters(overrides=None):
             _number(value, f'{section}.{name}')
     s = result['screening']
     _number(s['min_peak'], 'screening.min_peak', maximum=1)
-    for name in ('max_range_residual_m', 'max_azimuth_residual_m'):
+    for name in ('max_range_residual_m', 'max_azimuth_residual_m', 'robust_cutoff'):
         _number(s[name], f'screening.{name}', positive=True)
     c = result['coverage']
     for name in ('min_pairs_per_year', 'min_pairs_total', 'phase_bins', 'min_phase_bins', 'min_pairs_standard'):

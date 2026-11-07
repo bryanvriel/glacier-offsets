@@ -27,7 +27,25 @@ from .velocity_systematics import order_residual, order_screen
 NOISE = 'noise.json'
 SCHEMA = 'glacier-offsets-annual-noise-v1'
 ESTIMATOR_MODULES = ('velocity_annual_noise', 'velocity_fit', 'velocity_systematics', 'velocity_quality',
-                     'velocity_pixel_general', 'velocity_basis', 'velocity_temporal', 'velocity_vertical')
+                     'velocity_pixel_general', 'velocity_basis', 'velocity_temporal', 'velocity_vertical', 'velocity_pair_noise')
+
+
+def read_pair_noise(path, pair_ids, source_sha256):
+    """Load a fit-velocity calibration bound to these exact input packages."""
+    from .velocity_pair_noise import SCHEMA as PAIR_SCHEMA
+    record = json.loads(Path(path).read_text())
+    if record.get('schema') != PAIR_SCHEMA:
+        raise ValueError('Expected a fit-velocity pair-noise.json calibration')
+    if not set(source_sha256) <= set(record.get('source_sha256', [])):
+        raise ValueError('Pair-noise calibration does not match the input package SHA256s')
+    noise = record['noise']
+    pooled = check_covariance(noise['covariance_ra_m2'], 'pooled pair-noise fallback')
+    pairs = noise['pair_calibration']['pairs']
+    missing = set(pair_ids)-pairs.keys()
+    if missing:
+        raise ValueError(f'Pair-noise calibration is missing pair IDs: {sorted(missing)}')
+    matrices = np.array([check_covariance(pairs[p]['covariance_ra_m2'], f'pair {p}') for p in pair_ids])
+    return pooled, matrices, record
 
 
 def check_covariance(matrix, label):
@@ -179,6 +197,9 @@ def noise_artifact(cache_directory, config, observations, solid_earth, years):
     noise = config['noise']
     identity = {'stage': 'noise', 'mode': noise['mode'], 'observations': observations.id, 'years': list(years),
                 'code_sha256': module_fingerprints(ESTIMATOR_MODULES)}
+    if noise['mode'] == 'pair':
+        identity['pair_calibration_sha256'] = digest(noise['file'])
+        return Artifact(cache_directory, 'noise', identity), None
     if noise['mode'] == 'supplied':
         identity['files'] = [{'sha256': digest(item['path']), 'years': item['years']} for item in noise['files']]
         return Artifact(cache_directory, 'noise', identity), None
@@ -202,6 +223,19 @@ def prepare_noise(cache_directory, config, observations, solid_earth, years):
         if record is not None:
             return artifact, record
         partial, _ = artifact.begin()
+        if config['noise']['mode'] == 'pair':
+            with h5py.File(observations.path('observations.h5'), 'r') as h:
+                pair_ids = h['pair_id'][:].astype(str).tolist()
+                sources = h['input_sha256'][:].astype(str).tolist()
+            pooled, matrices, calibration = read_pair_noise(config['noise']['file'], pair_ids, sources)
+            result = {'schema':SCHEMA, 'mode':'pair', 'pair_ids':pair_ids,
+                      'covariance_ra_m2_by_pair':matrices.tolist(),
+                      'covariance_ra_m2_by_year':{str(y):pooled.tolist() for y in years},
+                      'calibration':[], 'pair_calibration':calibration, 'bias_applied':False,
+                      'diagnostics':{str(y):diagnostics(pooled) for y in years}}
+            from .velocity_io import write_json
+            write_json(partial/NOISE, result)
+            return artifact, artifact.publish([NOISE])
         if config['noise']['mode'] == 'supplied':
             by_year, sources = read_supplied(config['noise']['files'])
             missing = [y for y in years if y not in by_year]
@@ -227,6 +261,11 @@ def prepare_noise(cache_directory, config, observations, solid_earth, years):
         return artifact, artifact.publish([NOISE])
 
 
-def covariance_array(noise_file, years):
+def covariance_array(noise_file, years, pair_ids=None):
     record = json.loads(Path(noise_file).read_text())
-    return np.array([check_covariance(record['covariance_ra_m2_by_year'][str(y)], f'noise {y}') for y in years])
+    yearly = np.array([check_covariance(record['covariance_ra_m2_by_year'][str(y)], f'noise {y}') for y in years])
+    if record.get('mode') == 'pair':
+        if pair_ids is None or list(pair_ids) != record['pair_ids']:
+            raise ValueError('Pair-noise ordering does not match the observation pair IDs')
+        return {'by_year':yearly, 'by_pair':np.array(record['covariance_ra_m2_by_pair'])}
+    return yearly
