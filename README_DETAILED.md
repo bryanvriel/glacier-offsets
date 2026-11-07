@@ -1881,10 +1881,13 @@ GLACIER_OFFSETS_PYTHON=/Users/briel/miniforge3/envs/ice/bin/python \
 
 It fits analytic interval-integrated Msf harmonics and a controlled background
 bank in local EN, compares free EN and along-flow models, estimates empirical
-range/azimuth covariance from reviewed controls, and retains covariance
+range/azimuth covariance from supplied controls, and retains covariance
 cross-terms while whitening. The launcher excludes the ISCE3 dependency overlay.
-Inspection proposes regions without fitting Msf; pilots require reviewed ice
-targets and independently identified bedrock controls. Maps require a current
+Inspection proposes regions without fitting Msf; pilots use exactly the regions
+listed in the configured JSON. Delete unwanted entries; review flags and minimum
+region counts are not required. Controls supply noise estimates, with a single
+control used for training noise and held-out targets used for predictive scoring.
+Maps require a current
 pilot recovery pass and independent calibration evidence bound to the exact
 netCDF inputs. Existing calibration scope is never widened automatically.
 

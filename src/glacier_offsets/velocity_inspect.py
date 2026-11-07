@@ -114,7 +114,7 @@ def propose(collection, directory, size_m=8000.):
               'observation_mask':'horizontal valid support, exact available burst endpoints, and available spacecraft correction for swath-corrected inputs',
               'missing_regions': {'targets': 4-sum(p['role']=='target' for p in proposals),
                                   'controls': 2-sum(p['role']=='control' for p in proposals)},
-              'next_step': 'Review/edit candidate bounds and identify independent bedrock controls before pilot calibration'}
+              'next_step': 'Set regions: in the fit YAML to a regions JSON; delete unwanted entries or edit bounds before pilot'}
     write_json(directory/'inspection.json', report)
     write_json(directory/'regions.proposed.json', {'EPSG': int(h.attrs['EPSG']), 'regions': proposals})
     import matplotlib
@@ -146,7 +146,7 @@ def sample_points(collection, regions, per_region=9):
     points = []
     seen = set()
     for region in regions:
-        logging.info('Sampling reviewed region %s',region['id'])
+        logging.info('Sampling region %s',region['id'])
         west, south, east, north = region['bounds']
         rows, cols = np.where((collection.x[None, :] >= west) & (collection.x[None, :] <= east) &
                               (collection.y[:, None] >= south) & (collection.y[:, None] <= north) & (collection.association >= 0))

@@ -73,7 +73,8 @@ def control_residuals(points, *, excluded_region=None, train=None):
             groups.extend([point['region']+':'+point['spatial_block']]*take.sum())
             records.append({'point': point, 'residual_ra': residual, 'valid': take})
     if not residuals:
-        raise ValueError('No cross-fitted residuals from reviewed controls')
+        raise ValueError('No cross-fitted residuals from the supplied control regions; '
+                         'include a control region with sufficient valid observations for noise estimation')
     return np.array(residuals), np.array(snrs), np.array(peaks), np.array(groups), records
 
 
@@ -100,9 +101,13 @@ def select_models(points, candidates):
 
     Every candidate is scored on the same held-out observations, including those
     the quality-rule candidate rejects during training. No quality-based score
-    attrition can make a model appear better.
+    attrition can make a model appear better. With one control region, use it
+    for training noise only and score targets; a spatial control holdout needs
+    another independent control region.
     """
     reference = points[0]
+    control_regions = {p['region'] for p in points if p['role']=='control'}
+    heldout_controls = control_regions if len(control_regions)>1 else set()
     # Scene acquisitions have equal dates but slightly different burst seconds.
     # Use UTC dates to purge all source bursts from the same acquisition.
     early, late = np.floor(reference['early']), np.floor(reference['late'])
@@ -126,10 +131,12 @@ def select_models(points, candidates):
         if train.sum() < 10:
             continue
         noises = {}
-        for region in sorted({p['region'] if p['role']=='control' else None for p in points},key=lambda r:r or ''):
+        for region in sorted(heldout_controls | {None},key=lambda r:r or ''):
             noises[region] = learn_noise(points, excluded_region=region, train=train)[0]
         fold_scores = {model: [[] for _ in candidates] for model in scores}
         for point in points:
+            if point['role']=='control' and point['region'] not in heldout_controls:
+                continue
             noise = noises[point['region'] if point['role']=='control' else None]
             test_good = test & point['valid']
             if not test_good.any():
@@ -155,7 +162,8 @@ def select_models(points, candidates):
                 region_losses = [np.mean([v[2] for v in values if v[0]==region]) for region in sorted({v[0] for v in values})]
                 scores[model][ci].append(float(np.mean(region_losses)) if region_losses else np.inf)
         ledger.append({'fold': fold, 'train_pair_indices': np.where(train)[0], 'test_pair_indices': np.where(test)[0],
-                       'purged_pair_indices': np.where(~train & ~test)[0], 'excluded_control_regions': [k for k in noises if k]})
+                       'purged_pair_indices': np.where(~train & ~test)[0], 'excluded_control_regions': [k for k in noises if k],
+                       'noise_only_control_regions': sorted(control_regions-heldout_controls)})
     reports = {}
     for model, losses in scores.items():
         mean = np.array([np.mean(v) if len(v) >= 3 else np.inf for v in losses])
@@ -468,7 +476,7 @@ def recovery(points, noise, selected, residual_records, draws=200, seed=12345, t
 
 
 def acceptance(report, minimum_draws=200):
-    """Require every reviewed target and model to pass the clean benchmark/null."""
+    """Require every supplied target and model to pass the clean benchmark/null."""
     failures = []
     baseline = [r for r in report['rows'] if r.get('case')=='baseline' and r.get('period')=='joint']
     groups = {(r['region'],r.get('source_id'),r.get('model')) for r in baseline}

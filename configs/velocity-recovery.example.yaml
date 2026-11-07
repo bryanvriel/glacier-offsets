@@ -2,7 +2,8 @@
 inputs:
   - ../work/my_stack/packages/horizontal.nc
 output: ../work/velocity-recovery
-# inspect writes regions.proposed.json; independently review/edit before pilot.
+# Set this to inspect's regions.proposed.json or your own regions JSON.
+# Every listed region is used; delete unwanted entries. Review flags are ignored.
 regions: null
 # A report from independent same-ground calibration validation, bound to the
 # input netCDF SHA256s, is required for maps. Existing scope is never widened.

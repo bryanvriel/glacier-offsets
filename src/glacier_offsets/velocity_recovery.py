@@ -90,23 +90,35 @@ def implementation():
 
 
 def reviewed_regions(cfg, collection):
+    """Load exactly the regions supplied; legacy review metadata is optional."""
     if cfg['regions'] is None:
-        raise ValueError('Pilot requires a reviewed regions JSON; run --stage inspect first')
+        raise ValueError('Specify a regions JSON with regions: in the fit YAML')
     with open(cfg['regions']) as stream:
         record = json.load(stream)
+    if not isinstance(record, dict):
+        raise ValueError('Regions JSON must contain EPSG and a nonempty regions list')
     if record.get('EPSG') != int(collection.handles[0].attrs['EPSG']):
         raise ValueError('Region EPSG does not match the netCDF grid')
-    regions = record.get('regions',[])
-    if len({r['id'] for r in regions}) != len(regions):
-        raise ValueError('Region IDs must be unique')
+    regions = record.get('regions')
+    if not isinstance(regions, list) or not regions:
+        raise ValueError('Regions JSON must contain a nonempty regions list')
+    ids = set()
     for region in regions:
-        if region.get('role') not in ('target','control') or region.get('reviewed') is not True or not region.get('review_notes','').strip():
-            raise ValueError('Each target/control needs reviewed=true and documented review_notes; proposals are not control truth')
+        if not isinstance(region, dict) or not isinstance(region.get('id'), str) or not region['id'].strip():
+            raise ValueError('Each region needs a nonempty string id')
+        if region['id'] in ids:
+            raise ValueError('Region IDs must be unique')
+        ids.add(region['id'])
+        if region.get('role') not in ('target','control'):
+            raise ValueError('Each region role must be target or control')
         bounds = region.get('bounds',[])
-        if len(bounds)!=4 or not np.isfinite(bounds).all() or bounds[0]>=bounds[2] or bounds[1]>=bounds[3]:
+        try:
+            bounds = np.asarray(bounds, dtype=float)
+        except (TypeError, ValueError) as error:
+            raise ValueError('Region bounds must be west,south,east,north in projected metres') from error
+        if bounds.shape!=(4,) or not np.isfinite(bounds).all() or bounds[0]>=bounds[2] or bounds[1]>=bounds[3]:
             raise ValueError('Region bounds must be west,south,east,north in projected metres')
-    if sum(r['role']=='target' for r in regions)<4 or sum(r['role']=='control' for r in regions)<2:
-        raise ValueError('At least four reviewed ice targets and two reviewed bedrock controls are required')
+        region['bounds'] = bounds.tolist()
     return regions
 
 
@@ -207,7 +219,7 @@ def pilot(cfg, collection):
     regions = reviewed_regions(cfg, collection)
     points = sample_points(collection, regions, cfg['sampling']['points_per_region'])
     if set(p['region'] for p in points) != set(r['id'] for r in regions):
-        raise ValueError('At least one unique, covered 3 km source block is required in every region')
+        raise ValueError('At least one unique, covered 3 km source block is required in every supplied region')
     directory = Path(cfg['output'])
     recipe=run_recipe(cfg,collection)
     progress=PilotProgress(directory,recipe,cv_identity=fingerprint(cv_numerical_recipe(cfg,recipe)))
@@ -330,7 +342,7 @@ def map_stage(cfg,collection):
     directory = Path(cfg['output'])
     pilot_path = directory/'pilot.json'
     if not pilot_path.is_file():
-        raise ValueError('Run a reviewed, validated pilot before mapping')
+        raise ValueError('Run a validated pilot before mapping')
     report = json.loads(pilot_path.read_text())
     recipe = run_recipe(cfg,collection)
     if report.get('recipe_identity')!=fingerprint(recipe) or not report.get('map_allowed'):

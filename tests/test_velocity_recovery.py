@@ -432,11 +432,60 @@ class IOTests(unittest.TestCase):
         cfg=load_settings(path)
         self.assertEqual(cfg['inputs'],[str(self.path.resolve())])
         with Collection([self.path]) as c:
-            with self.assertRaisesRegex(ValueError,'reviewed regions'):reviewed_regions(cfg,c)
-            with self.assertRaisesRegex(ValueError,'reviewed regions'):map_stage(cfg,c)
+            with self.assertRaisesRegex(ValueError,'regions JSON'):reviewed_regions(cfg,c)
+            with self.assertRaisesRegex(ValueError,'regions JSON'):map_stage(cfg,c)
             self.assertTrue(calibration_gate(cfg,c))
         path.write_text('inputs: [input.nc]\noutput: output\nmodels: {bogus: true}\n')
         with self.assertRaisesRegex(ValueError,'Unknown'):load_settings(path)
+
+    def test_regions_use_all_entries_without_review_flags_or_fixed_counts(self):
+        path=self.folder/'regions.json'
+        target={'id':'ice','role':'target','bounds':[90000,180000,120000,210000]}
+        control={'id':'rock','role':'control','bounds':[90000,180000,120000,210000],
+                 'reviewed':False,'review_notes':''}
+        cfg={'regions':str(path)}
+        with Collection([self.path]) as c:
+            write_json(path,{'EPSG':3031,'regions':[target,control]})
+            self.assertEqual(reviewed_regions(cfg,c),[target,control])
+            # Deleting an entry is the only exclusion operation.
+            write_json(path,{'EPSG':3031,'regions':[control]})
+            self.assertEqual(reviewed_regions(cfg,c),[control])
+
+    def test_regions_reject_invalid_structure_crs_ids_roles_and_bounds(self):
+        path=self.folder/'regions.json';cfg={'regions':str(path)}
+        region={'id':'ice','role':'target','bounds':[90000,180000,120000,210000]}
+        cases=[([], 'EPSG'),
+               ({'EPSG':3413,'regions':[region]}, 'EPSG'),
+               ({'EPSG':3031,'regions':[]}, 'nonempty'),
+               ({'EPSG':3031,'regions':[region,region]}, 'unique'),
+               ({'EPSG':3031,'regions':[region|{'id':''}]}, 'id'),
+               ({'EPSG':3031,'regions':[region|{'role':'other'}]}, 'role'),
+               ({'EPSG':3031,'regions':[region|{'bounds':[1,2,0,3]}]}, 'bounds'),
+               ({'EPSG':3031,'regions':[region|{'bounds':None}]}, 'bounds')]
+        with Collection([self.path]) as c:
+            for record,message in cases:
+                with self.subTest(record=record):
+                    write_json(path,record)
+                    with self.assertRaisesRegex(ValueError,message):reviewed_regions(cfg,c)
+
+    def test_model_selection_still_holds_out_controls_when_multiple_are_supplied(self):
+        rng=np.random.default_rng(713)
+        with Collection([self.path]) as c:
+            points=[]
+            for i,(row,col) in enumerate(((0,0),(2,0),(2,2))):
+                point=c.point(row,col)
+                point.update(region=f'r{i}',role='target' if i==0 else 'control')
+                if i:
+                    point['data']=rng.normal(0,.02,point['data'].shape)
+                points.append(point)
+            candidates=candidate_bank(c.selected_early,c.selected_late,['constant'],['constant'],[0.])
+            _,folds=select_models(points,candidates)
+            self.assertTrue(folds)
+            for fold in folds:
+                self.assertEqual(set(fold['excluded_control_regions']),{'r1','r2'})
+                self.assertEqual(fold['noise_only_control_regions'],[])
+            with self.assertRaisesRegex(ValueError,'include a control region'):
+                learn_noise(points[:1])
 
     def test_pilot_checkpoint_requires_matching_recipe_and_content(self):
         cache=PilotProgress(self.folder/'cache',{'source':'a'})
@@ -525,10 +574,10 @@ class IOTests(unittest.TestCase):
                 h[name][:]=values
         rehash(self.path)
         regions=[]
-        for i,(row,col) in enumerate(((0,0),(0,2),(1,0),(1,2),(2,0),(2,2))):
+        for i,(row,col) in enumerate(((0,0),(2,0))):
             x=100000+4000*col;y=200000-4000*row
-            regions.append({'id':f'r{i}','role':'target' if i<4 else 'control','reviewed':True,
-                            'review_notes':'Synthetic known truth','bounds':[x-500,y-500,x+500,y+500]})
+            regions.append({'id':f'r{i}','role':'target' if i==0 else 'control',
+                            'bounds':[x-500,y-500,x+500,y+500],'reviewed':False})
         write_json(self.folder/'regions.json',{'EPSG':3031,'regions':regions})
         config=self.folder/'config.yaml'
         config.write_text('inputs: [input.nc]\noutput: output\nregions: regions.json\n'
@@ -537,6 +586,12 @@ class IOTests(unittest.TestCase):
         cfg=load_settings(config)
         with Collection([self.path]) as c,writer_lock(cfg['output']):
             report=pilot(cfg,c)
+            self.assertEqual({p['region'] for p in report['sampling']},{'r0','r1'})
+            cv=json.loads((Path(cfg['output'])/'cross_validation.json').read_text())
+            self.assertTrue(cv['folds'])
+            for fold in cv['folds']:
+                self.assertEqual(fold['excluded_control_regions'],[])
+                self.assertEqual(fold['noise_only_control_regions'],['r1'])
             self.assertFalse(report['map_allowed'])
             with patch('glacier_offsets.velocity_recovery.select_models',side_effect=AssertionError('verified CV must be reused')):
                 repeated=pilot(cfg,c)
