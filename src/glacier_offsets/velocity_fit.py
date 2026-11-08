@@ -5,6 +5,12 @@ from scipy.stats import chi2
 from .velocity_basis import design
 
 WEIGHT_MODELS = ('constant', 'constant_robust', 'quality_robust', 'quality_rule')
+QUALITY_TRANSFER_POLICY = {
+    'outside_domain': 'clamp log-quality features to their calibrated bounds',
+    'missing_quality': 'lower calibrated bound, with covariance at least pooled in every direction',
+    'missing_model': 'pooled covariance; unsupported quality model',
+    'maximum_precision_relative_to_pooled': 100.,
+}
 
 
 def quality_rule(snr, peak):
@@ -67,47 +73,96 @@ def calibrate_noise(residual_ra, snr, peak, groups, *, minimum=40):
     return {'covariance_ra_m2': baseline.tolist(), 'floors_m': floors.tolist(), 'correlation': correlation,
             'floor_method': 'spatially balanced residual RMS in the highest quality decile',
             'quality_models': models, 'control_bias_m': center.tolist(), 'samples': len(r),
+            'quality_transfer_policy': QUALITY_TRANSFER_POLICY.copy(),
             'spatial_groups': len(counts), 'weight_convention': 'inverse standard deviation; sqrt Huber factor',
             'uncertainty_scope': 'empirical residual noise; correction sensitivity remains separate'}
 
 
-def covariance_ra(noise, snr, peak, quality=False, pair_ids=None):
-    baseline = np.asarray(noise['covariance_ra_m2'])
+def covariance_ra(noise, snr, peak, quality=False, pair_ids=None, *, return_diagnostics=False):
+    """Transfer empirical RA covariance without an out-of-domain precision jump.
+
+    Finite positive quality is clamped in log space; this is a boundary policy,
+    not validation of extrapolation. Missing features use the selected model's
+    lower bound and cannot be more precise than pooled noise in any direction.
+    Prefer the joint model even when peak is absent, using its worst calibrated
+    peak rather than switching to a potentially overconfident SNR-only model.
+    With no quality model, pooled covariance remains an explicitly flagged case.
+
+    Optional diagnostics contain the model, status, and two-column SNR/peak
+    masks for lower/upper clamping and missing features. ``in_domain`` refers
+    to the selected model's rectangular training bounds, not transfer validation.
+    Pair-aware calibration applies the same policy before its covariance map.
+    """
+    baseline = np.asarray(noise['covariance_ra_m2'], float)
     if baseline.shape != (2, 2) or not np.isfinite(baseline).all() or np.linalg.eigvalsh(baseline).min() <= 0:
         raise ValueError('Control covariance must be finite positive definite')
     result = np.broadcast_to(baseline, (len(snr), 2, 2)).copy()
+    details = None
+    if return_diagnostics:
+        details = {'model': np.full(len(snr), '', dtype='U8'),
+                   'status': np.full(len(snr), 'constant', dtype='U20'),
+                   'clipped_low': np.zeros((len(snr), 2), bool),
+                   'clipped_high': np.zeros((len(snr), 2), bool),
+                   'missing_features': np.zeros((len(snr), 2), bool)}
     if 'pair_calibration' in noise:
         from .velocity_pair_noise import pair_covariances, pooled_noise
         if pair_ids is None or len(pair_ids) != len(snr):
             raise ValueError('Pair-aware noise requires one pair_id per observation')
         pairs = pair_covariances(noise, pair_ids)
         if not quality:
-            return pairs
-        quality_cov = covariance_ra(pooled_noise(noise), snr, peak, quality=True)
+            return (pairs, details) if return_diagnostics else pairs
+        transferred = covariance_ra(pooled_noise(noise), snr, peak, quality=True,
+                                    return_diagnostics=return_diagnostics)
+        quality_cov, details = transferred if return_diagnostics else (transferred, None)
         transform = np.linalg.cholesky(pairs) @ np.linalg.inv(np.linalg.cholesky(baseline))
-        return transform @ quality_cov @ transform.swapaxes(-1, -2)
+        result = transform @ quality_cov @ transform.swapaxes(-1, -2)
+        return (result, details) if return_diagnostics else result
     if not quality:
-        return result
+        return (result, details) if return_diagnostics else result
+    snr, peak = np.asarray(snr, float), np.asarray(peak, float)
+    if snr.ndim != 1 or peak.shape != snr.shape:
+        raise ValueError('Quality requires matching one-dimensional SNR and peak arrays')
     floors = np.maximum(noise['floors_m'], np.sqrt(np.diag(baseline))/10)
+    models = noise['quality_models']
+    name = 'snr_peak' if 'snr_peak' in models else 'snr'
+    model = models.get(name)
+    if model is None:
+        if details is not None:
+            details['status'][:] = 'no_quality_model'
+        return (result, details) if return_diagnostics else result
+    lo, hi = np.asarray(model['domain'], float)
+    coefficients = np.asarray(model['coefficients'], float)
+    nfeatures = 2 if name == 'snr_peak' else 1
+    if (lo.shape != (nfeatures,) or hi.shape != lo.shape or
+            coefficients.shape != (2, nfeatures+1) or
+            not np.isfinite(np.r_[lo, hi, coefficients.ravel()]).all() or (lo > hi).any()):
+        raise ValueError('Invalid quality covariance model or calibration domain')
+    factor = np.linalg.cholesky(baseline)
     for i in range(len(snr)):
-        name = 'snr_peak' if np.isfinite(peak[i]) and peak[i] > 0 else 'snr'
-        model = noise['quality_models'].get(name)
-        if model is None or not np.isfinite(snr[i]) or snr[i] <= 0:
-            continue
-        x = _features(np.array([snr[i]]), np.array([peak[i]]), name=='snr_peak')[0]
-        lo, hi = np.asarray(model['domain'])
-        if ((x[1:] < lo) | (x[1:] > hi)).any():
-            continue
-        sig = np.maximum(np.exp(np.clip(np.asarray(model['coefficients']) @ x/2, -50, 50)), floors)
+        values = np.array([snr[i], peak[i]])[:nfeatures]
+        missing = ~np.isfinite(values) | (values <= 0)
+        features = lo.copy()
+        features[~missing] = np.log(values[~missing])
+        low, high = features < lo, features > hi
+        x = np.r_[1., np.clip(features, lo, hi)]
+        if details is not None:
+            details['model'][i] = name
+            details['missing_features'][i, :nfeatures] = missing
+            details['clipped_low'][i, :nfeatures] = low
+            details['clipped_high'][i, :nfeatures] = high
+            details['status'][i] = ('missing_quality' if missing.any() else
+                                    'clipped' if (low | high).any() else 'in_domain')
+        sig = np.maximum(np.exp(np.clip(coefficients @ x/2, -50, 50)), floors)
         corr = noise['correlation']
         candidate = np.diag(sig) @ np.array([[1., corr], [corr, 1.]]) @ np.diag(sig)
         # Bound precision in every direction, including correlated combinations.
-        minimum = np.linalg.eigvalsh(np.linalg.solve(np.linalg.cholesky(baseline),
-                    np.linalg.solve(np.linalg.cholesky(baseline), candidate).T).T).min()
-        if minimum < .01:
-            candidate *= .01/max(minimum, 1e-12)
+        minimum = np.linalg.eigvalsh(np.linalg.solve(factor,
+                    np.linalg.solve(factor, candidate).T).T).min()
+        minimum_ratio = 1. if missing.any() else .01
+        if minimum < minimum_ratio:
+            candidate *= minimum_ratio/max(minimum, np.finfo(float).tiny)
         result[i] = candidate
-    return result
+    return (result, details) if return_diagnostics else result
 
 
 def whiten(matrix, data, covariance):

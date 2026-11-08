@@ -262,7 +262,9 @@ class StatisticsTests(unittest.TestCase):
         self.assertLessEqual(np.max(np.array(noise['quality_models']['snr_peak']['coefficients'])[:,1:]),0)
         cov=covariance_ra(noise,np.array([10.,40.,-1.,200.,20.]),np.array([.5,.5,.5,.5,np.nan]),True)
         self.assertTrue((np.diag(cov[1])<=np.diag(cov[0])).all())
-        assert_allclose(cov[2],noise['covariance_ra_m2']);assert_allclose(cov[3],noise['covariance_ra_m2'])
+        self.assertGreaterEqual(np.linalg.eigvalsh(cov[2]-noise['covariance_ra_m2']).min(),-1e-10)
+        upper=np.exp(noise['quality_models']['snr_peak']['domain'][1][0])
+        assert_allclose(cov[3],covariance_ra(noise,[upper],[.5],True)[0])
         self.assertTrue(np.isfinite(cov[4]).all())
         baseline=np.array(noise['covariance_ra_m2'])
         for candidate in cov:

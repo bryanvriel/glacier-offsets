@@ -222,10 +222,25 @@ Controls supply cross-fitted robust secular residuals. Noise estimation balances
 3 km control groups and fits full range/azimuth covariance, including correlation.
 The quality model fits nonpositive slopes of log variance against log SNR/peak;
 observed high-quality residual scatter supplies component-specific noise floors.
-Missing peaks select the SNR-only calibration. Missing/insufficient quality or
-values outside its calibration domain use constant covariance. Precision is
+Finite positive quality outside its calibration domain is clamped to the model's
+log-quality boundaries. Crossing a boundary therefore cannot suddenly switch a
+noisy observation to the smaller pooled covariance. Boundary clamping is a
+conservative transfer policy, not validation of observations beyond the training
+support. The joint SNR/peak model is preferred when available; a missing or
+nonpositive feature uses its lower calibrated bound. Missing-quality covariance
+is additionally bounded below by pooled covariance in every direction. An
+SNR-only model is used when no joint model exists. If neither model exists,
+quality weighting uses pooled covariance and flags the unavailable model.
+`covariance_ra(..., return_diagnostics=True)` returns covariance plus per-observation
+model/status and SNR/peak masks for lower/upper clamping and missing features.
+Statuses distinguish `in_domain`, `clipped`, `missing_quality`, `no_quality_model`
+and `constant`. These diagnostics describe the selected rectangular calibration
+domain, not geographic or scientific validation. Pair-aware covariance transfer
+uses the same policy before mapping to each pair's covariance. Precision remains
 capped in every covariance direction at 100 times baseline, corresponding to ten
-times baseline inverse standard deviation.
+times baseline inverse standard deviation. New noise records include the
+`quality_transfer_policy`; existing calibration and fit outputs need rerunning
+under the updated implementation before their results reflect this policy.
 
 The four weighting candidates are constant covariance, constant covariance with
 robust weights, quality covariance with robust weights, and the existing quality
