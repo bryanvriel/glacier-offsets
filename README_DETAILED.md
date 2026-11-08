@@ -742,6 +742,13 @@ pair graph, omitted links and disconnected dates. `validate` additionally checks
 native metadata, reference-grid placement, DEM coverage and processing settings.
 Both commands are read-only and avoid complete SAFE hashing.
 
+For isolated matching experiments on selected saved pairs, use
+[`tools/rematch_saved_pairs.py`](tools/rematch_saved_pairs.py). It reuses retained
+aligned bursts, reconstructs temporary merged inputs outside the production
+stack, and supports window/search/stride overrides without SAFE discovery or
+COMPASS. See [saved-pair rematching](docs/stack-processing/REMATCH_SAVED_PAIRS.md)
+for date selection, common physical centers, server commands and validation limits.
+
 #### Pair graph and processing stages
 
 V1 accepts one SAFE per UTC acquisition date, one relative orbit/direction group,
