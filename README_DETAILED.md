@@ -746,7 +746,8 @@ For isolated matching experiments on selected saved pairs, use
 [`tools/rematch_saved_pairs.py`](tools/rematch_saved_pairs.py). It reuses retained
 aligned bursts, reconstructs temporary merged inputs outside the production
 stack, and supports window/search/stride overrides without SAFE discovery or
-COMPASS. See [saved-pair rematching](docs/stack-processing/REMATCH_SAVED_PAIRS.md)
+COMPASS. Velocity gross offsets can use the retained reference orbit to center
+a smaller residual search. See [saved-pair rematching](docs/stack-processing/REMATCH_SAVED_PAIRS.md)
 for date selection, common physical centers, server commands and validation limits.
 
 #### Pair graph and processing stages
