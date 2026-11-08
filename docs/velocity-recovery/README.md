@@ -477,6 +477,11 @@ production input, correction, map eligibility, or 2018 processing.
 
 ## Spacecraft order and full ENU solid-Earth tide follow-up (2017)
 
+For the Evans matched four-way pilot, including two-component order terms,
+source-cache preparation, exact-endpoint solid-Earth corrections and the
+interpretation of conditional uncertainty, see the
+[Evans nuisance-pilot guide](EVANS_NUISANCE_PILOT.md).
+
 The [2026-10-29 experiment report](ORDER_SET_EXPERIMENT_2026-10-29.md) records
 matched corrected-data fits, frequency scans, recovery tests, and nested
 synthetic bootstrap calibration. The isolated outputs are in

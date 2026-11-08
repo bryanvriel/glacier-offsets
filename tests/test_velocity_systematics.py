@@ -1,7 +1,8 @@
 import unittest
 import numpy as np
 from numpy.testing import assert_allclose
-from glacier_offsets.velocity_systematics import OrderRegionalDesign,order_screen,holm,OrderScreenCache,calendar_times
+from glacier_offsets.velocity_systematics import (OrderRegionalDesign,order_screen,holm,
+    OrderScreenCache,calendar_times,robust_background)
 from glacier_offsets.velocity_basis import harmonic
 from test_velocity_vertical import fixture
 
@@ -74,5 +75,48 @@ class OrderTests(unittest.TestCase):
 
     def test_holm_stepdown_monotone(self):
         assert_allclose(holm([.04,.001,.02,.5]),[.08,.004,.06,.5])
+
+    def test_both_component_order_recovery_and_operator(self):
+        f,u,cs=self.make()
+        f['data'][...,0]+=f['order']*np.where(f['burst']==0,.35,-.15)[:,None]
+        d=OrderRegionalDesign(f,np.array([[.09,.04],[.04,.64]]),
+                              'residual_vertical',order_range=True)
+        good=f['valid'].copy();good[0,3:7]=False
+        fit=d.fit(good,u,temporal=np.tile([1.,0.,2.],20),
+                  spatial=np.arange(1.,9)/10,details=True,operator=True)
+        self.assertEqual(d.order_terms,[(0,0),(1,0),(0,1),(1,1)])
+        assert_allclose(fit['cs'],cs,atol=1e-11)
+        assert_allclose(fit['order_m'],[.35,-.15,-.4,-.2],atol=1e-11)
+        assert_allclose(fit['prediction'],f['data'],atol=1e-11)
+        assert_allclose(np.einsum('istc,stc->i',fit['operator'],f['data']),cs,atol=1e-11)
+
+    def test_two_component_screen_and_cached_resampling(self):
+        f,_,_=self.make()
+        f['data'][...,0]=1.2+f['order']*8
+        f['data'][...,1]=3+f['order']*10
+        self.assertFalse(order_screen(f).all())
+        self.assertTrue(order_screen(f,order_range=True).all())
+        f['data'][0,5,0]+=30;f['peak'][1,7]=.01
+        cache=OrderScreenCache(f,order_range=True)
+        rng=np.random.default_rng(14)
+        for _ in range(5):
+            counts=rng.integers(0,4,size=60)
+            actual=cache.mask_for(counts)
+            expected=order_screen(f,counts=counts,order_range=True)
+            self.assertTrue(np.array_equal(actual,expected))
+            self.assertFalse(actual[0,5]);self.assertFalse(actual[1,7])
+
+    def test_train_only_order_background_ignores_heldout_values(self):
+        f,_,_=self.make()
+        f['data'][...,0]=1.2+f['order']*.3
+        f['data'][...,1]=3+f['order']*.5
+        train=np.arange(60)<30
+        prediction,bias=robust_background(f,train,order_range=True)
+        changed={**f,'data':f['data'].copy()}
+        changed['data'][:,~train]+=1e6
+        repeated,other=robust_background(changed,train,order_range=True)
+        assert_allclose(repeated,prediction,atol=0)
+        assert_allclose(other,bias,atol=0)
+        assert_allclose(bias,np.tile([.3,.5],(8,1)),atol=1e-8)
 
 if __name__=='__main__':unittest.main()

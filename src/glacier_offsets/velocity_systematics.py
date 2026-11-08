@@ -28,41 +28,54 @@ def weighted_median(values, weights, index=None):
     return np.where(total>0,sorted_values[np.arange(len(values)),selected],np.nan)
 
 
-def robust_background(field,train,counts=None,threshold=.08):
-    """Train-only robust secular RA plus source-specific alternating azimuth.
+def _background(field, train, counts, threshold, order_range, indices=None):
+    """Shared background calculation; optional sorted indices support rescreening."""
+    dt=field['late']-field['early'];order=field['order']
+    w=(field['valid'] & train[None] & np.isfinite(field['peak']) &
+       (field['peak']>=threshold))*counts[None]
+    rate=field['data']/dt[...,None]
+    plus=w*(order>0);minus=w*(order<0)
+    ix=None if indices is None else indices[2]
+    xp=weighted_median(order/dt,plus,ix);xm=weighted_median(order/dt,minus,ix)
+    velocities=[];biases=[]
+    for ch in (0,1):
+        index=None if indices is None else indices[ch]
+        fallback=weighted_median(rate[...,ch],w,index)
+        if ch==0 and not order_range:
+            velocities.append(fallback);biases.append(np.zeros(len(dt)));continue
+        yp=weighted_median(rate[...,ch],plus,index);ym=weighted_median(rate[...,ch],minus,index)
+        with np.errstate(invalid='ignore',divide='ignore'):
+            bias=(yp-ym)/(xp-xm);velocity=yp-bias*xp
+        velocities.append(np.where(np.isfinite(velocity),velocity,fallback))
+        biases.append(np.where(np.isfinite(bias),bias,0.))
+    velocity=np.stack(velocities,axis=-1);bias=np.stack(biases,axis=-1)
+    prediction=np.nan_to_num(dt)[...,None]*velocity[:,None]+order[...,None]*bias[:,None]
+    return prediction,bias if order_range else bias[:,1]
+
+
+def robust_background(field,train,counts=None,threshold=.08,*,order_range=False):
+    """Train-only secular RA and source-specific alternating displacement.
 
     Positive/negative-order medians avoid leverage from failed matches. The
     screen permits source-dependent order amplitudes; the science fit uses a
     shared coefficient per owning burst. No harmonic enters this screen.
+    The default returns an azimuth bias vector. With ``order_range=True``,
+    returns an (source, RA) bias array and models both components.
     """
-    dt=field['late']-field['early'];data=field['data'];order=field['order']
-    counts=np.ones(dt.shape[1]) if counts is None else counts
-    mask=field['valid'] & train[None] & np.isfinite(field['peak']) & (field['peak']>=threshold)
-    w=mask*counts[None];rate=data/dt[...,None]
-    vr=weighted_median(rate[...,0],w)
-    plus=w*(order>0);minus=w*(order<0)
-    yp=weighted_median(rate[...,1],plus);ym=weighted_median(rate[...,1],minus)
-    xp=weighted_median(order/dt,plus);xm=weighted_median(order/dt,minus)
-    with np.errstate(invalid='ignore',divide='ignore'):
-        bias=(yp-ym)/(xp-xm);va=yp-bias*xp
-    fallback=weighted_median(rate[...,1],w)
-    va=np.where(np.isfinite(va),va,fallback);bias=np.nan_to_num(bias)
-    velocity=np.stack([vr,va],axis=-1)
-    prediction=np.nan_to_num(dt)[...,None]*velocity[:,None]
-    prediction[...,1]+=order*bias[:,None]
-    return prediction,bias
+    counts=np.ones(field['valid'].shape[1]) if counts is None else counts
+    return _background(field,train,counts,threshold,order_range)
 
 
-def order_residual(field,threshold=.08,counts=None,allowed=None):
+def order_residual(field,threshold=.08,counts=None,allowed=None,*,order_range=False):
     residual=np.full_like(field['data'],np.nan)
     for train,test in purged_folds(*calendar_times(field),allowed=allowed):
-        prediction,_=robust_background(field,train,counts,threshold)
+        prediction,_=robust_background(field,train,counts,threshold,order_range=order_range)
         residual[:,test]=field['data'][:,test]-prediction[:,test]
     return residual
 
 
-def order_screen(field,threshold=.08,counts=None,allowed=None,*,max_range_residual_m=2.,max_azimuth_residual_m=5.):
-    residual=order_residual(field,threshold,counts,allowed)
+def order_screen(field,threshold=.08,counts=None,allowed=None,*,max_range_residual_m=2.,max_azimuth_residual_m=5.,order_range=False):
+    residual=order_residual(field,threshold,counts,allowed,order_range=order_range)
     return (field['valid'] & np.isfinite(field['peak']) & (field['peak']>=threshold)
             & np.isfinite(residual).all(-1) & (abs(residual[...,0])<=max_range_residual_m)
             & (abs(residual[...,1])<=max_azimuth_residual_m))
@@ -80,13 +93,18 @@ class OrderRegionalDesign:
     `azimuth_direct` uses one source secular velocity and shared radar C/S.
     `azimuth_along`, `fixed_vertical`, `residual_vertical` project shared EN
     Msf along direction. The latter also has four source-specific U columns.
+    ``order_range=True`` adds range order coefficients to joint RA models;
+    ``order_terms`` identifies each coefficient as (burst, radar component).
     """
-    def __init__(self,field,covariance,model='azimuth_direct',order=True,period=PERIOD):
+    def __init__(self,field,covariance,model='azimuth_direct',order=True,period=PERIOD,*,order_range=False):
         if model not in ('azimuth_direct','azimuth_along','fixed_vertical','residual_vertical'):
             raise ValueError('Unknown model')
         self.field=field;self.model=model;self.direct=model=='azimuth_direct'
         self.channels=[1] if model.startswith('azimuth') else [0,1]
         self.bursts=np.unique(field['burst']) if order else np.array([],int)
+        order_axes=([0,1] if order_range and len(self.channels)==2 else [1])
+        self.order_terms=[(burst,ch) for ch in order_axes for burst in self.bursts]
+        self.n_order=len(self.order_terms)
         self.factor=np.linalg.cholesky(np.asarray(covariance)[np.ix_(self.channels,self.channels)])
         geometry=field['geometry'][:,self.channels]
         dt=np.nan_to_num(field['late']-field['early'])
@@ -94,9 +112,9 @@ class OrderRegionalDesign:
         if self.direct:target=hb[:,:,None,:]
         else:target=np.einsum('sci,stj->stcij',geometry[...,:2],hb).reshape(*dt.shape,len(self.channels),4)
         self.nh=target.shape[-1]
-        oc=np.zeros((*dt.shape,len(self.channels),len(self.bursts)))
-        for j,burst in enumerate(self.bursts):
-            oc[:,:,-1,j]=(field['burst']==burst)[:,None]*field['order']
+        oc=np.zeros((*dt.shape,len(self.channels),self.n_order))
+        for j,(burst,ch) in enumerate(self.order_terms):
+            oc[:,:,self.channels.index(ch),j]=(field['burst']==burst)[:,None]*field['order']
         q=np.concatenate([target,oc],axis=-1)
         secular=geometry[:,None,:,:2] if len(self.channels)==2 else np.ones((len(dt),1,1,1))
         b=dt[:,:,None,None]*secular;self.n_secular=b.shape[-1]
@@ -122,9 +140,9 @@ class OrderRegionalDesign:
         ny=np.einsum('st,stci,stc->si',w,self.b,y)
         qy=np.einsum('st,stci,stc->si',w,self.q,y)
         rhs=np.einsum('s,si->i',sw,qy-np.einsum('sji,sjk,sk->si',nq,inv,ny))
-        project=np.zeros((self.nh+len(self.bursts),2+len(self.bursts)))
+        project=np.zeros((self.nh+self.n_order,2+self.n_order))
         project[:self.nh,:2]=(np.eye(2) if self.direct else np.array([[direction[0],0],[0,direction[0]],[direction[1],0],[0,direction[1]]]))
-        project[self.nh:,2:]=np.eye(len(self.bursts))
+        project[self.nh:,2:]=np.eye(self.n_order)
         system=project.T@information@project;system=(system+system.T)/2
         # Remove unrepresented bursts in resamples without dropping the target.
         active=np.r_[True,True,np.diag(system)[2:]>1e-12]
@@ -161,8 +179,9 @@ class OrderScreenCache:
     Medians, training support, predictions, and screen decisions are recomputed
     for every draw. A new cache is required for each synthetic dataset.
     """
-    def __init__(self,field,threshold=.08):
+    def __init__(self,field,threshold=.08,*,order_range=False):
         self.field=field;self.threshold=threshold
+        self.order_range=order_range
         self.dt=field['late']-field['early'];self.rate=field['data']/self.dt[...,None]
         self.x=field['order']/self.dt
         self.ir=np.argsort(self.rate[...,0],axis=1);self.ia=np.argsort(self.rate[...,1],axis=1);self.ix=np.argsort(self.x,axis=1)
@@ -172,16 +191,7 @@ class OrderScreenCache:
     def mask_for(self,counts):
         f=self.field;residual=np.full_like(f['data'],np.nan)
         for train,test in self.folds:
-            w=self.mask*train[None]*counts[None]
-            vr=weighted_median(self.rate[...,0],w,self.ir)
-            plus=w*(f['order']>0);minus=w*(f['order']<0)
-            yp=weighted_median(self.rate[...,1],plus,self.ia);ym=weighted_median(self.rate[...,1],minus,self.ia)
-            xp=weighted_median(self.x,plus,self.ix);xm=weighted_median(self.x,minus,self.ix)
-            with np.errstate(invalid='ignore',divide='ignore'):
-                bias=(yp-ym)/(xp-xm);va=yp-bias*xp
-            fallback=weighted_median(self.rate[...,1],w,self.ia)
-            va=np.where(np.isfinite(va),va,fallback);bias=np.nan_to_num(bias)
-            prediction=np.nan_to_num(self.dt[:,test])[...,None]*np.stack([vr,va],axis=-1)[:,None]
-            prediction[...,1]+=f['order'][:,test]*bias[:,None]
-            residual[:,test]=f['data'][:,test]-prediction
+            prediction,_=_background(f,train,counts,self.threshold,self.order_range,
+                                     (self.ir,self.ia,self.ix))
+            residual[:,test]=f['data'][:,test]-prediction[:,test]
         return self.mask&np.isfinite(residual).all(-1)&(abs(residual[...,0])<=2)&(abs(residual[...,1])<=5)
