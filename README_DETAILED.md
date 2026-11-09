@@ -979,8 +979,8 @@ or an active stack writer prevents export. No acquisition or pair processing run
 
 Copy that directory and the new year's SAFE/orbit inputs to the other computer.
 Create a config using the original processing, polarization, burst/AOI selection,
-matching grid (`window`, `search`, `stride`, `first_center`), and geocoding EPSG and
-spacing, with these stack/output overrides:
+and geocoding EPSG and spacing, with these stack/output overrides. Matching grid
+settings (`window`, `search`, `stride`, `first_center`) may be changed independently:
 
 ```yaml
 stack:
@@ -1040,8 +1040,19 @@ configured reference path, which is pinned in `.reference-source.json`. Inspecti
 subsequent processing and packaging use the managed assets. Imported reference
 fingerprints and provenance are carried into packaged netCDF attributes.
 
-Imported radar layout, observation ownership, matching centers and map grid remain
-fixed. Each new acquisition's validity further masks its own support; gaps are
+Imported radar layout, burst ownership and output map grid remain fixed.
+Destination `matching.window`, `search`, `stride` and `first_center` may differ
+from the bundle's recorded matching grid. That grid records the export's
+provenance; the destination generates its observation centers from its own YAML.
+Changing these settings makes existing matching and downstream geocoding and
+diagnostics stale, while compatible geometry, alignments and assemblies remain
+reusable. Run `stack match`, then `stack geocode` and `stack diagnostics`, or
+`stack run`, without `--force`; forcing `stack run` would also redo alignment.
+Released merged SLCs are reassembled from retained aligned inputs when needed.
+The output EPSG and spacing must still match the bundle, and all rematched pairs
+are mapped to its pinned map extent. Different matching grids do not produce
+identical source-observation associations for velocity-stack combination.
+Each new acquisition's validity further masks its own support; gaps are
 not filled from another burst. The supplied bundle is never changed. `--force`
 reprocesses destination products without regenerating its reference. Reference
 replacement and `stack rebuild-layout` require a new output directory when using

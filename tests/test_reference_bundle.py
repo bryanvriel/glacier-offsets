@@ -273,7 +273,7 @@ class ReferenceBundleTests(unittest.TestCase):
 
     def test_conflicts_and_checksum_failure(self):
         self.export()
-        for section, key, value in [('stack','reference_date','2018-01-01'), ('matching','stride',[8,8]),
+        for section, key, value in [('stack','reference_date','2018-01-01'),
                                     ('inputs','polarization','VV'), ('geocoding','spacing_m',100), ('inputs','dem',str(self.safe))]:
             cfg = deepcopy(self.cfg)
             cfg['stack']['reference_directory'] = str(self.bundle)
@@ -285,6 +285,109 @@ class ReferenceBundleTests(unittest.TestCase):
         asset.write_bytes(b'damaged')
         with self.assertRaisesRegex(ValueError, 'checksum'):
             read_bundle(self.bundle, verify=True)
+
+    def test_destination_matching_grid_changes_keep_reference_immutable_offline(self):
+        from glacier_offsets.stack_pairs import matching_template
+        from glacier_offsets.stack_storage import assembly_specification
+        self.export()
+        cfg = self.destination()
+        target = Path(cfg['output']['directory'])
+        with stack_lock(target, create=True):
+            install(cfg)
+        original = runtime_frame(cfg)
+        bundle_before = checksum(target/'.reference')
+        # Exercise managed-bundle restarts with the transfer/source disk absent.
+        shutil.rmtree(self.bundle)
+        shutil.rmtree(self.source)
+        for key, value in [('window', [12, 12]), ('search', [4, 4]),
+                           ('stride', [8, 8]), ('first_center', [10.5, 10.5])]:
+            with self.subTest(key=key):
+                changed = deepcopy(cfg)
+                changed['matching'][key] = value
+                configure(changed)
+                frame = prepare_geometry(changed, None, original['specification'], {'packages':{}}, process=False)
+                self.assertEqual(frame['geometry_identity'], original['geometry_identity'])
+                self.assertEqual(frame['layout_identity'], original['layout_identity'])
+                self.assertEqual(frame['map_grid'], original['map_grid'])
+                self.assertEqual(frame['specification'], original['specification'])
+                self.assertEqual(frame['sources'], original['sources'])
+                self.assertEqual(assembly_specification(frame, {'alignment_identity':'aligned'}),
+                                 assembly_specification(original, {'alignment_identity':'aligned'}))
+                before, after = matching_template(cfg, original), matching_template(changed, frame)
+                self.assertFalse(np.array_equal(before.centers, after.centers))
+                self.assertEqual(checksum(target/'.reference'), bundle_before)
+
+    def test_rematching_imported_reference_invalidates_only_pair_dependents(self):
+        from glacier_offsets.ampcor import match, matching_specification
+        from glacier_offsets.geocode import geocoding_specification
+        from glacier_offsets.stack_pairs import matching_template, prepared_pair
+        from glacier_offsets.stack_status import matching_status
+        from glacier_offsets.stack_storage import read_manifest
+        self.export()
+        cfg = self.destination()
+        target = Path(cfg['output']['directory'])
+        with stack_lock(target, create=True):
+            install(cfg)
+        frame = runtime_frame(cfg)
+        frame['software'] = {'packages':{}}
+        burst = SimpleNamespace(start=self.time)
+        a = SimpleNamespace(date='2017-01-01', scene=SimpleNamespace(start=self.time), bursts={'burst':burst})
+        b = SimpleNamespace(date='2017-01-07', scene=SimpleNamespace(start=self.time+timedelta(days=6)),
+                            bursts={'burst':SimpleNamespace(start=self.time+timedelta(days=6))})
+        dates = {v.date: {'assembly_identity':v.date, 'slc':frame['coreg']['slcs']['reference'],
+                         'specification':{'alignment':v.date}} for v in (a,b)}
+        plan = SimpleNamespace(reference=a)
+        root, manifest = prepared_pair(cfg, plan, frame, a, b, dates, frame['map_grid'])
+        original_coreg = manifest['coreg_identity']
+        (root/'radar').mkdir()
+        calls = []
+
+        def native(effective, saved, directory, prior):
+            # Real match() must remove downstream completion markers before
+            # starting native work, including on an interrupted rerun.
+            on_disk = read_manifest(root)
+            self.assertNotIn('geocode_identity', on_disk)
+            for stage in ('match', 'geocode', 'diagnostics'):
+                self.assertNotIn(stage, on_disk['stages'])
+            grid = matching_template(effective, frame)
+            calls.append(grid.centers.copy())
+            return {'grid':grid, 'backend':'cpu', 'elapsed_seconds':0., 'effective_parameters':{},
+                    'input_valid':np.ones(grid.shape,bool), 'valid':np.ones(grid.shape,bool),
+                    'seam_crossing':np.zeros(grid.shape,bool)}
+
+        # Test real stage identities/invalidation and pair preparation; the
+        # native kernel and HDF5 serialization are covered by stack science tests.
+        with patch('glacier_offsets.stack_pairs.match_prepared', side_effect=native), \
+             patch('glacier_offsets.assembly.annotate_result'), \
+             patch('glacier_offsets.ampcor.write_offsets', side_effect=lambda path,*_: Path(path).write_bytes(b'offsets')):
+            match(cfg, root, manifest)
+            old_match = manifest['match_identity']
+            manifest['geocode_identity'] = identity(geocoding_specification(cfg, manifest))
+            manifest['diagnostics_identity'] = 'previous-diagnostics'
+            manifest['stages'].update(geocode='complete', diagnostics='complete')
+            write_json(root/'manifest.json',manifest)
+            old_geocode = manifest['geocode_identity']
+            match(cfg,root,manifest)  # unchanged restart must not rematch
+            self.assertEqual(len(calls),1)
+            cfg['matching'].update(window=[12,12], search=[3,3], stride=[6,6], first_center=[12.5,12.5])
+            configure(cfg)
+            self.assertEqual(matching_status(cfg,manifest,root)['status'],'stale')
+            root, manifest = prepared_pair(cfg,plan,frame,a,b,dates,frame['map_grid'])
+            self.assertEqual(manifest['coreg_identity'],original_coreg)
+            with patch('glacier_offsets.stack_pairs.match_prepared', side_effect=RuntimeError('interrupted native match')):
+                with self.assertRaisesRegex(RuntimeError,'interrupted'):
+                    match(cfg,root,manifest)
+            self.assertNotIn('match_identity',read_manifest(root))
+            match(cfg,root,manifest)
+            self.assertEqual(len(calls),2)
+            self.assertFalse(np.array_equal(calls[0],calls[1]))
+            self.assertEqual(manifest['coreg_identity'],original_coreg)
+            self.assertNotEqual(manifest['match_identity'],old_match)
+            self.assertNotEqual(identity(geocoding_specification(cfg,manifest)),old_geocode)
+            self.assertEqual(manifest['map_grid'],frame['map_grid'])
+            self.assertEqual(matching_status(cfg,manifest,root)['status'],'complete')
+            match(cfg,root,manifest)
+            self.assertEqual(len(calls),2)
 
     def test_export_preflight_lock_and_interrupted_publication(self):
         with stack_lock(self.source):

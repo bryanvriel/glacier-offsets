@@ -120,9 +120,10 @@ def configure(cfg):
     from .stack_mosaic import policy
     if policy(cfg) != origin['ownership_policy']:
         raise ValueError('Processing/ownership policy conflicts with reference bundle')
-    for key in ('window', 'search', 'stride', 'first_center'):
-        if cfg['matching'].get(key) != contract['matching'].get(key):
-            raise ValueError(f'matching.{key} conflicts with reference bundle matching grid')
+    # The exported matching grid is provenance, not part of the native radar
+    # geometry. Destination matching_template/matching_specification rebuild the
+    # observation grid and invalidate downstream products when these settings
+    # change. Keep the bundled output map grid fixed for cross-stack alignment.
     for key in ('epsg', 'spacing_m'):
         if cfg['geocoding'].get(key) != contract['geocoding'][key]:
             raise ValueError(f'geocoding.{key} conflicts with reference bundle map grid')
