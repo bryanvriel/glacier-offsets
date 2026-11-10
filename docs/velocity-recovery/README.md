@@ -21,8 +21,8 @@ already imported numerical modules from that overlay must start a clean process.
 The selected interpreter supplies NumPy/SciPy/h5netcdf; packages
 are not installed or changed by the workflow. Install the velocity dependencies
 once in that interpreter with `python -m pip install -e '.[velocity]'`. The extra
-pins iceutils to PR #28 commit `2c95cba3e85ba6073f889203c927e8a1f98c5d45`,
-which supplies temporal observation operators; older installed copies fail with
+installs iceutils from its `master` branch, which supplies temporal observation
+operators; older installed copies fail with
 an explicit upgrade message. iceutils imports its rasterio/xarray dependencies,
 but no processing environment or raw SAR inputs are needed.
 

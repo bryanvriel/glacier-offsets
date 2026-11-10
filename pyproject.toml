@@ -11,7 +11,7 @@ dependencies = ["numpy>=1.26,<2", "scipy>=1.12", "h5py>=3", "h5netcdf>=1.3", "Py
 
 [project.optional-dependencies]
 velocity = [
-    "iceutils @ git+https://github.com/bryanvriel/iceutils.git@2c95cba3e85ba6073f889203c927e8a1f98c5d45",
+    "iceutils @ git+https://github.com/bryanvriel/iceutils.git@master",
     "cvxopt>=1.3", "scikit-learn", "pint", "joblib", "rasterio", "xarray", "tqdm",
 ]
 tides = ["pyTMD>=3.0.9,<3.1", "xarray>=2024.10"]
