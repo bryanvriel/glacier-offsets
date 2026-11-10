@@ -607,3 +607,29 @@ Outputs per size are `blocks_<size>km.csv`, `.tif` (eligible blocks) and `.h5`
 `velocity_blocks.combine` gives the shared-cluster covariance of any linear
 combination of blocks), plus `blocks_msf.png` and `summary.json` with the
 recipe and code hashes. Inputs are read only.
+
+[`tools/split_period_msf_blocks.py`](../../tools/split_period_msf_blocks.py)
+replicates a block map from two acquisition-disjoint halves of the record:
+
+```bash
+PYTHONPATH=src python tools/split_period_msf_blocks.py SITE/work/velocity_pixels/RUN \
+    --blocks SITE/work/velocity_pixels/msf_blocks --output SITE/work/velocity_pixels/split_period
+```
+
+Pairs are split by midpoint at `--split` (default: the median pair midpoint,
+rounded down to UTC midnight), and pairs sharing an acquisition day with the
+other half are dropped. Each half is refitted over the full map's sources with
+the run's model, robust weighting and stored covariance restricted to the half,
+its own calendar-year secular/order regimes and relaxed per-half coverage
+(`--min-pairs-per-year` 5, `--min-pairs-total` 20, `--min-span-days` 270, suited
+to halves of about one year). Blocks, CRS, model, inflation, minimum sources and
+the grounded slow/floating rules come from the full map's outputs, and the tool
+fails if the full map was made from another result or source set. Because the
+halves share no acquisitions, a block difference has covariance
+Sigma_A + Sigma_B: the median of its Wald statistic against chi2_2's 1.386 gives
+an SE scale factor (real Msf change also inflates it), reported for floating
+and grounded slow blocks together with half-to-half phase and amplitude
+differences and a shelf-wide mean over floating full-map discoveries.
+Outputs are `split_blocks_<size>km.csv`, `split_blocks.png` and `summary.json`.
+Shared source selection, block assignment and half refits are in
+[`velocity_block_workflow`](../../src/glacier_offsets/velocity_block_workflow.py).

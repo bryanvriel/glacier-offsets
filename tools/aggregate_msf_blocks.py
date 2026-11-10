@@ -53,40 +53,17 @@ import time
 import h5py
 import numpy as np
 import pandas as pd
-from pyproj import CRS, Transformer
-import yaml
+from pyproj import Transformer
 
-from glacier_offsets import velocity_blocks
+from glacier_offsets import velocity_block_workflow, velocity_blocks
+from glacier_offsets.velocity_block_workflow import (CLASS_DEFAULTS, artifact_paths, assign_blocks, classify,
+                                                     load_sources, per_block, result_parameters, stored_covariances)
 from glacier_offsets.velocity_blocks import BlockAccumulator, benjamini_hochberg, block_keys, statistics
 from glacier_offsets.velocity_io import digest, write_json
-from glacier_offsets.velocity_pixel_config import validate_parameters
 from glacier_offsets.velocity_pixel_general import MODELS, Layout, fit_sources
 
 TABLE_BANDS = ['sources', 'C', 'S', 'amplitude_debiased', 'amplitude_sigma', 'phase_deg', 'phase_sigma_deg',
                'p_value', 'discovery', 'design_effect']
-
-
-def artifact_paths(result, cache=None):
-    """Observation and solid-Earth artifacts the run used, from its recipe and resolved configuration."""
-    recipe = json.loads((result/'recipe.json').read_text())
-    if cache is None:
-        config = yaml.safe_load((result/'inversion-config.resolved.yaml').read_text())
-        cache = Path(config['cache_directory'])
-    art = recipe['artifacts']
-    paths = {'observations': cache/'observations'/art['observations']['id']/'observations.h5',
-             'solid_earth': cache/'solid_earth'/art['solid_earth']['id']/'solid_earth.h5'}
-    for name, path in paths.items():
-        if not path.exists():
-            raise FileNotFoundError(f'{name} artifact {path} is missing; pass --cache if the cache moved')
-    return recipe, {k: str(v) for k, v in paths.items()}
-
-
-def stored_covariances(h):
-    """The covariance the stored fit used (annual array, or annual plus per-pair)."""
-    cov = h['covariance_by_year'][:]
-    if 'covariance_by_pair' in h:
-        return {'by_year': cov, 'by_pair': h['covariance_by_pair'][:]}
-    return cov
 
 
 def worker(paths, result_file, params, model, index, labels_by_size, nblocks, stored_cs):
@@ -105,21 +82,6 @@ def worker(paths, result_file, params, model, index, labels_by_size, nblocks, st
         acc.add(labels, fit['cs'], fit['cluster_influence'], fit['cluster_cr1'], fit['coefficient_covariance'])
         accs[size] = acc
     return accs, diff, fit['cluster_ids'].tolist()
-
-
-def merge(total, part):
-    if total is None:
-        return part
-    for name in ('count', 'cs', 'influence', 'cr1', 'pointwise'):
-        setattr(total, name, getattr(total, name)+getattr(part, name))
-    return total
-
-
-def block_crs(h, override):
-    crs = CRS.from_user_input(override) if override else CRS.from_wkt(h.attrs.get('crs_wkt') or h['crs'].attrs['crs_wkt'])
-    if not crs.is_projected:
-        raise ValueError(f'Blocks need a projected CRS in metres; {crs.name} is not. Pass --crs')
-    return crs
 
 
 def read_points(path):
@@ -195,9 +157,6 @@ def block_table(res, keys, labels, size, speed, response, a):
     raw = statistics(res['mean'], res['covariance'], res['clusters'])
     inf = statistics(res['mean'], res['covariance'], res['clusters'], inflation=a.inflation)
     n = len(keys)
-
-    def by_block(values, how):
-        return getattr(pd.Series(values).groupby(labels), how)().reindex(range(n)).to_numpy()
     frame = pd.DataFrame({
         'ix': keys[:, 0], 'iy': keys[:, 1], 'x_center': (keys[:, 0]+.5)*size, 'y_center': (keys[:, 1]+.5)*size,
         'sources': res['sources'], 'clusters': res['clusters'], 'C': res['mean'][:, 0], 'S': res['mean'][:, 1],
@@ -207,13 +166,14 @@ def block_table(res, keys, labels, size, speed, response, a):
         'phase_sigma_deg': inf['phase_sigma_deg'], 'component_sigma': inf['component_sigma'],
         'wald': inf['wald'], 'p_value': inf['p_value'], 'p_value_uninflated': raw['p_value'],
         'design_effect': res['design_effect'], 'effective_sources': res['effective_sources'],
-        'median_speed': by_block(speed, 'median'), 'max_response': by_block(response, 'max'),
-        'median_response': by_block(response, 'median')})
+        'median_speed': per_block(speed, labels, n, 'median'), 'max_response': per_block(response, labels, n, 'max'),
+        'median_response': per_block(response, labels, n, 'median')})
     frame['eligible'] = frame.sources >= a.min_sources
-    # NaN responses (no tide mask) never satisfy these comparisons.
-    frame['grounded_slow'] = (frame.eligible & (frame.max_response <= a.null_max_response)
-                              & (frame.median_speed <= a.null_max_speed))
-    frame['floating'] = frame.eligible & (frame.median_response >= a.floating_min_response)
+    grounded_slow, floating = classify(frame.max_response, frame.median_response, frame.median_speed,
+                                       null_max_response=a.null_max_response, null_max_speed=a.null_max_speed,
+                                       floating_min_response=a.floating_min_response)
+    frame['grounded_slow'] = frame.eligible & grounded_slow
+    frame['floating'] = frame.eligible & floating
     frame['discovery'] = False
     frame.loc[frame.eligible, 'discovery'] = benjamini_hochberg(frame.loc[frame.eligible, 'p_value'].to_numpy(), a.q)
     return frame
@@ -267,34 +227,20 @@ def main(a):
     result, out = a.result.resolve(), a.output.resolve()
     if out == result:
         raise ValueError('--output must differ from the result directory')
-    if a.model not in MODELS:
-        raise ValueError(f'--model must be one of {list(MODELS)}')
     recipe, paths = artifact_paths(result, a.cache)
-    # Older recipes predate some screening keys; their defaults reproduce the legacy fit.
-    params = validate_parameters(recipe['parameters'])
+    params = result_parameters(recipe)
     result_file = str(result/'source_coefficients.h5')
-    with h5py.File(result_file) as h:
-        if h.attrs.get('status') not in (None, 'complete'):
-            raise ValueError(f"{result_file} is not complete (status {h.attrs['status']})")
-        selected = np.flatnonzero(h['standard_coverage'][:].astype(bool) & h[f'{a.model}/estimable'][:].astype(bool))
-        crs = block_crs(h, a.crs)
-        to_map = Transformer.from_crs(4326, crs, always_xy=True)
-        xs, ys = to_map.transform(h['longitude'][:][selected], h['latitude'][:][selected])
-        stored = h[f'{a.model}/cs'][:][selected]
-        speed = h['mean_flow_speed'][:][selected]
-        response = (h['tidal_response_factor'][:][selected] if 'tidal_response_factor' in h
-                    else np.full(len(selected), np.nan))
-    if not len(selected):
-        raise ValueError('No sources have standard coverage and an estimable fit')
+    src = load_sources(result_file, a.model, a.crs)
+    selected, stored, speed, response, crs = src['selected'], src['cs'], src['speed'], src['response'], src['crs']
+    to_map = Transformer.from_crs(4326, crs, always_xy=True)
     out.mkdir(parents=True, exist_ok=True)
     points = read_points(a.points)
     points['x'], points['y'] = to_map.transform(points.longitude.to_numpy(float), points.latitude.to_numpy(float))
     sizes = [float(s) for s in a.sizes.split(',')]
-    keys, labels, nblocks = {}, {}, {}
-    for size in sizes:
-        ix, iy = block_keys(xs, ys, size)
-        k, inv = np.unique(np.stack([ix, iy], 1), axis=0, return_inverse=True)
-        keys[size], labels[size], nblocks[size] = k, inv.ravel(), len(k)
+    blocks = assign_blocks(src['x'], src['y'], sizes)
+    keys = {s: k for s, (k, _) in blocks.items()}
+    labels = {s: lab for s, (_, lab) in blocks.items()}
+    nblocks = {s: len(k) for s, k in keys.items()}
     chunks = np.array_split(np.arange(len(selected)), max(1, len(selected)//a.batch))
     totals = dict.fromkeys(sizes)
     diffs, clusters = [], None
@@ -309,7 +255,7 @@ def main(a):
             elif ids != clusters:
                 raise ValueError('Calendar clusters differ between batches')
             for s in sizes:
-                totals[s] = merge(totals[s], accs[s])
+                totals[s] = accs[s] if totals[s] is None else totals[s].merge(accs[s])
             if n % 40 == 0:
                 print(f'{n+1}/{len(jobs)} batches ({time.time()-t0:.0f}s)', flush=True)
     max_diff = float(max(diffs))
@@ -345,6 +291,7 @@ def main(a):
                    tide_response_available=bool(np.isfinite(response).any()),
                    points_file=str(a.points.resolve()) if a.points else None,
                    tool_sha256=digest(Path(__file__)), module_sha256=digest(Path(velocity_blocks.__file__)),
+                   workflow_module_sha256=digest(Path(velocity_block_workflow.__file__)),
                    elapsed_seconds=time.time()-t0)
     write_json(out/'summary.json', summary)
     print(json.dumps({k: {kk: vv for kk, vv in v.items() if kk != 'points'} for k, v in summary['sizes'].items()},
@@ -362,9 +309,9 @@ def parser():
     p.add_argument('--inflation', type=float, default=1., help='standard-error multiplier from a site calibration')
     p.add_argument('--q', type=float, default=.05, help='Benjamini-Hochberg false-discovery rate')
     p.add_argument('--points', type=Path, help='CSV of name, longitude, latitude[, amplitude, phase_deg]')
-    p.add_argument('--null-max-response', type=float, default=.02, help='max tide response of grounded slow sources')
-    p.add_argument('--null-max-speed', type=float, default=.1, help='max median speed of grounded slow blocks, m/day')
-    p.add_argument('--floating-min-response', type=float, default=.5, help='min median tide response of floating blocks')
+    p.add_argument('--null-max-response', type=float, default=CLASS_DEFAULTS['null_max_response'], help='max tide response of grounded slow sources')
+    p.add_argument('--null-max-speed', type=float, default=CLASS_DEFAULTS['null_max_speed'], help='max median speed of grounded slow blocks, m/day')
+    p.add_argument('--floating-min-response', type=float, default=CLASS_DEFAULTS['floating_min_response'], help='min median tide response of floating blocks')
     p.add_argument('--amplitude-max', type=float, help='amplitude colour limit, m/day (default: 99th percentile)')
     p.add_argument('--cache', type=Path, help='velocity cache directory if it moved since the run')
     p.add_argument('--tolerance', type=float, default=1e-9, help='max allowed |recomputed - stored| C/S')

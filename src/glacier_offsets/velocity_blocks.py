@@ -50,6 +50,14 @@ class BlockAccumulator:
         np.add.at(self.cr1, labels, cr1)
         np.add.at(self.pointwise, labels, pointwise)
 
+    def merge(self, other):
+        """Add another accumulator over the same blocks and clusters (e.g. from a worker); returns self."""
+        if other.count.shape != self.count.shape or other.nclusters != self.nclusters:
+            raise ValueError('Accumulators cover different blocks or clusters')
+        for name in ('count', 'cs', 'influence', 'cr1', 'pointwise'):
+            setattr(self, name, getattr(self, name)+getattr(other, name))
+        return self
+
     def finish(self):
         n = np.maximum(self.count, 1)
         influence = self.influence/n[:, None, None]
