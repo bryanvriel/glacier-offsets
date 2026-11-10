@@ -51,6 +51,23 @@ def read_json(path, inputs):
     return value
 
 
+def geometry_checksum(frame, path):
+    """Look up a pinned geometry product through equivalent filesystem paths.
+
+    Imported coreg paths can retain a stack-directory symlink while product
+    inventories use resolved paths. Authenticate the same file, never a basename
+    match or a newly computed replacement checksum.
+    """
+    resolved = Path(path).resolve()
+    digests = {digest for name, digest in frame['products'].items()
+               if Path(name).resolve() == resolved}
+    if not digests:
+        raise ValueError(f'Ownership raster has no registered geometry checksum: {path}')
+    if len(digests) != 1:
+        raise ValueError(f'Conflicting registered geometry checksums for ownership raster: {path}')
+    return digests.pop()
+
+
 def tiles(shape):
     for row in range(0, shape[0], 256):
         for col in range(0, shape[1], 256):
@@ -447,7 +464,7 @@ def package_stack(cfg, *, output=None, force=False):
         if grid['transform'][2] != 0 or grid['transform'][4] != 0 or grid['transform'][1] <= 0 or grid['transform'][5] >= 0:
             raise ValueError('Package grid must be north-up and unrotated')
         owner = frame['coreg']['source_index']
-        inputs.file(owner, frame['products'][owner])
+        inputs.file(owner, geometry_checksum(frame, owner))
         pairs, omitted = [], []
         for pair, entry in sorted(catalog['pairs'].items()):
             if not entry.get('active', True):

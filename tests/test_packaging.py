@@ -130,6 +130,53 @@ class PackagingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'No eligible'):
             package_stack(self.cfg)
 
+    def test_ownership_checksum_accepts_stack_symlink_aliases(self):
+        owner = self.root/'geometry/source.tif'
+        alias = self.fixture.folder/'stack-alias'
+        alias.symlink_to(self.root, target_is_directory=True)
+        alternate = str(alias/'geometry/source.tif')
+        # Imported coreg keeps an alias, while the inventory uses real paths.
+        self.frame['coreg']['source_index'] = alternate
+        write_json(self.root/'geometry/manifest.json', self.frame)
+        first = package_stack(self.cfg)
+        self.assertEqual(first['pairs'], 1)
+        with h5netcdf.File(first['path'], 'r') as h:
+            displacement = h['azimuth_displacement_m'][:]
+        # Older inventories can instead retain the alias. Both describe the
+        # same authenticated ownership raster. The edited manifest remains a
+        # provenance change, so packaging rebuilds with unchanged observations.
+        digest = self.frame['products'].pop(str(owner))
+        self.frame['products'][alternate] = digest
+        self.frame['coreg']['source_index'] = str(owner)
+        write_json(self.root/'geometry/manifest.json', self.frame)
+        second = package_stack(self.cfg)
+        self.assertEqual(second['pairs'], 1)
+        with h5netcdf.File(second['path'], 'r') as h:
+            np.testing.assert_array_equal(h['azimuth_displacement_m'][:], displacement)
+
+    def test_ownership_alias_still_checks_saved_digest(self):
+        alias = self.fixture.folder/'stack-alias'
+        alias.symlink_to(self.root, target_is_directory=True)
+        self.frame['coreg']['source_index'] = str(alias/'geometry/source.tif')
+        write_json(self.root/'geometry/manifest.json', self.frame)
+        with (self.root/'geometry/source.tif').open('ab') as stream:
+            stream.write(b'tampered')
+        with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
+            package_stack(self.cfg)
+
+    def test_ownership_checksum_requires_unambiguous_registration(self):
+        owner = self.root/'geometry/source.tif'
+        digest = self.frame['products'].pop(str(owner))
+        write_json(self.root/'geometry/manifest.json', self.frame)
+        with self.assertRaisesRegex(ValueError, 'no registered geometry checksum'):
+            package_stack(self.cfg)
+        alias = self.fixture.folder/'stack-alias'
+        alias.symlink_to(self.root, target_is_directory=True)
+        self.frame['products'].update({str(owner): digest, str(alias/'geometry/source.tif'): '0'*64})
+        write_json(self.root/'geometry/manifest.json', self.frame)
+        with self.assertRaisesRegex(ValueError, 'Conflicting registered geometry checksums'):
+            package_stack(self.cfg)
+
     def test_duplicate_midpoints_empty_pair_and_sorted_labels(self):
         f = self.fixture
         second = '2016-12-31_2017-01-08'
