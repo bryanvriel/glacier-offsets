@@ -476,7 +476,9 @@ def verify_v2(view):
                 original = fits[model]['coefficients'][selected]
                 repeated = solve(f, view.layout, good, axis, covariances, model,
                                  cluster_days=parameters['uncertainty']['cluster_days'],
-                                 robust_cutoff=parameters['screening']['robust_cutoff'])
+                                 robust_cutoff=parameters['screening']['robust_cutoff'],
+                                 robust=parameters['screening']['robust'],
+                                 robust_scale=parameters['screening']['robust_scale'])
                 if list(repeated['names']) != _names(fits[model]):
                     raise ValueError(f'{model} parameter names changed')
                 errors[model] = float(np.nanmax(abs(repeated['coefficients']-original)))

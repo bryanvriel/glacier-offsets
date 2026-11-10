@@ -346,6 +346,9 @@ nonfinite values and inconsistent thresholds fail before output creation.
 | `screening.min_peak` | 0.08 | Pair acceptance and robust screen/flow-axis training |
 | `screening.max_range_residual_m` | 2 | Maximum absolute purged range residual, metres |
 | `screening.max_azimuth_residual_m` | 5 | Maximum absolute purged azimuth residual, metres |
+| `screening.robust_cutoff` | 3 | Huber cutoff on the whitened residual-vector norm |
+| `screening.robust` | `auto` | `auto`: Huber IRLS only in pair-noise mode; `huber` or `none` force it on or off |
+| `screening.robust_scale` | `covariance` | `source`: rescale each source's whitened channels by max(1, 1.4826 MAD) before the cutoff |
 | `coverage.min_pairs_per_year` | 20 | Retained pairs required in **each** year |
 | `coverage.min_pairs_total` | 40 | Retained pairs required overall for fit support |
 | `coverage.min_span_days` | 540 | First retained early to last retained late endpoint |

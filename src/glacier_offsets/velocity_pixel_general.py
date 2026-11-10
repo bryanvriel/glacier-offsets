@@ -9,6 +9,7 @@ order groups follow the recorded midpoint year. For two within-year regimes
 this reproduces the version-1 two-year design column for column.
 """
 import json
+import warnings
 
 import numpy as np
 
@@ -283,26 +284,76 @@ def design(field, layout, axis, covariances, model='residual_vertical'):
     return a, y, geom, names
 
 
-def solve(field, layout, good, axis, covariances, model='residual_vertical', *, cluster_days=30., robust_cutoff=3.):
-    """Independent-source GLS with calendar-cluster diagnostic covariance."""
+ROBUST_MODES = ('auto', 'huber', 'none')
+ROBUST_SCALES = ('covariance', 'source')
+
+
+def robust_mode(robust, covariances):
+    """Resolve 'auto': Huber IRLS for pair covariance, single GLS pass for annual covariance."""
+    if robust not in ROBUST_MODES:
+        raise ValueError(f'robust must be one of {ROBUST_MODES}')
+    if robust == 'auto':
+        return 'huber' if isinstance(covariances, dict) else 'none'
+    return robust
+
+
+def solve(field, layout, good, axis, covariances, model='residual_vertical', *, cluster_days=30., robust_cutoff=3.,
+          robust='auto', robust_scale='covariance', max_iterations=30):
+    """Independent-source GLS with calendar-cluster diagnostic covariance.
+
+    With Huber weighting, pair weights are min(1, cutoff/|r|) for the whitened
+    residual vector r of the full annual/order/vertical/Msf model, iterated to
+    convergence. ``robust_scale='covariance'`` measures |r| in the supplied
+    (annual or pair) covariance units; ``'source'`` first rescales each whitened
+    channel by max(1, 1.4826 MAD) of that source's unweighted-fit residuals, so a
+    source noisier than its covariance is not downweighted wholesale. The final
+    weights multiply the screen mask; the sandwich covariance is conditional on them.
+    """
+    robust = robust_mode(robust, covariances)
+    if robust_scale not in ROBUST_SCALES:
+        raise ValueError(f'robust_scale must be one of {ROBUST_SCALES}')
     a, y, geom, names = design(field, layout, axis, covariances, model)
     ns, nt, nc, np_ = a.shape
     w = good.astype(float)
-    for iteration in range(30 if isinstance(covariances,dict) else 1):
-        normal = np.einsum('st,stci,stcj->sij', w, a, a)
-        rhs = np.einsum('st,stci,stc->si', w, a, y)
-        scale = np.sqrt(np.maximum(np.diagonal(normal, axis1=1, axis2=2), 1e-30))
-        unit = normal/scale[:, :, None]/scale[:, None, :]
-        eig = np.linalg.eigvalsh(unit)
-        rank = np.sum(eig > np.maximum(eig[:, -1, None]*1e-10, 1e-12), axis=1)
-        inverse = np.linalg.pinv(unit, rcond=1e-10, hermitian=True)/scale[:, :, None]/scale[:, None, :]
-        coef = np.einsum('sij,sj->si', inverse, rhs)
-        prediction = np.einsum('stci,si->stc', a, coef)
-        residual = y-prediction
-        updated = good*np.minimum(1.,robust_cutoff/np.maximum(np.linalg.norm(residual,axis=2),1e-12))
-        if not isinstance(covariances,dict) or np.max(abs(updated-w))<1e-5 or iteration==29:
+    channel_scale = np.ones((ns, nc))
+    # Each source iterates and converges on its own, so results never depend on batch composition.
+    normal = np.zeros((ns, np_, np_))
+    inverse = np.zeros((ns, np_, np_))
+    coef = np.zeros((ns, np_))
+    residual = np.zeros_like(y)
+    rank = np.zeros(ns, int)
+    iterations = np.zeros(ns, int)
+    active = np.arange(ns)
+    for iteration in range(max_iterations if robust == 'huber' else 1):
+        if not len(active):
             break
-        w = updated
+        k = active
+        iterations[k] = iteration+1
+        nk = np.einsum('st,stci,stcj->sij', w[k], a[k], a[k])
+        rhs = np.einsum('st,stci,stc->si', w[k], a[k], y[k])
+        scale = np.sqrt(np.maximum(np.diagonal(nk, axis1=1, axis2=2), 1e-30))
+        unit = nk/scale[:, :, None]/scale[:, None, :]
+        eig = np.linalg.eigvalsh(unit)
+        rank[k] = np.sum(eig > np.maximum(eig[:, -1, None]*1e-10, 1e-12), axis=1)
+        inverse[k] = np.linalg.pinv(unit, rcond=1e-10, hermitian=True)/scale[:, :, None]/scale[:, None, :]
+        normal[k] = nk
+        coef[k] = np.einsum('sij,sj->si', inverse[k], rhs)
+        residual[k] = y[k]-np.einsum('stci,si->stc', a[k], coef[k])
+        if robust != 'huber':
+            break
+        if iteration == 0 and robust_scale == 'source':
+            masked = np.where(good[..., None], abs(residual), np.nan)
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore', RuntimeWarning)  # sources with no clean pairs
+                mad = 1.4826*np.nanmedian(masked, axis=1)
+            channel_scale = np.maximum(1., np.nan_to_num(mad, nan=1.))
+        norm = np.linalg.norm(residual[k]/channel_scale[k, None, :], axis=2)
+        updated = good[k]*np.minimum(1., robust_cutoff/np.maximum(norm, 1e-12))
+        moving = np.max(abs(updated-w[k]), axis=1, initial=0.) >= 1e-5
+        if iteration == max_iterations-1:
+            break
+        w[k[moving]] = updated[moving]
+        active = k[moving]
     # Target information after marginalizing all nuisance coefficients.
     nn = normal[:, :-2, :-2]
     nh = normal[:, :-2, -2:]
@@ -347,7 +398,10 @@ def solve(field, layout, good, axis, covariances, model='residual_vertical', *, 
             'coefficient_covariance': cov, 'amplitude_sigma': amplitude_sigma, 'phase_sigma_deg': phase_sigma,
             'target_condition': condition, 'rank': rank, 'estimable': estimable, 'rms_m': rms,
             'partial_r2': partial_r2, 'calendar_clusters': nb,
-            'downweighted_pairs':np.sum(good & (w < .999),axis=1)}
+            'downweighted_pairs': np.sum(good & (w < .999), axis=1), 'robust_weights': w,
+            'robust_channel_scale': channel_scale, 'robust_iterations': iterations,
+            # Per-source Msf C/S influence of each calendar cluster (uncorrected sums; cov = cr1 * sum b b').
+            'cluster_influence': adjusted, 'cluster_ids': blocks, 'cluster_cr1': cr1}
 
 
 def coverage(field, layout, good, options):
@@ -409,7 +463,7 @@ def fit_sources(h, body, layout, covariances, parameters, index):
     fits = {}
     for model in MODELS:
         fitted = solve(f, layout, good, axis, covariances, model, cluster_days=parameters['uncertainty']['cluster_days'],
-                       robust_cutoff=s['robust_cutoff'])
+                       robust_cutoff=s['robust_cutoff'], robust=s['robust'], robust_scale=s['robust_scale'])
         estimable = fitted['estimable'] & support['fit_support']
         fitted['estimable'] = estimable
         for name, value in fitted.items():

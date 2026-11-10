@@ -119,6 +119,55 @@ class PairNoiseTests(unittest.TestCase):
         assert_allclose(recovered['cs'],original['cs']+delta,atol=1e-8)
         assert_array_equal(recovered['downweighted_pairs'],0)
 
+    def test_annual_huber_matches_pair_huber_and_auto_keeps_single_gls(self):
+        field,axis,truth,*_=fixture();layout=Layout([2017,2018])
+        cov=np.tile(np.diag([.01,.04]),(2,1,1))
+        pair={'by_year':cov,'by_pair':cov[field['year_index']]}
+        rng=np.random.default_rng(7);field['data']=field['data']+rng.normal(size=field['data'].shape)*[.1,.2]
+        field['data'][:,13]+=100.
+        annual=solve(field,layout,field['valid'],axis,cov,robust='huber')
+        paired=solve(field,layout,field['valid'],axis,pair)
+        assert_allclose(annual['coefficients'],paired['coefficients'],atol=1e-10)
+        assert_array_equal(annual['downweighted_pairs'],paired['downweighted_pairs'])
+        legacy=solve(field,layout,field['valid'],axis,cov)
+        single=solve(field,layout,field['valid'],axis,pair,robust='none')
+        assert_allclose(single['coefficients'],legacy['coefficients'],atol=1e-10)
+        assert_array_equal(legacy['robust_iterations'],1)
+        self.assertLess(np.linalg.norm(annual['cs']-truth),.05*np.linalg.norm(legacy['cs']-truth))
+        with self.assertRaisesRegex(ValueError,'robust'):solve(field,layout,field['valid'],axis,cov,robust='tukey')
+
+    def test_source_scale_protects_uniformly_noisy_source_and_is_never_tighter(self):
+        field,axis,truth,*_=fixture();layout=Layout([2017,2018])
+        cov=np.tile(np.diag([.01,.04]),(2,1,1))
+        rng=np.random.default_rng(19);noise=rng.normal(size=field['data'].shape)*[.1,.2]
+        noise[:2]*=3.  # first two sources three times noisier than the covariance
+        field['data']=field['data']+noise
+        fixed=solve(field,layout,field['valid'],axis,cov,robust='huber')
+        scaled=solve(field,layout,field['valid'],axis,cov,robust='huber',robust_scale='source')
+        self.assertTrue((scaled['robust_channel_scale'][:2]>2.).all())
+        assert_array_equal(scaled['robust_channel_scale'][2:]>=1.,True)
+        self.assertTrue((scaled['robust_channel_scale'][2:]<1.3).all())
+        self.assertGreater(fixed['downweighted_pairs'][:2].min(),3*scaled['downweighted_pairs'][:2].max())
+
+    def test_robust_fit_does_not_depend_on_batch_composition(self):
+        field,axis,truth,*_=fixture();layout=Layout([2017,2018])
+        cov=np.tile(np.diag([.01,.04]),(2,1,1))
+        rng=np.random.default_rng(23);field['data']=field['data']+rng.standard_t(2,size=field['data'].shape)*[.1,.2]
+        field['data'][3,20:24]+=40.  # one source needs many more iterations
+        whole=solve(field,layout,field['valid'],axis,cov,robust='huber',robust_scale='source')
+        self.assertGreater(whole['robust_iterations'].max(),whole['robust_iterations'].min())
+        for subset in ([0,1],[2,4],[3]):
+            part={k:(v[subset] if k in ('early','late','data','peak','valid') else v) for k,v in field.items()}
+            part['geometry_by_year']=field['geometry_by_year'][:,subset]
+            alone=solve(part,layout,part['valid'],axis[subset],cov,robust='huber',robust_scale='source')
+            assert_array_equal(alone['coefficients'],whole['coefficients'][subset])
+
+    def test_robust_choices_are_validated(self):
+        from glacier_offsets.velocity_pixel_config import validate_parameters
+        self.assertEqual(validate_parameters({'screening':{'robust':'huber','robust_scale':'source'}})['screening']['robust'],'huber')
+        for bad in ({'robust':'tukey'},{'robust_scale':'mad'},{'robust':1}):
+            with self.assertRaisesRegex(ValueError,'screening.robust'):validate_parameters({'screening':bad})
+
     def test_imported_artifact_pixel_fit_and_replay(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);path=root/'stack.nc'

@@ -184,7 +184,15 @@ to covariance-whitened residuals from its full annual/order/vertical/Msf model.
 The coefficient file stores `covariance_by_pair` and per-source/model
 `downweighted_pairs`; the report and numerical replay use this same model.
 Cluster uncertainties remain diagnostics conditional on final robust weights.
-Annual controls/supplied modes retain their existing screening and GLS behavior.
+Annual controls/supplied modes retain their existing screening and GLS behavior
+by default (`screening.robust: auto`). Setting `screening.robust: huber` applies
+the same full-model Huber IRLS on top of the annual-mode metre screen, with
+`robust_cutoff` measured in annual-covariance units. `screening.robust_scale:
+source` instead measures it after rescaling each whitened channel by
+max(1, 1.4826 MAD) of that source's unweighted-fit residuals, so a source
+noisier than the grounded-control covariance is not downweighted wholesale.
+The metre cuts are unchanged; they are bypassed only in pair mode. Each source
+iterates to its own convergence, so results never depend on batch composition.
 
 Displacements satisfy `d = integral(v(t), early, late)` in local geographic EN.
 Every pixel uses its owning burst's exact UTC endpoints. Velocity harmonics use
@@ -558,3 +566,44 @@ production-map gate or assert physical-Msf detections.
 64 relevant tests pass. Source replay, physical radar prediction, native-cell
 replication and GeoTIFF coordinate/data checks pass. The two source packages
 and all prior experimental results remain unchanged.
+
+## Block-level Msf aggregation
+
+Pixel coefficients are single-source estimates with diagnostic uncertainty.
+[`tools/aggregate_msf_blocks.py`](../../tools/aggregate_msf_blocks.py) turns any
+completed velocity-pixel result into tested block estimates:
+
+```bash
+PYTHONPATH=src python tools/aggregate_msf_blocks.py SITE/work/velocity_pixels/RUN \
+    --output SITE/work/velocity_pixels/msf_blocks --sizes 3000,5000 --inflation 1.15
+```
+
+It recomputes every selected source fit (standard coverage, estimable) from the
+run's recipe, cached observation and solid-Earth artifacts and stored
+covariance, and fails unless the recomputed C/S reproduce the stored ones.
+Each unique source belongs to exactly one square block in the result's
+projected CRS (`--crs` overrides, e.g. `EPSG:3413`). A block's C/S is the
+equal-weight source mean; its covariance averages the sources' calendar-cluster
+influences before the outer product
+([`velocity_blocks`](../../src/glacier_offsets/velocity_blocks.py)), so errors
+shared through common acquisitions are counted once. The reported design effect
+compares it with the independent-source covariance. Amplitude and phase come
+from the block C/S, with a debiased amplitude sqrt(max(0, |m|^2 - tr S)).
+
+Blocks with at least `--min-sources` sources (8) are tested with the
+small-sample F(2, G-2) Wald reference and Benjamini-Hochberg FDR at `--q`
+(0.05). `--inflation` multiplies standard errors by a site calibration (Evans
+and Larsen used 1.15, the worst regional under-dispersion of the step-2
+bootstrap); the default 1 applies none, and stored covariances are never
+inflated. With a CATS response in the result, grounded slow blocks (every
+response <= 0.02, median speed <= 0.1 m/day) give an empirical null and
+floating blocks (median response >= 0.5) are counted separately; the
+thresholds are options. `--points` takes a CSV of `name, longitude, latitude`
+and optional reference `amplitude` (m/day) and `phase_deg`, such as GPS
+along-flow Msf, and reports the matching block for each point.
+
+Outputs per size are `blocks_<size>km.csv`, `.tif` (eligible blocks) and `.h5`
+(mean C/S, covariance, block-mean cluster influences and cr1, so
+`velocity_blocks.combine` gives the shared-cluster covariance of any linear
+combination of blocks), plus `blocks_msf.png` and `summary.json` with the
+recipe and code hashes. Inputs are read only.

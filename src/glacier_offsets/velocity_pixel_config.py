@@ -15,6 +15,10 @@ DEFAULT_PARAMETERS = {
         'max_range_residual_m': 2.0,
         'max_azimuth_residual_m': 5.0,
         'robust_cutoff': 3.0,
+        # auto: Huber IRLS only with pair covariance (noise.mode: pair); huber/none force it.
+        'robust': 'auto',
+        # covariance: cutoff in supplied-covariance units; source: per-source MAD-rescaled (never tighter).
+        'robust_scale': 'covariance',
     },
     'coverage': {
         'min_pairs_per_year': 20,
@@ -35,6 +39,9 @@ DEFAULT_PARAMETERS = {
         'proxy_min_speed_m_day': 0.5,
     },
 }
+
+
+CHOICES = {'robust': ('auto', 'huber', 'none'), 'robust_scale': ('covariance', 'source')}
 
 
 class _UniqueLoader(yaml.SafeLoader):
@@ -85,6 +92,10 @@ def validate_parameters(overrides=None):
             if section == 'screening' and name == 'remove_mixed_windows':
                 if type(value) is not bool:
                     raise ValueError('screening.remove_mixed_windows must be true or false')
+                continue
+            if section == 'screening' and name in CHOICES:
+                if value not in CHOICES[name]:
+                    raise ValueError(f'screening.{name} must be one of {list(CHOICES[name])}')
                 continue
             _number(value, f'{section}.{name}')
     s = result['screening']

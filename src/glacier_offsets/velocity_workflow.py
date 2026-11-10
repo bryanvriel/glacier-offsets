@@ -22,7 +22,7 @@ from .velocity_annual_noise import covariance_array, prepare_noise, read_supplie
 from .velocity_cache import identity_digest
 from .velocity_collection import collect, check_unchanged
 from .velocity_io import digest, write_json, writer_lock
-from .velocity_pixel_general import Layout, fit_sources, parameter_units, MODELS
+from .velocity_pixel_general import Layout, fit_sources, parameter_units, robust_mode, MODELS
 from .velocity_pixel_runtime import module_fingerprints
 from .velocity_prepare import prepare_observations
 from .velocity_solid_earth import Interrupted, check_worker, interpreter, prepare_solid_earth
@@ -123,7 +123,10 @@ def fit_recipe(config, layout, artifacts):
                        'in whitened residual units' if config['noise']['mode']=='pair' else
                        f"peak>={s['min_peak']:g} and acquisition-purged order-aware RA residual<="
                       f"{s['max_range_residual_m']:g}/{s['max_azimuth_residual_m']:g} m within each year; cross-year pairs "
-                      'predicted from integrated purged annual training backgrounds'),
+                      'predicted from integrated purged annual training backgrounds'
+                      + ('' if robust_mode(s['robust'], {} if config['noise']['mode'] == 'pair' else None) != 'huber' else
+                         f"; then full-model Huber IRLS cutoff={s['robust_cutoff']:g} in whitened residual units "
+                         f"(scale: {s['robust_scale']})")),
             'mixed_window_policy': {'remove_mixed_windows': s['remove_mixed_windows']},
             'min_fit': f"{c['min_pairs_per_year']} clean pairs in each year, >={c['min_pairs_total']} total, "
                        f">={c['min_span_days']:g} days, >={c['min_phase_bins']}/{c['phase_bins']} Msf phase bins; full model rank",
