@@ -213,14 +213,18 @@ def figure(path, tables, crs_name, a):
         label = f'{size/1000:g} km'
         both = t[t.both_eligible]
         fl = both[both.floating]
-        amax = a.amplitude_max or (float(np.nanpercentile(fl[['amplitude_debiased_A', 'amplitude_debiased_B']], 99))
-                                   if len(fl) else 1.)
+        det = fl[fl.discovery_full]
+        amps = ['amplitude_debiased_A', 'amplitude_debiased_B']
+        # Scale to the bulk of the full-map discoveries so a few noisy blocks do not squash the cloud.
+        pool = (det if len(det) else fl)[amps].to_numpy()
+        amax = a.amplitude_max or (1.25*float(np.nanpercentile(pool, 95)) if np.isfinite(pool).any() else 1.)
+        outside = int((fl[amps] > amax).any(axis=1).sum())
         row[0].errorbar(fl.amplitude_debiased_A, fl.amplitude_debiased_B, xerr=fl.amplitude_sigma_A,
                         yerr=fl.amplitude_sigma_B, fmt='.', ms=3, alpha=.4, elinewidth=.4)
         row[0].plot([0, amax], [0, amax], 'k-', lw=.8)
-        row[0].set(xlabel='half A debiased amplitude (m/day)', ylabel='half B', title=f'{label} floating blocks ({len(fl)})',
+        row[0].set(xlabel='half A debiased amplitude (m/day)', ylabel='half B',
+                   title=f'{label} floating blocks ({len(fl)}' + (f', {outside} beyond axes)' if outside else ')'),
                    xlim=(0, amax), ylim=(0, amax))
-        det = fl[fl.discovery_full]
         if len(det):
             # Centre on the circular mean of half A and unwrap half B next to half A.
             centre = float(np.degrees(np.angle(np.exp(1j*np.radians(det.phase_A)).mean())))
