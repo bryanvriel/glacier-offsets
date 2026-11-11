@@ -167,15 +167,22 @@ def scientific_parameters(config):
     return {k: deepcopy(config[k]) for k in DEFAULT_PARAMETERS}
 
 
-def impossible_settings(config, pairs_by_year, span_days):
-    """Settings the observed pair record can never satisfy, reported together."""
+def impossible_settings(config, pairs_by_year, span_days, year_minimums=None):
+    """Settings the observed pair record can never satisfy, reported together.
+
+    ``year_minimums`` maps year to its required clean pairs (after any
+    ``coverage.min_pairs_per_year_scaling``); by default every year needs
+    ``coverage.min_pairs_per_year``.
+    """
     c = config['coverage']
     problems = []
     if not pairs_by_year:
         return ['no pairs were collected']
     for year, count in sorted(pairs_by_year.items()):
-        if count < c['min_pairs_per_year']:
-            problems.append(f'{year} has {count} pairs, fewer than coverage.min_pairs_per_year={c["min_pairs_per_year"]}')
+        need = c['min_pairs_per_year'] if year_minimums is None else year_minimums[year]
+        if count < need:
+            scaled = '' if need == c['min_pairs_per_year'] else f' scaled to {need} for its covered span'
+            problems.append(f'{year} has {count} pairs, fewer than coverage.min_pairs_per_year={c["min_pairs_per_year"]}{scaled}')
     total = sum(pairs_by_year.values())
     if total < c['min_pairs_total']:
         problems.append(f'{total} pairs in total, fewer than coverage.min_pairs_total={c["min_pairs_total"]}')

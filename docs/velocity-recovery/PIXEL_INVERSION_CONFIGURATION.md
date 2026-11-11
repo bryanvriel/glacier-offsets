@@ -350,6 +350,7 @@ nonfinite values and inconsistent thresholds fail before output creation.
 | `screening.robust` | `auto` | `auto`: Huber IRLS only in pair-noise mode; `huber` or `none` force it on or off |
 | `screening.robust_scale` | `covariance` | `source`: rescale each source's whitened channels by max(1, 1.4826 MAD) before the cutoff |
 | `coverage.min_pairs_per_year` | 20 | Retained pairs required in **each** year |
+| `coverage.min_pairs_per_year_scaling` | `none` | `span`: scale each calendar year's minimum by the fraction of that year its pairs cover (first early to last late, ceil, at least 1), so partial first/last years are not held to a full year's count |
 | `coverage.min_pairs_total` | 40 | Retained pairs required overall for fit support |
 | `coverage.min_span_days` | 540 | First retained early to last retained late endpoint |
 | `coverage.phase_bins` | 12 | Number of equal bins over one Msf cycle |

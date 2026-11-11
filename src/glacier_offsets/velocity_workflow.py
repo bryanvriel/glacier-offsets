@@ -22,7 +22,7 @@ from .velocity_annual_noise import covariance_array, prepare_noise, read_supplie
 from .velocity_cache import identity_digest
 from .velocity_collection import collect, check_unchanged
 from .velocity_io import digest, write_json, writer_lock
-from .velocity_pixel_general import Layout, fit_sources, parameter_units, robust_mode, MODELS
+from .velocity_pixel_general import Layout, fit_sources, parameter_units, robust_mode, year_pair_minimums, MODELS
 from .velocity_pixel_runtime import module_fingerprints
 from .velocity_prepare import prepare_observations
 from .velocity_solid_earth import Interrupted, check_worker, interpreter, prepare_solid_earth
@@ -110,7 +110,17 @@ def preflight(config, stages):
     return worker
 
 
-def fit_recipe(config, layout, artifacts):
+def manifest_year_minimums(manifest, coverage):
+    """Required clean pairs per year from the collected pair calendar (same rule as the per-source fit)."""
+    years = [int(y) for y in manifest['years']]
+    pairs = manifest['pairs']
+    need = year_pair_minimums([p['calendar_early_day'] for p in pairs], [p['calendar_late_day'] for p in pairs],
+                              [years.index(int(p['year'])) for p in pairs], years, coverage['min_pairs_per_year'],
+                              coverage['min_pairs_per_year_scaling'])
+    return {y: int(n) for y, n in zip(years, need)}
+
+
+def fit_recipe(config, layout, artifacts, year_minimums=None):
     parameters = {k: v for k, v in scientific_parameters(config).items() if k != 'display'}
     c, s = parameters['coverage'], parameters['screening']
     return {'schema': 'glacier-offsets-pixel-recipe-v2', 'version': 2, 'parameters': parameters, 'layout': layout.record(),
@@ -128,7 +138,10 @@ def fit_recipe(config, layout, artifacts):
                          f"; then full-model Huber IRLS cutoff={s['robust_cutoff']:g} in whitened residual units "
                          f"(scale: {s['robust_scale']})")),
             'mixed_window_policy': {'remove_mixed_windows': s['remove_mixed_windows']},
-            'min_fit': f"{c['min_pairs_per_year']} clean pairs in each year, >={c['min_pairs_total']} total, "
+            'min_fit': (f"{c['min_pairs_per_year']} clean pairs in each year" if c['min_pairs_per_year_scaling'] == 'none'
+                        else f"{c['min_pairs_per_year']} clean pairs per covered calendar year, scaled by each year's "
+                             f"covered fraction (required: {json.dumps({str(k): v for k, v in (year_minimums or {}).items()})})")
+                       + f", >={c['min_pairs_total']} total, "
                        f">={c['min_span_days']:g} days, >={c['min_phase_bins']}/{c['phase_bins']} Msf phase bins; full model rank",
             'standard_coverage': f"same and >={c['min_pairs_standard']} total clean pairs",
             'flow_axis': 'robust order-removed EN velocity per year, equally averaged over years; fixed during each point fit',
@@ -260,7 +273,8 @@ def run_workflow(config_path, stages='run', interrupt=None, batch_size=None, rem
         cache.mkdir(parents=True, exist_ok=True)
         manifest = collect(config['inputs'], cache)
         pairs_by_year = {int(k): v for k, v in manifest['pairs_by_year'].items()}
-        problems = impossible_settings(config, pairs_by_year, manifest['span_days'])
+        year_minimums = manifest_year_minimums(manifest, config['coverage'])
+        problems = impossible_settings(config, pairs_by_year, manifest['span_days'], year_minimums)
         if config['noise']['mode'] == 'supplied':
             supplied, _ = read_supplied(config['noise']['files'])
             absent = [y for y in manifest['years'] if y not in supplied]
@@ -300,7 +314,7 @@ def run_workflow(config_path, stages='run', interrupt=None, batch_size=None, rem
             logging.info('Prepared observations %s, solid-Earth %s and noise %s', observations.id,
                          artifacts['solid_earth'].get('id', 'disabled'), noise.id)
             return run_manifest
-        recipe = fit_recipe(config, layout, artifacts)
+        recipe = fit_recipe(config, layout, artifacts, year_minimums)
         recipe_sha = identity_digest(recipe)
         fit_identity = {'recipe_sha256': recipe_sha}
         if not stage_current(out, 'fit', fit_identity):

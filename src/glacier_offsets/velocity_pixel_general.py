@@ -9,6 +9,7 @@ order groups follow the recorded midpoint year. For two within-year regimes
 this reproduces the version-1 two-year design column for column.
 """
 import json
+import math
 import warnings
 
 import numpy as np
@@ -404,8 +405,38 @@ def solve(field, layout, good, axis, covariances, model='residual_vertical', *, 
             'cluster_influence': adjusted, 'cluster_ids': blocks, 'cluster_cr1': cr1}
 
 
+def year_pair_minimums(calendar_early, calendar_late, year_index, years, min_pairs, scaling='none'):
+    """Clean pairs required in each calendar-year regime.
+
+    ``none`` requires ``min_pairs`` in every year. ``span`` scales it by the
+    fraction of the calendar year that the year's pairs cover (first early to
+    last late, clipped to the year), rounded up and at least 1, so a record
+    starting mid-year is held to a proportional temporal density rather than a
+    full year's count.
+    """
+    if scaling not in ('none', 'span'):
+        raise ValueError("min_pairs_per_year_scaling must be 'none' or 'span'")
+    years = [int(y) for y in years]
+    if scaling == 'none':
+        return np.full(len(years), int(min_pairs))
+    early, late, index = map(np.asarray, (calendar_early, calendar_late, year_index))
+    out = []
+    for k, year in enumerate(years):
+        member = index == k
+        if not member.any():
+            out.append(int(min_pairs))
+            continue
+        start, stop = year_start(year), year_start(year+1)
+        covered = min(stop, float(np.nanmax(late[member])))-max(start, float(np.nanmin(early[member])))
+        fraction = float(np.clip(covered/(stop-start), 0., 1.))
+        out.append(max(1, math.ceil(min_pairs*fraction-1e-9)))
+    return np.array(out)
+
+
 def coverage(field, layout, good, options):
     counts = np.stack([good[:, field['year_index'] == k].sum(1) for k in range(len(layout.years))], axis=1)
+    need = year_pair_minimums(field['calendar_early'], field['calendar_late'], field['year_index'], layout.years,
+                              options['min_pairs_per_year'], options.get('min_pairs_per_year_scaling', 'none'))
     lo = np.min(np.where(good, field['early'], np.inf), axis=1)
     hi = np.max(np.where(good, field['late'], -np.inf), axis=1)
     span = np.where(good.any(1), hi-lo, 0.)
@@ -413,10 +444,11 @@ def coverage(field, layout, good, options):
     nbin = options['phase_bins']
     labels = np.floor(np.nan_to_num(np.mod(mid, PERIOD)/PERIOD)*nbin).astype(int) % nbin
     bins = np.stack([np.any(good & (labels == b), axis=1) for b in range(nbin)], axis=1).sum(1)
-    fit = ((counts.min(1) >= options['min_pairs_per_year']) & (counts.sum(1) >= options['min_pairs_total'])
+    fit = ((counts >= need[None]).all(1) & (counts.sum(1) >= options['min_pairs_total'])
            & (span >= options['min_span_days']) & (bins >= options['min_phase_bins']))
     standard = fit & (counts.sum(1) >= options['min_pairs_standard'])
-    return {'counts': counts, 'span_days': span, 'phase_bins': bins, 'fit_support': fit, 'standard_coverage': standard}
+    return {'counts': counts, 'span_days': span, 'phase_bins': bins, 'fit_support': fit, 'standard_coverage': standard,
+            'min_pairs_by_year': need}
 
 
 def projections(field, layout, axis):

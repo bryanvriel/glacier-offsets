@@ -22,6 +22,9 @@ DEFAULT_PARAMETERS = {
     },
     'coverage': {
         'min_pairs_per_year': 20,
+        # none: the same minimum in every calendar year; span: scaled by the fraction of each calendar
+        # year the pair record covers (ceil), so partial first/last years are not held to a full year's count.
+        'min_pairs_per_year_scaling': 'none',
         'min_pairs_total': 40,
         'min_span_days': 540.0,
         'phase_bins': 12,
@@ -41,7 +44,8 @@ DEFAULT_PARAMETERS = {
 }
 
 
-CHOICES = {'robust': ('auto', 'huber', 'none'), 'robust_scale': ('covariance', 'source')}
+CHOICES = {'robust': ('auto', 'huber', 'none'), 'robust_scale': ('covariance', 'source'),
+           'min_pairs_per_year_scaling': ('none', 'span')}
 
 
 class _UniqueLoader(yaml.SafeLoader):
@@ -93,9 +97,9 @@ def validate_parameters(overrides=None):
                 if type(value) is not bool:
                     raise ValueError('screening.remove_mixed_windows must be true or false')
                 continue
-            if section == 'screening' and name in CHOICES:
+            if name in CHOICES:
                 if value not in CHOICES[name]:
-                    raise ValueError(f'screening.{name} must be one of {list(CHOICES[name])}')
+                    raise ValueError(f'{section}.{name} must be one of {list(CHOICES[name])}')
                 continue
             _number(value, f'{section}.{name}')
     s = result['screening']
