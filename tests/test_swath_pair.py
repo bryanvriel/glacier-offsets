@@ -99,6 +99,30 @@ class SwathPairTests(unittest.TestCase):
             preview, _ = corrected_preview(total, symmetric_bias(delta, owner, swaths=(2, 3)), available)
             np.testing.assert_array_equal(preview, value)
 
+    def test_large_chip_reports_physical_overlap_limit_in_original_pixels(self):
+        full = MatchingGrid(np.array([10, 42]), np.array([40, 168]), (128, 512), (10, 40), (32, 128))
+        frame = {'sources': sources((1, 2))}
+        frame['sources'][1]['offset'] = [0, 460]  # 540 common range pixels.
+        with patch('glacier_offsets.swath_observations.matching_template', return_value=full):
+            with self.assertRaisesRegex(ValueError, r'Required footprint is \[148, 592\].*540 range pixels'):
+                overlap_grid({}, frame)
+
+    def test_grid_miss_is_distinguished_from_an_oversized_footprint(self):
+        full = MatchingGrid(np.array([10, 42]), np.array([40]), (64, 256), (10, 40), (32, 128))
+        frame = {'sources': sources((1, 2))}
+        frame['sources'][1]['offset'] = [0, 500]  # Footprint fits, but not at sample start 40.
+        with patch('glacier_offsets.swath_observations.matching_template', return_value=full):
+            with self.assertRaisesRegex(ValueError, 'fits the continuous overlap.*no production center'):
+                overlap_grid({}, frame)
+
+    def test_disjoint_source_rectangles_report_no_swath_overlap(self):
+        full = MatchingGrid(np.array([10]), np.array([40]), (64, 256), (10, 40), (32, 128))
+        frame = {'sources': sources((2, 3))}
+        frame['sources'][1]['offset'] = [0, 1100]
+        with patch('glacier_offsets.swath_observations.matching_template', return_value=full):
+            with self.assertRaisesRegex(ValueError, 'no two-dimensional swath overlap'):
+                overlap_grid({}, frame)
+
     def test_iw23_cohorts_rows_closures_and_native_inventory(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

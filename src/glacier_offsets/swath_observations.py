@@ -79,11 +79,50 @@ def overlap_grid(cfg, frame, swaths=None):
     dual = union[low] & union[high]
     rows, cols = np.flatnonzero(dual.any(axis=1)), np.flatnonzero(dual.any(axis=0))
     if not rows.size or not cols.size:
+        reason = overlap_failure_reason(full, sources, (low, high))
         raise ValueError(f'No complete dual-swath chip/search footprint on production centers for '
-                         f'{low.upper()}/{high.upper()} (window={list(full.window)}, search={list(full.search)})')
+                         f'{low.upper()}/{high.upper()} (window={list(full.window)}, search={list(full.search)}). '
+                         f'{reason}')
     rows, cols = np.arange(rows[0], rows[-1]+1), np.arange(cols[0], cols[-1]+1)
     grid = MatchingGrid(full.starts_line[rows], full.starts_sample[cols], full.window, full.search, full.stride)
     return grid, sources, {k: v[np.ix_(rows, cols)] & dual[np.ix_(rows, cols)] for k, v in masks.items()}
+
+
+def overlap_failure_reason(grid, sources, swaths):
+    """Distinguish insufficient common imagery from a grid missing usable overlap.
+
+    Coordinates and sizes are original reference pixels, before range-2x
+    interpolation. Each footprint must fit in one source in each swath.
+    """
+    required = np.array(grid.window)+2*np.array(grid.search)
+    rectangles = []
+    low, high = swaths
+    for a in sources:
+        if not a['burst_id'].endswith(low):
+            continue
+        ra = np.array(a['valid_window'])+np.repeat(a['offset'], 2)
+        for b in sources:
+            if not b['burst_id'].endswith(high):
+                continue
+            rb = np.array(b['valid_window'])+np.repeat(b['offset'], 2)
+            size = np.minimum(ra[[1, 3]], rb[[1, 3]])-np.maximum(ra[[0, 2]], rb[[0, 2]])
+            if (size > 0).all():
+                rectangles.append(size)
+    prefix = f'Required footprint is {required.tolist()} original pixels (azimuth, range). '
+    if not rectangles:
+        return prefix+'The pinned source valid rectangles have no two-dimensional swath overlap.'
+    sizes = np.array(rectangles)
+    if ((sizes >= required).all(axis=1)).any():
+        return (prefix+'A footprint fits the continuous overlap, but matching.stride/first_center '
+                'place no production center inside it. Inspect the grid before changing its origin or stride.')
+    tall = sizes[sizes[:, 0] >= required[0]]
+    if len(tall):
+        detail = f'The widest overlap with sufficient azimuth support is {int(tall[:, 1].max())} range pixels. '
+    else:
+        detail = f'The greatest overlapping azimuth extent is {int(sizes[:, 0].max())} pixels. '
+    return (prefix+detail+'Changing the center origin or stride cannot make this footprint fit. '
+            'A smaller matching window/search is needed for overlap measurements; calibrations made '
+            'with different matching settings are not automatically applicable to production.')
 
 
 def run_job(job):

@@ -1377,6 +1377,20 @@ the YAML, so relabeling an existing legacy stack cannot bypass this check.
 Report/rescore and retained-preview inspection remain available for
 existing results, and export-only keeps its own compatibility checks.
 
+Overlap calibration needs the complete chip plus its search halo to fit inside
+both **unspliced** swaths at the same production center. Required extents are
+`window + 2 * search` in original reference pixels; range-2x interpolation does
+not increase the physical overlap. For example, `[128,512]` with search `[10,40]`
+needs `[148,592]` pixels. A stack can match successfully within each swath while
+having no complete footprint in their narrow shared overlap. Imported reference
+geometry preserves that overlap; changing matching settings does not widen it.
+The error distinguishes an oversized footprint from a stride/first-center grid
+that misses an otherwise usable overlap. Only the latter can be fixed by moving
+or densifying centers. Smaller-window overlap experiments may be run separately,
+but their exported calibration is scoped to those matching settings and cannot
+be applied to a larger-window stack without explicit transfer validation and
+corresponding application support.
+
 The full command runs `plan`, `audit`, `measure`, `physics`, `fit`, `previews`,
 `report` and `export`. Select one with `--stage STAGE`. Use `--pilot-only` to
 measure just the first three-date triangle; pilots never export a calibration.
