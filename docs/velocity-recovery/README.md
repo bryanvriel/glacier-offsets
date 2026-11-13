@@ -598,7 +598,12 @@ bootstrap); the default 1 applies none, and stored covariances are never
 inflated. With a CATS response in the result, grounded slow blocks (every
 response <= 0.02, median speed <= 0.1 m/day) give an empirical null and
 floating blocks (median response >= 0.5) are counted separately; the
-thresholds are options. `--points` takes a CSV of `name, longitude, latitude`
+thresholds are options. `--min-abs-projection` (default 0, off) also drops
+sources whose smallest annual |azimuth projection| of the flow axis is below
+it, as the pixel maps' display rule does at 0.3: along-flow Msf is azimuth
+divided by that projection, so low-projection sources amplify noise and any
+cross-flow or systematic azimuth term. The split-period tool inherits it.
+`--points` takes a CSV of `name, longitude, latitude`
 and optional reference `amplitude` (m/day) and `phase_deg`, such as GPS
 along-flow Msf, and reports the matching block for each point.
 

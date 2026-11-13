@@ -1,11 +1,15 @@
 """Shared block-tool steps: halves, pair subsets, classes, blocks and accumulator merging."""
+import tempfile
 import unittest
+from pathlib import Path
 
+import h5py
+from pyproj import CRS
 import numpy as np
 from numpy.testing import assert_allclose, assert_array_equal
 
 from glacier_offsets.velocity_basis import utc_days
-from glacier_offsets.velocity_block_workflow import (assign_blocks, classify, fit_pairs, median_split_date, per_block,
+from glacier_offsets.velocity_block_workflow import (assign_blocks, classify, fit_pairs, load_sources, median_split_date, per_block,
                                                      split_day_number, split_halves, subset_covariances, subset_pairs)
 from glacier_offsets.velocity_blocks import BlockAccumulator
 from glacier_offsets.velocity_pixel_config import validate_parameters
@@ -105,6 +109,27 @@ class BlockWorkflowTests(unittest.TestCase):
             assert_allclose(merged[key], single[key], atol=1e-14)
         with self.assertRaisesRegex(ValueError, 'different'):
             first.merge(BlockAccumulator(3, 4))
+
+    def test_projection_filter_drops_low_projection_sources(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)/'source_coefficients.h5'
+            with h5py.File(path, 'w') as h:
+                h.attrs.update(status='complete', crs_wkt=CRS.from_epsg(3031).to_wkt())
+                h['standard_coverage'] = np.array([1, 1, 1, 1, 0], bool)
+                h['residual_vertical/estimable'] = np.array([1, 1, 1, 0, 1], bool)
+                h['residual_vertical/cs'] = np.arange(10.).reshape(5, 2)
+                h['longitude'], h['latitude'] = np.full(5, -60.), np.full(5, -68.)
+                h['mean_flow_speed'] = np.ones(5)
+                # Smallest annual |projection| per source: 0.8, 0.25, 0.3, 0.9, 0.9.
+                h['azimuth_flow_projection_by_year'] = np.array([[.8, -.9], [-.25, .6], [.3, .3], [.9, .9], [.9, .9]])
+            assert_array_equal(load_sources(path)['selected'], [0, 1, 2])
+            src = load_sources(path, min_abs_projection=.3)
+            assert_array_equal(src['selected'], [0, 2])
+            assert_array_equal(src['projection'], [.8, .3])
+            assert_array_equal(src['cs'], [[0, 1], [4, 5]])
+            self.assertTrue(np.isnan(src['response']).all())
+            with self.assertRaisesRegex(ValueError, 'projection'):
+                load_sources(path, min_abs_projection=.95)
 
 
 if __name__ == '__main__':

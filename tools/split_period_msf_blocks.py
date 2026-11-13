@@ -26,7 +26,7 @@ is compared with its shared-cluster covariance (velocity_blocks.combine).
 Each half spans only part of the record, so coverage is relaxed per half
 (``--min-*``; the defaults suit halves of about one year). The source set is
 the full map's mapped sources. Block CRS, model, inflation, minimum sources and
-the grounded slow/floating rules default to the full map's settings, read from
+the grounded slow/floating rules and the minimum azimuth projection default to the full map's settings, read from
 its summary.json. Inputs are read only.
 
 Example:
@@ -261,6 +261,7 @@ def main(a):
     model = full_summary.get('model', 'residual_vertical')
     a.inflation = setting(a.inflation, full_summary, 'inflation', 1.)
     a.min_sources = setting(a.min_sources, full_summary, 'min_sources', 8)
+    a.min_abs_projection = setting(a.min_abs_projection, full_summary, 'min_abs_projection', 0.)
     recorded = full_summary.get('null_rule', {})
     rules = {'null_max_response': setting(a.null_max_response, recorded, 'max_response', CLASS_DEFAULTS['null_max_response']),
              'null_max_speed': setting(a.null_max_speed, recorded, 'max_median_speed_m_day', CLASS_DEFAULTS['null_max_speed']),
@@ -279,7 +280,7 @@ def main(a):
         if not len(columns):
             raise ValueError(f'Half {name} is empty for split {split}')
     result_file = str(result/'source_coefficients.h5')
-    src = load_sources(result_file, model, crs.to_wkt())
+    src = load_sources(result_file, model, crs.to_wkt(), a.min_abs_projection)
     blocks_by_size = assign_blocks(src['x'], src['y'], sizes)
     keys = {s: k for s, (k, _) in blocks_by_size.items()}
     labels = {s: lab for s, (_, lab) in blocks_by_size.items()}
@@ -300,7 +301,8 @@ def main(a):
                'dropped_pairs': int(len(ce)-sum(len(v) for v in parts.values())), 'halves': meta,
                'coverage_per_half': {k: params['coverage'][k] for k in ('min_pairs_per_year', 'min_pairs_total',
                                                                         'min_span_days', 'min_phase_bins', 'phase_bins')},
-               'inflation': a.inflation, 'min_sources': a.min_sources, 'model': model, 'crs': crs.name,
+               'inflation': a.inflation, 'min_sources': a.min_sources, 'min_abs_projection': a.min_abs_projection,
+               'model': model, 'crs': crs.name,
                'class_rules': rules, 'sizes': {}}
     tables = {}
     for size in sizes:
@@ -328,6 +330,7 @@ def parser():
     p.add_argument('--sizes', default='3000,5000', help='comma-separated block sizes in metres (must exist in --blocks)')
     p.add_argument('--min-sources', type=int, help='sources required in each half (default: the full map)')
     p.add_argument('--inflation', type=float, help='standard-error multiplier (default: the full map)')
+    p.add_argument('--min-abs-projection', type=float, help='minimum |azimuth projection| (default: the full map)')
     p.add_argument('--null-max-response', type=float, help='grounded slow rule (default: the full map)')
     p.add_argument('--null-max-speed', type=float, help='grounded slow rule, m/day (default: the full map)')
     p.add_argument('--floating-min-response', type=float, help='floating rule (default: the full map)')

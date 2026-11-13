@@ -70,27 +70,36 @@ def block_crs(h, override=None):
     return crs
 
 
-def load_sources(result_file, model='residual_vertical', crs=None):
+def load_sources(result_file, model='residual_vertical', crs=None, min_abs_projection=0.):
     """Mapped sources of a result: standard coverage and an estimable fit for ``model``.
 
+    ``min_abs_projection`` also drops sources whose smallest annual absolute
+    azimuth projection of the flow axis is below it (the pixel maps' display
+    rule uses 0.3). Along-flow Msf is identified from azimuth, so its noise and
+    any cross-flow or systematic azimuth term scale with 1/projection.
     Returns the source indices, their projected x/y, stored C/S, mean flow
-    speed and CATS response (NaN when the result has none) and the CRS.
+    speed, CATS response (NaN when the result has none), minimum absolute
+    projection and the CRS.
     """
     if model not in MODELS:
         raise ValueError(f'model must be one of {list(MODELS)}')
     with h5py.File(result_file) as h:
         if h.attrs.get('status') not in (None, 'complete'):
             raise ValueError(f"{result_file} is not complete (status {h.attrs['status']})")
-        selected = np.flatnonzero(h['standard_coverage'][:].astype(bool) & h[f'{model}/estimable'][:].astype(bool))
+        projection = np.abs(h['azimuth_flow_projection_by_year'][:]).min(1)
+        keep = h['standard_coverage'][:].astype(bool) & h[f'{model}/estimable'][:].astype(bool)
+        if min_abs_projection > 0:
+            keep &= projection >= min_abs_projection
+        selected = np.flatnonzero(keep)
         crs = block_crs(h, crs)
         x, y = Transformer.from_crs(4326, crs, always_xy=True).transform(h['longitude'][:][selected],
                                                                           h['latitude'][:][selected])
         out = {'selected': selected, 'x': np.asarray(x), 'y': np.asarray(y), 'cs': h[f'{model}/cs'][:][selected],
-               'speed': h['mean_flow_speed'][:][selected], 'crs': crs,
+               'speed': h['mean_flow_speed'][:][selected], 'projection': projection[selected], 'crs': crs,
                'response': (h['tidal_response_factor'][:][selected] if 'tidal_response_factor' in h
                             else np.full(len(selected), np.nan))}
     if not len(selected):
-        raise ValueError('No sources have standard coverage and an estimable fit')
+        raise ValueError('No sources have standard coverage, an estimable fit and the required projection')
     return out
 
 

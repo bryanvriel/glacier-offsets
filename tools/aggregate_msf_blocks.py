@@ -17,6 +17,12 @@ errors shared by the block's sources are counted once (see
 ``glacier_offsets.velocity_blocks``). Amplitude and phase are derived from the
 block C/S, with a debiased amplitude sqrt(max(0, |m|^2 - tr S)).
 
+``--min-abs-projection`` (default 0, off) also drops sources whose smallest
+annual |azimuth projection| of the flow axis is below it, as the pixel maps'
+display rule does at 0.3. Along-flow Msf comes from azimuth divided by that
+projection, so low-projection sources amplify noise and any cross-flow or
+systematic azimuth term.
+
 Detection uses the small-sample F(2, G-2) reference after multiplying standard
 errors by ``--inflation`` and Benjamini-Hochberg FDR at ``--q`` over blocks with
 at least ``--min-sources`` sources. The inflation is a site calibration (for
@@ -227,10 +233,12 @@ def main(a):
     result, out = a.result.resolve(), a.output.resolve()
     if out == result:
         raise ValueError('--output must differ from the result directory')
+    if not 0 <= a.min_abs_projection < 1:
+        raise ValueError('--min-abs-projection must be in [0, 1)')
     recipe, paths = artifact_paths(result, a.cache)
     params = result_parameters(recipe)
     result_file = str(result/'source_coefficients.h5')
-    src = load_sources(result_file, a.model, a.crs)
+    src = load_sources(result_file, a.model, a.crs, a.min_abs_projection)
     selected, stored, speed, response, crs = src['selected'], src['cs'], src['speed'], src['response'], src['crs']
     to_map = Transformer.from_crs(4326, crs, always_xy=True)
     out.mkdir(parents=True, exist_ok=True)
@@ -273,7 +281,8 @@ def main(a):
             h['mean_cs'], h['covariance'] = res['mean'], res['covariance']
             h['cluster_influence'], h['cr1'] = res['influence'], res['cr1']
             h['cluster_ids'] = np.asarray(clusters)
-            h.attrs.update(block_size_m=size, crs_wkt=crs_wkt, model=a.model, inflation_not_applied=True,
+            h.attrs.update(block_size_m=size, crs_wkt=crs_wkt, model=a.model, min_abs_projection=a.min_abs_projection,
+                           inflation_not_applied=True,
                            note='cov of sum_b w_b mean_b = mean-|w|-weighted cr1 * (sum_b w_b I_b)^T (sum_b w_b I_b); '
                                 'see velocity_blocks.combine')
         eligible = frame[frame.eligible]
@@ -285,7 +294,7 @@ def main(a):
     figure(out/'blocks_msf.png', tables, points, crs.name, a)
     summary.update(result=str(result), model=a.model, crs=crs.name, recipe_sha256=digest(result/'recipe.json'),
                    max_reproduction_difference=max_diff, sources=int(len(selected)), clusters=len(clusters),
-                   inflation=a.inflation, q=a.q, min_sources=a.min_sources,
+                   inflation=a.inflation, q=a.q, min_sources=a.min_sources, min_abs_projection=a.min_abs_projection,
                    null_rule={'max_response': a.null_max_response, 'max_median_speed_m_day': a.null_max_speed},
                    floating_min_median_response=a.floating_min_response,
                    tide_response_available=bool(np.isfinite(response).any()),
@@ -307,6 +316,8 @@ def parser():
     p.add_argument('--crs', help='projected CRS for blocks (default: the result CRS), e.g. EPSG:3413')
     p.add_argument('--min-sources', type=int, default=8, help='sources required for a block to be tested')
     p.add_argument('--inflation', type=float, default=1., help='standard-error multiplier from a site calibration')
+    p.add_argument('--min-abs-projection', type=float, default=0.,
+                   help='drop sources whose smallest annual |azimuth projection| of the flow axis is below this (pixel maps use 0.3)')
     p.add_argument('--q', type=float, default=.05, help='Benjamini-Hochberg false-discovery rate')
     p.add_argument('--points', type=Path, help='CSV of name, longitude, latitude[, amplitude, phase_deg]')
     p.add_argument('--null-max-response', type=float, default=CLASS_DEFAULTS['null_max_response'], help='max tide response of grounded slow sources')
