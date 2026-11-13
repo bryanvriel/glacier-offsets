@@ -602,7 +602,9 @@ thresholds are options. `--min-abs-projection` (default 0, off) also drops
 sources whose smallest annual |azimuth projection| of the flow axis is below
 it, as the pixel maps' display rule does at 0.3: along-flow Msf is azimuth
 divided by that projection, so low-projection sources amplify noise and any
-cross-flow or systematic azimuth term. The split-period tool inherits it.
+cross-flow or systematic azimuth term. The split-period tool inherits it. See
+[azimuth projection and along-flow Msf reliability](MSF_AZIMUTH_PROJECTION.md)
+for why, and what the uncertainties do and do not capture.
 `--points` takes a CSV of `name, longitude, latitude`
 and optional reference `amplitude` (m/day) and `phase_deg`, such as GPS
 along-flow Msf, and reports the matching block for each point.
