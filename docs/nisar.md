@@ -143,6 +143,55 @@ checksum; `--verify-package` additionally verifies every NISAR array before
 screening, which can be expensive. The JSON records the verification mode.
 Fitting retains its independent full package validation.
 
+### Pixel-workflow performance
+
+`velocity-pixels` verifies the complete package once per file SHA-256 and
+validator implementation, storing an atomic validation receipt under
+`cache_directory/verified-nisar`. Subsequent collections still checksum the
+input bytes; they reuse full array validation only for a matching receipt.
+Preparation reuses the collection's just-verified checksum only while its file
+revision remains unchanged. Changed inputs or validator code require validation
+again. The initial verification can take minutes for a large package.
+
+Observation caches use a versioned compact layout (`nisar-observations-v4-compact`),
+retaining only locations with at least one usable horizontal observation. Original
+row-major map IDs remain in `source_id`; `map_source_index` maps grid cells to
+compact cache rows, with -1 outside support. Every product retains its own
+geometry, endpoints and overlap-suppression flags. Coordinates, exports and
+point selection preserve the original map locations. Dense GOFF coverage can
+leave almost no empty locations to remove.
+
+Extraction uses 256-cell spatial tiles and contiguous cache writes, with the
+existing completed-pair checkpoints. A single package's tiles align with its
+native HDF5 chunks; shifted packages may straddle neighboring source chunks.
+Radar extraction avoids horizontal matrix inversion when the package already
+provides horizontal validity. Old caches are not interpreted as compact caches.
+PySolid reads bounded blocks of pair geometry, caps NISAR time blocks at eight
+products, and streams progress; its independent sampled accuracy check remains.
+
+Acquisition-purged screening batches well-conditioned robust solves across
+locations. The same date/acquisition exclusions, rank threshold, five IRLS
+updates, MAD floor and residual cuts apply. Systems with poor conditioning
+replay the scalar SVD least-squares implementation. Screening omits predictions
+for target observations already excluded by validity/peak screening; it retains
+all permitted training observations. Both control calibration and map fitting
+use this path. Scientific coverage gates and per-track comparators are unchanged.
+
+Benchmark representative controls without fitting a map:
+
+```bash
+PYTHONPATH=src python tools/benchmark_nisar_velocity.py \
+  --package /data/nisar/displacements_tide_corrected_horizontal.nc \
+  --regions /data/nisar/reviewed-regions.json \
+  --cache /data/nisar/velocity-cache --output /data/nisar/benchmark.json
+```
+
+The benchmark validates its input, samples up to 128 locations in each of three
+control regions, compares screening against the scalar reference, and checks
+aligned extraction against the previous tile traversal. Reuse that cache directory
+in the fitting YAML to reuse validation. Large observation/correction caches
+still require space, and millions of location fits remain substantial work.
+
 CATS uses each location's own two endpoint times and pair geometry, changing
 range only. Missing modeled corrections retain input radar values with a separate
 availability mask; they are excluded from horizontal fitting support. Horizontal

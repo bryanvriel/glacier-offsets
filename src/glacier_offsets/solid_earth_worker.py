@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 import json
 import sys
+from time import perf_counter
 
 import h5py
 import numpy as np
@@ -89,6 +90,7 @@ def run(observations, output, spacing, chunk=8, stop_after=None):
         return v[0]*(1-fraction)+v[1]*fraction
 
     ns, nt = shape
+    if pair_geometry: chunk = min(chunk, 8)
     mode = 'r+'
     try:
         with h5py.File(output, 'r') as existing:
@@ -111,26 +113,38 @@ def run(observations, output, spacing, chunk=8, stop_after=None):
             stop = min(begin+chunk, nt)
             block = np.full((ns, stop-begin, 2), np.nan)
             errors = np.full(stop-begin, np.nan)
-            for t in range(begin, stop):
+            if pair_geometry:
+                with h5py.File(observations) as source:
+                    e = source['early'][:, begin:stop]
+                    l = source['late'][:, begin:stop]
+                    samples = []
+                    worst = [[] for _ in range(stop-begin)]
+                    for j, t in enumerate(range(begin, stop)):
+                        rows = np.flatnonzero(finite & np.isfinite(e[:, j]+l[:, j]))
+                        samples.append(rows[np.linspace(0, len(rows)-1, min(8, len(rows)), dtype=int)] if t % 10 == 0 else np.array([], int))
+                    last_log = perf_counter()
+                    for first in range(0, ns, 8192):
+                        last = min(first+8192, ns)
+                        # Read every cache chunk once for the whole time block.
+                        g = source['geometry_by_pair'][first:last, begin:stop]
+                        for j, t in enumerate(range(begin, stop)):
+                            rows = np.flatnonzero(finite[first:last] & np.isfinite(e[first:last, j]+l[first:last, j]))
+                            if not len(rows): continue
+                            ids = first+rows
+                            delta = value(l[ids, j]*86400., lat[ids], lon[ids])-value(e[ids, j]*86400., lat[ids], lon[ids])
+                            block[ids, j] = np.einsum('sci,si->sc', g[rows, j], delta)
+                            for r in samples[j][(samples[j] >= first) & (samples[j] < last)]:
+                                point = exact(l[r, j]*86400., lat[r], lon[r])-exact(e[r, j]*86400., lat[r], lon[r])
+                                worst[j].append(float(np.max(abs(point-delta[np.searchsorted(ids, r)]))))
+                        if perf_counter()-last_log >= 5:
+                            print(json.dumps({'pair_block': [begin+1, stop], 'completed_locations': last, 'locations': ns}), flush=True)
+                            last_log = perf_counter()
+                    for j, values in enumerate(worst):
+                        if values:
+                            errors[j] = max(values)
+                            if max(values) > TOLERANCE_M: raise ValueError('Solid-Earth interpolation error exceeds 10 micrometres; refine grid')
+            for t in (() if pair_geometry else range(begin, stop)):
                 worst = []
-                if pair_geometry:
-                    with h5py.File(observations) as source:
-                        e = source['early'][:, t]
-                        l = source['late'][:, t]
-                        g = source['geometry_by_pair'][:, t]
-                    rows = np.flatnonzero(finite & np.isfinite(e+l))
-                    if len(rows):
-                        delta = value(l[rows]*86400., lat[rows], lon[rows])-value(e[rows]*86400., lat[rows], lon[rows])
-                        block[rows, t-begin] = np.einsum('sci,si->sc', g[rows], delta)
-                        if t % 10 == 0:
-                            for s in np.linspace(0, len(rows)-1, min(8, len(rows)), dtype=int):
-                                r = rows[s]
-                                point = exact(l[r]*86400., lat[r], lon[r])-exact(e[r]*86400., lat[r], lon[r])
-                                worst.append(float(np.max(abs(point-delta[s]))))
-                    if worst:
-                        errors[t-begin] = max(worst)
-                        if max(worst) > TOLERANCE_M: raise ValueError('Solid-Earth interpolation error exceeds 10 micrometres; refine grid')
-                    continue
                 for burst in np.unique(owner):
                     rows = np.flatnonzero((owner == burst) & finite & np.isfinite(early[:, t]+late[:, t]))
                     if not len(rows):

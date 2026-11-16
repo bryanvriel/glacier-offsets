@@ -12,6 +12,7 @@ import logging
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 import h5py
 
@@ -77,13 +78,22 @@ def prepare_solid_earth(cache_directory, observations, execution, stop_after=Non
         if stop_after is not None:
             command += ['--stop-after', str(stop_after)]
         logging.info('Running PySolid worker with %s', python)
-        process = subprocess.run(command, capture_output=True, text=True)
-        for line in process.stdout.splitlines()[-1:]:
-            logging.info('Solid-Earth worker: %s', line)
-        if process.returncode == 130:
+        with tempfile.TemporaryFile(mode='w+t') as errors:
+            with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=errors, text=True) as process:
+                try:
+                    for line in process.stdout:
+                        logging.info('Solid-Earth worker: %s', line.rstrip())
+                    code = process.wait()
+                except BaseException:
+                    process.terminate()
+                    process.wait()
+                    raise
+            errors.seek(0)
+            detail = errors.read()
+        if code == 130:
             raise Interrupted('Solid-Earth correction interrupted; rerun to resume')
-        if process.returncode:
-            raise ValueError(process.stderr.strip().splitlines()[-1] if process.stderr.strip() else 'Solid-Earth worker failed')
+        if code:
+            raise ValueError(detail.strip().splitlines()[-1] if detail.strip() else 'Solid-Earth worker failed')
         with h5py.File(partial/SOLID_EARTH, 'r') as h:
             if h.attrs.get('status') != 'complete':
                 raise ValueError('Solid-Earth worker did not complete its output')

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import h5netcdf
+import h5py
 import numpy as np
 from pyproj import CRS
 
@@ -30,29 +31,38 @@ class NisarCollection:
     """GOFF map locations; repeated frames do not create extra measurements."""
     mission = 'NISAR'
 
-    def __init__(self, paths, start=None, end=None):
+    def __init__(self, paths, start=None, end=None, *, cache_directory=None, verified_inputs=None):
         self.paths = sorted([Path(p).resolve() for p in paths], key=str)
         self.start = -np.inf if start is None else float(utc_days(start))
         self.end = np.inf if end is None else float(utc_days(end))
         self.stack = ExitStack()
+        self.cache_directory = cache_directory
+        self.verified_inputs = {str(Path(i['path']).resolve()): i for i in (verified_inputs or [])}
 
     def __enter__(self):
         try:
             if len(set(self.paths)) != len(self.paths): raise ValueError('Duplicate package paths')
             self.handles = [self.stack.enter_context(h5netcdf.File(p)) for p in self.paths]
+            self.raw_handles = [self.stack.enter_context(h5py.File(p)) for p in self.paths]
+            self.datasets = {}
             self.sources = []; self.members = []; self.pairs = []; ids = set(); signatures = []
             self.revisions = [revision(p) for p in self.paths]
             for fi, (path, h) in enumerate(zip(self.paths, self.handles)):
                 if not is_nisar(h): raise ValueError('Joint NISAR/Sentinel-1 fitting is not supported')
                 if h.attrs.get('source', 'raw') != 'raw': raise ValueError('Sentinel-1 swath corrections are not supported on NISAR packages')
-                validate_nisar(path)
+                if self.cache_directory is None:
+                    validate_nisar(path)
+                    sha = digest(path)
+                else:
+                    from .nisar_validation import verified_nisar
+                    sha = verified_nisar(path, self.cache_directory, self.verified_inputs.get(str(path)))
                 if 'tidal_correction_available' not in h or 'tidal_correction_provenance_json' not in h:
                     raise ValueError('Ocean-tide correction provenance/availability is required')
                 if any('solid_earth' in k.lower() or 'body_tide' in k.lower() for k in (*h.attrs, *h.variables)):
                     raise ValueError('Solid-Earth correction must be applied exactly once at fitting')
                 spec = json.loads(text(h['provenance_json'][()]))
                 signatures.append((spec['frequency'], spec['polarization'], spec['layer'], tuple(spec['release'])))
-                self.sources.append({'path': str(path), 'sha256': digest(path), 'package_identity': h.attrs['package_identity'],
+                self.sources.append({'path': str(path), 'sha256': sha, 'package_identity': h.attrs['package_identity'],
                                      'correction_history': [text(h[k][()]) for k in h.variables if k.endswith('provenance_json') and k != 'provenance_json']})
                 for slot, pair in enumerate(h['pair_id'][:].astype(str)):
                     if pair in ids: raise ValueError(f'Duplicate pair ID: {pair}')
@@ -105,15 +115,19 @@ class NisarCollection:
         if dr0 >= dr1 or dc0 >= dc1: return result
         source = (slice(dr0-off[0], dr1-off[0]), slice(dc0-off[1], dc1-off[1]))
         dest = (slice(dr0-section[0].start, dr1-section[0].start), slice(dc0-section[1].start, dc1-section[1].start))
-        ds = h[name]
-        prefix = (member['slot'], slice(None)) if vector else (member['slot'],) if ds.dimensions[0] == 'time' else ()
+        key = (member['file'], name)
+        if key not in self.datasets:
+            self.datasets[key] = (self.raw_handles[member['file']][name], h[name].dimensions[0] == 'time')
+        ds, temporal = self.datasets[key]
+        prefix = (member['slot'], slice(None)) if vector else (member['slot'],) if temporal else ()
         result[(slice(None), *dest) if vector else dest] = ds[(*prefix, *source)]
         return result
 
-    def tile(self, section, indices=None):
+    def tile(self, section, indices=None, *, radar_only=False):
         selected = list(range(len(self.members))) if indices is None else list(indices)
         acquisition_pairs = {self.members[t]['acquisition_pair'] for t in selected}
-        out = {k: [] for k in ('early', 'late', 'data', 'data_ra', 'valid', 'snr', 'peak', 'inverse', 'geometry', 'tidal_range_bias', 'overlap_suppressed')}
+        keys = ('early', 'late', 'data_ra', 'valid', 'snr', 'peak', 'geometry', 'overlap_suppressed')
+        out = {k: [] for k in (keys if radar_only else (*keys, 'data', 'inverse', 'tidal_range_bias'))}
         candidates = frame_candidates(self.members, self.priority,
                                       lambda t: self.read(self.members[t], 'valid_mask', section) == 1,
                                       acquisition_pairs)
@@ -123,18 +137,22 @@ class NisarCollection:
             e, l = (e-EPOCH_SECONDS)/86400, (l-EPOCH_SECONDS)/86400
             geom = np.stack([np.moveaxis(self.read(r, k, section, vector=True), 0, -1) for k in ('range_sensitivity_enu', 'azimuth_sensitivity_enu')], -2)
             finite = np.isfinite(geom[..., :2]).all(axis=(-1, -2))
-            inv = np.linalg.pinv(np.where(finite[..., None, None], geom[..., :2], np.eye(2)))
             ra = np.stack([self.read(r, k, section) for k in ('range_displacement_m', 'azimuth_displacement_m')], -1)
-            data = np.einsum('...ij,...j->...i', inv, ra)
+            if not radar_only or 'horizontal_valid_mask' not in self.handles[r['file']]:
+                inv = np.linalg.pinv(np.where(finite[..., None, None], geom[..., :2], np.eye(2)))
+                data = np.einsum('...ij,...j->...i', inv, ra)
             good = candidates[t] & finite & np.isfinite(e+l) & (l > e) & (e >= self.start) & (l < self.end)
             good &= self.read(r, 'tidal_correction_available', section) == 1
             h = self.handles[r['file']]
             if 'horizontal_valid_mask' in h: good &= self.read(r, 'horizontal_valid_mask', section) == 1
-            good &= np.isfinite(data).all(-1)
-            for k, v in [('early', e), ('late', l), ('data', data), ('data_ra', ra), ('valid', good),
+            good &= np.isfinite(ra if radar_only and 'horizontal_valid_mask' in h else data).all(-1)
+            for k, v in [('early', e), ('late', l), ('data_ra', ra), ('valid', good),
                          ('snr', self.read(r, 'snr', section)), ('peak', self.read(r, 'correlation_peak', section)),
-                         ('inverse', inv), ('geometry', geom), ('tidal_range_bias', self.read(r, 'tidal_range_bias_m', section)),
+                         ('geometry', geom),
                          ('overlap_suppressed', (self.read(r, 'valid_mask', section) == 1) & ~candidates[t])]: out[k].append(v)
+            if not radar_only:
+                for k, v in [('data', data), ('inverse', inv), ('tidal_range_bias', self.read(r, 'tidal_range_bias_m', section))]:
+                    out[k].append(v)
         return {k: np.array(v) for k, v in out.items()}
 
     def observation_position(self, row, col): return float(self.x[col]), float(self.y[row])
@@ -155,7 +173,7 @@ class NisarCollection:
 
 def collect_nisar(paths, cache_directory):
     from .velocity_collection import calendar_year
-    with NisarCollection(paths) as c:
+    with NisarCollection(paths, cache_directory=cache_directory) as c:
         pairs = []
         for r in c.members:
             e, l = ((r[k]-EPOCH_SECONDS)/86400 for k in ('earlier', 'later'))
