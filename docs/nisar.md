@@ -123,6 +123,16 @@ covariance removes uncertainty availability without removing valid motion.
 
 ## Corrections and fitting
 
+`tools/build_grounded_control_regions.py` accepts a tide-corrected horizontal
+NISAR package with the same command-line arguments as Sentinel-1. It uses map
+locations, each cell's exact pair interval, horizontal validity, and the fitting
+collection's deterministic frame-overlap selection. Counts in `sources` and
+`supported_sources` refer to correlated map cells for NISAR, not independent
+radar observations. The existing grounded/slow thresholds apply, including at
+least 20 peak-supported observations per supported location; short records can
+therefore produce an empty regions file. Package provenance records the
+observation-support convention.
+
 CATS uses each location's own two endpoint times and pair geometry, changing
 range only. Missing modeled corrections retain input radar values with a separate
 availability mask; they are excluded from horizontal fitting support. Horizontal
