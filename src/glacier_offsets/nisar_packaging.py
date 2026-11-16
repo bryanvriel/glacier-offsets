@@ -1,9 +1,11 @@
 """Offline import of enriched NISAR GOFF subsets; native geometry is lazy."""
 import json
+from importlib.metadata import PackageNotFoundError, version
 import logging
 import os
 from pathlib import Path
 import tempfile
+from time import perf_counter
 
 import h5netcdf
 import h5py
@@ -14,6 +16,7 @@ from scipy.interpolate import RegularGridInterpolator
 from .displacement import NISAR_SCHEMA, text, valid_nisar_mask, covariance_valid, validate_nisar
 from .products import checksum, identity
 from .velocity_io import revision, serializable
+from .nisar_geometry import GeometryRunner
 
 
 METHOD = 'nisar-reference-enu-central-difference-v1'
@@ -191,9 +194,10 @@ def select_revisions(records, policy):
     return selected, sorted(superseded, key=lambda r: (r['granuleId'], r['path']))
 
 
-def package_nisar(paths, *, layer=1, output, force=False, revisions='error'):
-    from .packaging import variable, strings, timestamp, tiles, content_hashes
+def package_nisar(paths, *, layer=1, output, force=False, revisions='error', workers=None, geometry_cache=None):
+    from .packaging import variable, strings, timestamp, content_hashes
     from .tides import output_lock
+    started = perf_counter()
     destination = Path(output).expanduser().resolve()
     if destination.suffix != '.nc' or layer not in (1, 2, 3):
         raise ValueError('NISAR packaging needs a .nc output and layer 1, 2, or 3')
@@ -203,7 +207,12 @@ def package_nisar(paths, *, layer=1, output, force=False, revisions='error'):
         files.extend(sorted(p.glob('*.h5')) if p.is_dir() else [p])
     if not files or len(set(files)) != len(files) or any(not p.is_file() or p.suffix != '.h5' for p in files):
         raise ValueError('Select distinct completed .h5 subsets')
-    records = [inspect(p, layer) for p in files]
+    records = []
+    for i, p in enumerate(files):
+        phase = perf_counter()
+        logging.info('Inspecting/checksumming NISAR input %d/%d: %s', i+1, len(files), p.name)
+        records.append(inspect(p, layer))
+        logging.info('Inspected NISAR input %d/%d in %.1fs', i+1, len(files), perf_counter()-phase)
     if len({r['granuleId'] for r in records}) != len(records) or any(r['signature'] != records[0]['signature'] for r in records):
         raise ValueError('Duplicate granule or incompatible maturity/processing release')
     inspected = records
@@ -214,22 +223,41 @@ def package_nisar(paths, *, layer=1, output, force=False, revisions='error'):
     x = np.arange(min(r['x'][0] for r in records), max(r['x'][-1] for r in records)+40, 80.)
     y = np.arange(max(r['y'][0] for r in records), min(r['y'][-1] for r in records)-40, -80.)
     grid = {'epsg': 3031, 'shape': [len(y), len(x)], 'transform': [x[0]-40, 80., 0., y[0]+40, 0., -80.]}
+    implementation = {k: checksum(Path(__file__).with_name(k)) for k in ('nisar_packaging.py', 'nisar_geometry.py', 'displacement.py')}
+    dependencies = {}
+    for name in ('numpy', 'scipy', 'pyproj'):
+        try:
+            dependencies[name] = version(name)
+        except PackageNotFoundError:
+            dependencies[name] = None
+    try:
+        import isce3
+        dependencies['isce3'] = isce3.__version__
+    except ImportError:
+        dependencies['isce3'] = None
+    fingerprint = {'method': METHOD, 'implementation': implementation, 'dependencies': dependencies}
+    cache = (None if geometry_cache is False else Path(geometry_cache).expanduser().resolve()
+             if geometry_cache is not None else destination.parent/'.nisar-geometry-cache')
+    geometry = GeometryRunner(workers, cache, fingerprint)
     spec = {'schema': NISAR_SCHEMA, 'mission': 'NISAR', 'layer': layer, 'frequency': 'A', 'polarization': 'HH',
             'release': records[0]['signature'], 'grid': grid, 'geometry_method': METHOD,
-            'implementation': {k: checksum(Path(__file__).with_name(k)) for k in ('nisar_packaging.py', 'displacement.py')},
+            'implementation': implementation, 'geometry_dependencies': dependencies,
             'revision_selection': {'policy': revisions, 'superseded_inputs': superseded},
             'inputs': [{k: r[k] for k in ('granuleId', 'path', 'sha256')} for r in records]}
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with output_lock(destination.parent):
+    with output_lock(destination.parent), geometry:
         if destination.exists():
             with h5netcdf.File(destination) as old:
                 if old.attrs.get('schema_version') != NISAR_SCHEMA:
                     raise ValueError('Refusing to replace an unrelated file')
                 if old.attrs['package_identity'] == identity(spec) and not force:
+                    logging.info('Validating existing NISAR package for reuse: %s', destination)
                     return validate_nisar(destination) | {'reused': True, 'superseded_products': superseded}
             if not force:
                 raise ValueError('Output differs; choose another output or use --force')
         with tempfile.TemporaryDirectory(prefix='.nisar-package-', dir=destination.parent) as tmp:
+            logging.info('Packaging %d NISAR products with %d geometry worker(s); cache: %s',
+                         len(records), geometry.workers, cache if cache is not None else 'disabled')
             target = Path(tmp)/destination.name
             with h5netcdf.File(target, 'w') as out:
                 out.dimensions = {'time': len(records), 'y': len(y), 'x': len(x), 'enu': 3, 'bound': 2}
@@ -283,21 +311,15 @@ def package_nisar(paths, *, layer=1, output, force=False, revisions='error'):
                 for k, values, unit in [('observation_longitude', lon, 'degrees_east'), ('observation_latitude', lat, 'degrees_north')]:
                     variable(out, k, ('y', 'x'), values, units=unit)
                 for i, r in enumerate(records):
+                    product_started = perf_counter()
                     logging.info('Importing NISAR %s (%d/%d)', r['granuleId'], i+1, len(records))
                     with h5py.File(r['path'], 'r') as h:
-                        interps = interpolators(h)
                         out['source_metadata_json'][i] = metadata_json(h)
                         ro = int(round((y[0]-r['y'][0])/80)); co = int(round((r['x'][0]-x[0])/80))
                         out['input_mask'][i] = np.uint32(255)
-                        for sec in tiles((len(r['y']), len(r['x']))):
+                        for sec, a, mask, z, cube, native in geometry.tiles(h, r, layer):
                             dest = (slice(ro+sec[0].start, ro+sec[0].stop), slice(co+sec[1].start, co+sec[1].stop)); slot = (i, *dest)
-                            a = {k: h[f'layer{layer}/{k}'][sec] for k in VARIABLES}
                             for k in VARIABLES: out['source_'+k][slot] = a[k]
-                            mask, z = h['mask'][sec], h['surfaceHeight'][sec]
-                            px, py = np.meshgrid(r['x'][sec[1]], r['y'][sec[0]])
-                            pts = np.stack([z.ravel(), py.ravel(), px.ravel()], -1)
-                            cube = {k: f(pts) for k, f in interps.items()}
-                            native = native_geometry(h, pts, cube).reshape(*z.shape, 3, 3)
                             finite = np.isfinite(native).all(axis=(-1, -2))
                             cube_good = np.isfinite(np.stack(list(cube.values()), -1)).all(-1).reshape(z.shape)
                             geom = finite & cube_good & np.isfinite(z)
@@ -320,11 +342,24 @@ def package_nisar(paths, *, layer=1, output, force=False, revisions='error'):
                             for label, source, orbit in [('earlier', 'referenceZeroDopplerAzimuthTime', 'reference'), ('later', 'secondaryZeroDopplerAzimuthTime', 'secondary')]:
                                 epoch = utc(h['radarGrid/'+source].attrs['units'])
                                 out[label+'_observation_time'][slot] = cube[source].reshape(z.shape)+epoch
+                    logging.info('Imported NISAR product %d/%d in %.1fs', i+1, len(records), perf_counter()-product_started)
                 strings(out, 'provenance_json', (), json.dumps(spec, sort_keys=True))
+                phase = perf_counter()
+                logging.info('Hashing completed NISAR package arrays')
                 out.attrs['content_hashes_json'] = json.dumps(content_hashes(out), sort_keys=True)
+                logging.info('Package array hashing completed in %.1fs', perf_counter()-phase)
+            phase = perf_counter()
+            logging.info('Validating completed NISAR package')
             result = validate_nisar(target)
-            for r in inspected:
+            logging.info('Package validation completed in %.1fs', perf_counter()-phase)
+            phase = perf_counter()
+            for i, r in enumerate(inspected):
+                logging.info('Rechecking source checksum %d/%d: %s', i+1, len(inspected), r['granuleId'])
                 if list(revision(r['path'])) != r['revision'] or checksum(r['path']) != r['sha256']:
                     raise ValueError('Source subset changed during packaging')
+            logging.info('Source verification completed in %.1fs', perf_counter()-phase)
             os.replace(target, destination)
-        return result | {'path': str(destination), 'reused': False, 'superseded_products': superseded}
+        elapsed = perf_counter()-started
+        logging.info('Published NISAR package in %.1fs; %s', elapsed, geometry.stats)
+        return result | {'path': str(destination), 'reused': False, 'superseded_products': superseded,
+                         'performance': {'workers': geometry.workers, 'elapsed_seconds': elapsed, **geometry.stats}}

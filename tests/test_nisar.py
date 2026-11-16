@@ -147,9 +147,9 @@ class NisarTests(unittest.TestCase):
         (directory/'active.h5.part').write_bytes(b'incomplete')
         out = self.root/'package.nc'
         with patch('glacier_offsets.nisar_packaging.native_geometry', test_geometry):
-            result = package_nisar([directory], output=out)
+            result = package_nisar([directory], output=out, workers=1)
             self.assertEqual(result['shape'], [2, 2, 3])
-            self.assertTrue(package_nisar([directory], output=out)['reused'])
+            self.assertTrue(package_nisar([directory], output=out, workers=1)['reused'])
         with h5netcdf.File(out) as h:
             assert_allclose(h['range_displacement_m'][0, 0, :2], [-3, -3])
             self.assertTrue(np.isnan(h['range_displacement_m'][0, 1, 0]))
@@ -181,9 +181,9 @@ class NisarTests(unittest.TestCase):
             package_nisar([directory], output=out)
         self.assertFalse(out.exists())
         with patch('glacier_offsets.nisar_packaging.native_geometry', side_effect=test_geometry) as native:
-            report = package_nisar([old, new], output=out, revisions='latest')
+            report = package_nisar([old, new], output=out, revisions='latest', workers=1)
             self.assertEqual(native.call_count, 1)
-            self.assertTrue(package_nisar([new, old], output=out, revisions='latest')['reused'])
+            self.assertTrue(package_nisar([new, old], output=out, revisions='latest', workers=1)['reused'])
         self.assertEqual(report['pairs'], 1)
         self.assertEqual(report['superseded_products'][0]['granuleId'], base+'_001')
         with h5netcdf.File(out) as h:

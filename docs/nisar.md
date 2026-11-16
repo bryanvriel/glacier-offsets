@@ -42,6 +42,42 @@ superseded input checksums in package provenance and the command report. Source
 files are left intact. The highest counter is an explicit revision-selection
 policy, not a claim of better measurement accuracy.
 
+### Packaging speed and restart
+
+Native geometry runs in separate processes, using the available CPU count capped
+at four by default. `--workers N` sets the number explicitly; `--workers 1` uses
+the serial path. Work is queued in bounded 256x256 tiles and only the parent
+process writes the package. Mask-invalid cells, nonfinite offsets, missing heights
+and unavailable geometry cubes are screened before native solves. Invalid formal
+covariance alone does not exclude a cell. The symmetric +/-1 m calculation is
+unchanged for eligible cells; deliberately skipped cells have unavailable native
+geometry. Original masks, measurements and heights remain in the package.
+
+Completed geometry tiles are cached in `.nisar-geometry-cache` beside the output.
+The cache survives an interrupted import and `--force` package rebuilds. It is
+keyed by source checksum, matching layer, tile, method, implementation and geometry
+dependency versions; tiles are checksum-verified on every reuse and damaged tiles
+are rebuilt. Changes to source data or the implementation invalidate old entries.
+Atomic tile publication permits concurrent packages to share a cache safely;
+concurrent writers may redundantly compute the same tile. Final package locking,
+checksums, validation and atomic publication still apply.
+
+```bash
+glacier-offsets package --nisar-subsets /data/nisar/subsets \
+  --nisar-revisions latest --workers 8 --geometry-cache /scratch/nisar-geometry \
+  --output /data/nisar/displacements.nc
+```
+
+`--no-geometry-cache` disables both reading and writing the cache. The cache can
+be removed when no import is using it; the standalone package does not depend on
+it. Worker count and cache location do not change package identity. INFO logs
+show input inspection/checksumming, tile progress and approximate remaining time,
+computed/skipped/cached cell counts, product timings, output hashing, validation,
+and final source verification. The command report includes performance counters.
+Cache hits avoid native solves; importing arrays, compression and validation still
+take time. Small imports may run faster serially because process startup has a
+fixed cost.
+
 Each output contains one selected matching layer, frequency A and HH polarization.
 It may include different tracks and frames, but all inputs must have consistent
 maturity and processing release. Aligned EPSG:3031 80 m grids are placed on their

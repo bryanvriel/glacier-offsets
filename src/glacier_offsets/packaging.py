@@ -538,6 +538,11 @@ def main(argv=None):
     parser.add_argument('--layer', type=int, choices=(1, 2, 3), default=1)
     parser.add_argument('--nisar-revisions', choices=('error', 'latest'), default='error',
                         help='Duplicate GOFF revisions: reject (default) or choose the highest final counter')
+    parser.add_argument('--workers', type=int, help='NISAR geometry processes (default: available CPUs, capped at 4); use 1 for serial')
+    cache = parser.add_mutually_exclusive_group()
+    cache.add_argument('--geometry-cache', help='NISAR geometry cache directory (default: .nisar-geometry-cache beside output)')
+    cache.add_argument('--no-geometry-cache', dest='geometry_cache', action='store_const', const=False,
+                       help='Disable reading and writing the NISAR geometry cache')
     parser.add_argument('-o', '--output', help='Override packaging.output (relative to current directory)')
     parser.add_argument('--force', action='store_true', help='Rebuild only this package')
     args = parser.parse_args(argv)
@@ -550,10 +555,12 @@ def main(argv=None):
                 raise ValueError('NISAR packaging requires --output')
             from .nisar_packaging import package_nisar
             report = package_nisar(args.nisar_subsets, layer=args.layer, output=args.output, force=args.force,
-                                   revisions=args.nisar_revisions)
+                                   revisions=args.nisar_revisions, workers=args.workers, geometry_cache=args.geometry_cache)
         else:
             if args.nisar_revisions != 'error':
                 raise ValueError('--nisar-revisions applies only to --nisar-subsets')
+            if args.workers is not None or args.geometry_cache is not None:
+                raise ValueError('--workers and geometry cache options apply only to --nisar-subsets')
             report = package_stack(load_status_config(args.config), output=args.output, force=args.force)
         print(json.dumps(report, indent=2))
         return 0
