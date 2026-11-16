@@ -27,6 +27,21 @@ mutually exclusive with the existing Sentinel-1 stack CONFIG positional argument
 Publication is atomic and includes input revision/checksum checks and standalone
 validation. Identical validated outputs are reused.
 
+If a directory contains both `_001.h5` and `_002.h5` revisions of a product,
+the default is to report a conflict. To select the highest numeric final counter:
+
+```bash
+glacier-offsets package --nisar-subsets /data/nisar/subsets \
+  --nisar-revisions latest --layer 1 --output /data/nisar/displacements.nc
+```
+
+This applies only when granule IDs differ solely in that final counter. Different
+frames remain separate inputs; processing releases and other granule differences
+are not ranked automatically. Each selection is logged and recorded with the
+superseded input checksums in package provenance and the command report. Source
+files are left intact. The highest counter is an explicit revision-selection
+policy, not a claim of better measurement accuracy.
+
 Each output contains one selected matching layer, frequency A and HH polarization.
 It may include different tracks and frames, but all inputs must have consistent
 maturity and processing release. Aligned EPSG:3031 80 m grids are placed on their

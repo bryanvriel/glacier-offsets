@@ -12,7 +12,7 @@ import numpy as np
 from numpy.testing import assert_allclose, assert_array_equal
 
 from glacier_offsets.displacement import NISAR_SCHEMA, validate_nisar, valid_nisar_mask
-from glacier_offsets.nisar_packaging import package_nisar, CUBES, VARIABLES
+from glacier_offsets.nisar_packaging import package_nisar, select_revisions, CUBES, VARIABLES
 from glacier_offsets.packaging import variable, strings, timestamp, content_hashes
 from glacier_offsets.products import identity
 from glacier_offsets.velocity_basis import EPOCH_SECONDS, harmonic
@@ -165,6 +165,60 @@ class NisarTests(unittest.TestCase):
         with h5py.File(directory/'one.h5', 'a') as h: del h['surfaceHeight']
         with self.assertRaisesRegex(ValueError, 'regenerate'): package_nisar([directory], output=out, force=True)
         self.assertEqual(before, out.read_bytes())
+
+    def test_explicit_latest_revision_selection_and_provenance(self):
+        directory = self.root/'subsets'; directory.mkdir()
+        old, new = enriched(directory/'old.h5'), enriched(directory/'new.h5')
+        base = 'NISAR_L2_PR_GOFF_test_144'
+        for path, counter in [(old, '001'), (new, '002')]:
+            with h5py.File(path, 'a') as h:
+                del h['identification/granuleId']
+                h['identification/granuleId'] = np.bytes_(base+'_'+counter)
+                if counter == '002': h['layer1/slantRangeOffset'][:] = -7
+        before = {p: p.read_bytes() for p in (old, new)}
+        out = self.root/'package.nc'
+        with self.assertRaisesRegex(ValueError, '--nisar-revisions latest'):
+            package_nisar([directory], output=out)
+        self.assertFalse(out.exists())
+        with patch('glacier_offsets.nisar_packaging.native_geometry', side_effect=test_geometry) as native:
+            report = package_nisar([old, new], output=out, revisions='latest')
+            self.assertEqual(native.call_count, 1)
+            self.assertTrue(package_nisar([new, old], output=out, revisions='latest')['reused'])
+        self.assertEqual(report['pairs'], 1)
+        self.assertEqual(report['superseded_products'][0]['granuleId'], base+'_001')
+        with h5netcdf.File(out) as h:
+            self.assertEqual(h['pair_id'][:].astype(str).tolist(), [base+'_002'])
+            self.assertEqual(h['range_displacement_m'][0, 0, 0], -7)
+            spec = json.loads(h['provenance_json'][()].decode())
+            self.assertEqual(spec['revision_selection']['policy'], 'latest')
+            self.assertEqual(spec['revision_selection']['superseded_inputs'], report['superseded_products'])
+            self.assertEqual(h.attrs['superseded_product_count'], 1)
+        for p in (old, new): self.assertEqual(before[p], p.read_bytes())
+
+    def test_revision_selection_does_not_rank_other_granule_changes(self):
+        def row(name, frame='122'):
+            return {'granuleId': name, 'trackNumber': '154', 'frameNumber': frame,
+                    'referenceAbsoluteOrbitNumber': '1', 'secondaryAbsoluteOrbitNumber': '2',
+                    'path': name+'.h5', 'sha256': name}
+        a = row('product_P05023_N_F_J_001')
+        b = row('product_P05023_N_P_J_002')
+        with self.assertRaisesRegex(ValueError, 'beyond their final revision counter'):
+            select_revisions([a, b], 'latest')
+        # Distinct frames remain available for spatial overlap handling later.
+        selected, skipped = select_revisions([a, row('other_002', '123')], 'latest')
+        self.assertEqual(len(selected), 2); self.assertEqual(skipped, [])
+        with self.assertRaisesRegex(ValueError, 'Ambiguous'):
+            select_revisions([a, a.copy()], 'latest')
+        selected, skipped = select_revisions([a, row('product_P05023_N_F_J_010'), row('product_P05023_N_F_J_002')], 'latest')
+        self.assertEqual(selected[0]['granuleId'], 'product_P05023_N_F_J_010')
+        self.assertEqual(len(skipped), 2)
+
+    def test_revision_policy_cli_dispatch(self):
+        from glacier_offsets.packaging import main
+        with patch('glacier_offsets.nisar_packaging.package_nisar', return_value={'status': 'complete'}) as importer:
+            self.assertEqual(main(['--nisar-subsets', '/example/subsets', '--nisar-revisions', 'latest', '--output', '/example/out.nc']), 0)
+            self.assertEqual(importer.call_args.kwargs['revisions'], 'latest')
+        self.assertEqual(main(['stack.yaml', '--nisar-revisions', 'latest']), 2)
 
     def test_frame_overlap_ownership_and_reprocessed_rejection(self):
         from glacier_offsets.nisar_collection import NisarCollection, collect_nisar

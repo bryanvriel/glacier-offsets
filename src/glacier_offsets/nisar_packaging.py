@@ -151,7 +151,47 @@ def native_geometry(h, points, interpolated):
     return result
 
 
-def package_nisar(paths, *, layer=1, output, force=False):
+def select_revisions(records, policy):
+    """Resolve only counter revisions of otherwise identical granule IDs.
+
+    The counter is a selection rule, not an accuracy ranking. Different release,
+    mode, coverage/accuracy flags or acquisition identifiers remain ambiguous.
+    """
+    if policy not in ('error', 'latest'):
+        raise ValueError('NISAR revision policy must be error or latest')
+    groups = {}
+    for record in records:
+        key = tuple(record[k] for k in ('trackNumber', 'frameNumber', 'referenceAbsoluteOrbitNumber', 'secondaryAbsoluteOrbitNumber'))
+        groups.setdefault(key, []).append(record)
+    selected, superseded = [], []
+    for key, candidates in sorted(groups.items()):
+        if len(candidates) == 1:
+            selected.extend(candidates)
+            continue
+        names = ', '.join(sorted(r['granuleId'] for r in candidates))
+        detail = f'track {key[0]}, frame {key[1]}, reference/secondary orbits {key[2]}/{key[3]}: {names}'
+        if policy == 'error':
+            raise ValueError('Conflicting reprocessed copies of the same acquisition pair/frame; '+detail+
+                             '. Use --nisar-revisions latest to select the highest final counter, or provide explicit files')
+        parsed = [r['granuleId'].rpartition('_') for r in candidates]
+        if any(not sep or not counter.isdigit() for _, sep, counter in parsed) or len({base for base, _, _ in parsed}) != 1:
+            raise ValueError('Conflicting reprocessed products differ beyond their final revision counter; '+detail+
+                             '. Select the intended input files explicitly')
+        counters = [int(counter) for _, _, counter in parsed]
+        if len(set(counters)) != len(counters):
+            raise ValueError('Ambiguous duplicate revision counter; '+detail)
+        winner = candidates[int(np.argmax(counters))]
+        selected.append(winner)
+        for r in candidates:
+            if r is winner:
+                continue
+            item = {k: r[k] for k in ('granuleId', 'path', 'sha256')}
+            item['selected_granule'] = winner['granuleId']
+            superseded.append(item)
+    return selected, sorted(superseded, key=lambda r: (r['granuleId'], r['path']))
+
+
+def package_nisar(paths, *, layer=1, output, force=False, revisions='error'):
     from .packaging import variable, strings, timestamp, tiles, content_hashes
     from .tides import output_lock
     destination = Path(output).expanduser().resolve()
@@ -166,9 +206,10 @@ def package_nisar(paths, *, layer=1, output, force=False):
     records = [inspect(p, layer) for p in files]
     if len({r['granuleId'] for r in records}) != len(records) or any(r['signature'] != records[0]['signature'] for r in records):
         raise ValueError('Duplicate granule or incompatible maturity/processing release')
-    acquisition_frames = [(r['trackNumber'], r['frameNumber'], r['referenceAbsoluteOrbitNumber'], r['secondaryAbsoluteOrbitNumber']) for r in records]
-    if len(set(acquisition_frames)) != len(acquisition_frames):
-        raise ValueError('Conflicting reprocessed copies of the same acquisition pair/frame')
+    inspected = records
+    records, superseded = select_revisions(records, revisions)
+    for r in superseded:
+        logging.warning('Selecting %s instead of %s (highest revision counter)', r['selected_granule'], r['granuleId'])
     records.sort(key=lambda r: ((r['earlier']+r['later'])/2, r['granuleId']))
     x = np.arange(min(r['x'][0] for r in records), max(r['x'][-1] for r in records)+40, 80.)
     y = np.arange(max(r['y'][0] for r in records), min(r['y'][-1] for r in records)-40, -80.)
@@ -176,6 +217,7 @@ def package_nisar(paths, *, layer=1, output, force=False):
     spec = {'schema': NISAR_SCHEMA, 'mission': 'NISAR', 'layer': layer, 'frequency': 'A', 'polarization': 'HH',
             'release': records[0]['signature'], 'grid': grid, 'geometry_method': METHOD,
             'implementation': {k: checksum(Path(__file__).with_name(k)) for k in ('nisar_packaging.py', 'displacement.py')},
+            'revision_selection': {'policy': revisions, 'superseded_inputs': superseded},
             'inputs': [{k: r[k] for k in ('granuleId', 'path', 'sha256')} for r in records]}
     destination.parent.mkdir(parents=True, exist_ok=True)
     with output_lock(destination.parent):
@@ -184,7 +226,7 @@ def package_nisar(paths, *, layer=1, output, force=False):
                 if old.attrs.get('schema_version') != NISAR_SCHEMA:
                     raise ValueError('Refusing to replace an unrelated file')
                 if old.attrs['package_identity'] == identity(spec) and not force:
-                    return validate_nisar(destination) | {'reused': True}
+                    return validate_nisar(destination) | {'reused': True, 'superseded_products': superseded}
             if not force:
                 raise ValueError('Output differs; choose another output or use --force')
         with tempfile.TemporaryDirectory(prefix='.nisar-package-', dir=destination.parent) as tmp:
@@ -196,6 +238,7 @@ def package_nisar(paths, *, layer=1, output, force=False):
                                  observation_support='geocoded_cell', geocoding_resampling='bilinear',
                                  matching_layer=layer, frequency='A', polarization='HH', geometry_method=METHOD,
                                  data_maturity=records[0]['maturity'],
+                                 revision_policy=revisions, superseded_product_count=len(superseded),
                                  axis_sign='later-minus-earlier; positive range away from sensor; positive azimuth increasing sensing time',
                                  spatial_support='correlated matching windows and bilinear resampling; center-based geometry linearization')
                 for k, a in [('x', x), ('y', y)]:
@@ -280,8 +323,8 @@ def package_nisar(paths, *, layer=1, output, force=False):
                 strings(out, 'provenance_json', (), json.dumps(spec, sort_keys=True))
                 out.attrs['content_hashes_json'] = json.dumps(content_hashes(out), sort_keys=True)
             result = validate_nisar(target)
-            for r in records:
+            for r in inspected:
                 if list(revision(r['path'])) != r['revision'] or checksum(r['path']) != r['sha256']:
                     raise ValueError('Source subset changed during packaging')
             os.replace(target, destination)
-        return result | {'path': str(destination), 'reused': False}
+        return result | {'path': str(destination), 'reused': False, 'superseded_products': superseded}
