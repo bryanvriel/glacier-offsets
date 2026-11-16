@@ -150,6 +150,9 @@ def _fill(path, manifest, handles, owner, rows, cols, chunk, hook=None):
 
 def prepare_observations(cache_directory, manifest, chunk=8, hook=None):
     """Build or verify the observation artifact; return (artifact, record)."""
+    if manifest.get('mission') == 'NISAR':
+        from .nisar_velocity import prepare_nisar_observations
+        return prepare_nisar_observations(cache_directory, manifest, chunk, hook)
     artifact = observation_artifact(cache_directory, manifest)
     record = artifact.complete()
     if record is not None:

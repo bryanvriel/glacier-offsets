@@ -378,6 +378,10 @@ def write_package(path, cfg, frame, grid, pairs, omitted, center, association, o
 
 def validate_package(path):
     """Validate the standalone schema and observation consistency, without stack access."""
+    from .displacement import is_nisar, validate_nisar
+    with h5netcdf.File(path, 'r') as profile:
+        if is_nisar(profile):
+            return validate_nisar(path)
     with h5netcdf.File(path, 'r') as h:
         if h.attrs.get('schema_version') != SCHEMA:
             raise ValueError('Unsupported displacement package schema')
@@ -529,13 +533,23 @@ def package_stack(cfg, *, output=None, force=False):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog='glacier-offsets package', description=__doc__)
-    parser.add_argument('config')
+    parser.add_argument('config', nargs='?')
+    parser.add_argument('--nisar-subsets', nargs='+', help='Enriched GOFF subset directories or completed .h5 files')
+    parser.add_argument('--layer', type=int, choices=(1, 2, 3), default=1)
     parser.add_argument('-o', '--output', help='Override packaging.output (relative to current directory)')
     parser.add_argument('--force', action='store_true', help='Rebuild only this package')
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
     try:
-        report = package_stack(load_status_config(args.config), output=args.output, force=args.force)
+        if bool(args.config) == bool(args.nisar_subsets):
+            raise ValueError('Provide either CONFIG or --nisar-subsets, exclusively')
+        if args.nisar_subsets:
+            if not args.output:
+                raise ValueError('NISAR packaging requires --output')
+            from .nisar_packaging import package_nisar
+            report = package_nisar(args.nisar_subsets, layer=args.layer, output=args.output, force=args.force)
+        else:
+            report = package_stack(load_status_config(args.config), output=args.output, force=args.force)
         print(json.dumps(report, indent=2))
         return 0
     except KeyboardInterrupt:

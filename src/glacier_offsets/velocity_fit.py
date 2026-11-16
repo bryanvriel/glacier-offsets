@@ -93,6 +93,9 @@ def covariance_ra(noise, snr, peak, quality=False, pair_ids=None, *, return_diag
     to the selected model's rectangular training bounds, not transfer validation.
     Pair-aware calibration applies the same policy before its covariance map.
     """
+    if 'by_group' in noise:
+        from .nisar_fit import grouped_covariance
+        return grouped_covariance(noise, snr, peak, quality, pair_ids, return_diagnostics)
     baseline = np.asarray(noise['covariance_ra_m2'], float)
     if baseline.shape != (2, 2) or not np.isfinite(baseline).all() or np.linalg.eigvalsh(baseline).min() <= 0:
         raise ValueError('Control covariance must be finite positive definite')

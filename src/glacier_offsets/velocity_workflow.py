@@ -33,7 +33,7 @@ RUN_MANIFEST = 'run-manifest.json'
 FIT_FILE = 'source_coefficients.h5'
 FIT_PARTIAL = 'source_coefficients.partial.h5'
 FIT_MODULES = ('velocity_pixel_general', 'velocity_basis', 'velocity_temporal', 'velocity_systematics', 'velocity_quality',
-               'velocity_vertical', 'velocity_pair_noise')
+               'velocity_vertical', 'velocity_pair_noise', 'nisar_velocity', 'displacement')
 STAGES = 'stages'
 
 
@@ -128,7 +128,8 @@ def fit_recipe(config, layout, artifacts, year_minimums=None):
             'corrections': config['corrections'],
             'model': 'independent local along-flow Msf C/S + shared residual vertical M2/O1 height C/S; '
                      'annual EN secular velocities integrated over exact endpoint overlaps; annual azimuth order offsets',
-            'comparator': 'direct satellite-azimuth Msf with annual secular/order terms',
+            'comparator': ('separate direct satellite-azimuth Msf fits per NISAR track' if getattr(layout, 'mission', None) == 'NISAR'
+                           else 'direct satellite-azimuth Msf with annual secular/order terms'),
             'screen': (f"peak>={s['min_peak']:g}; no fixed metre cuts; full-model Huber cutoff={s['robust_cutoff']:g} "
                        'in whitened residual units' if config['noise']['mode']=='pair' else
                        f"peak>={s['min_peak']:g} and acquisition-purged order-aware RA residual<="
@@ -146,7 +147,8 @@ def fit_recipe(config, layout, artifacts, year_minimums=None):
             'standard_coverage': f"same and >={c['min_pairs_standard']} total clean pairs",
             'flow_axis': 'robust order-removed EN velocity per year, equally averaged over years; fixed during each point fit',
             'direction_change': 'maximum pairwise annual secular direction change; zero for one year',
-            'covariance': ('pair-specific control RA covariance; final robust weights held fixed for cluster diagnostics'
+            'covariance': ('track/year empirical RA covariance resolved per pair' if config['noise'].get('group_by') == 'track_year' else
+                          'pair-specific control RA covariance; final robust weights held fixed for cluster diagnostics'
                            if config['noise']['mode']=='pair' else
                            'annual RA covariance assigned by pair calendar-midpoint year; constant within a year'),
             'diagnostic_uncertainty': f"pointwise {parameters['uncertainty']['cluster_days']:g}-day calendar-cluster sandwich, CR1; "
@@ -176,9 +178,17 @@ def _create_fit(path, h, layout, covariances, recipe_sha, ns):
                  'fit_support': ((ns,), '?'), 'standard_coverage': ((ns,), '?'), 'flow_axis_EN': ((ns, 2), 'f8'),
                  'robust_velocity_EN_by_year': ((ns, ny, 2), 'f8'), 'mean_flow_speed': ((ns,), 'f4'),
                  'year_direction_change_deg': ((ns,), 'f4'), 'azimuth_flow_projection_by_year': ((ns, ny), 'f4')}
+        if h.attrs.get('mission') == 'NISAR':
+            tracks = np.unique(h['track'][:]); result['track'] = tracks
+            specs['azimuth_flow_projection_by_track_year'] = ((ns, len(tracks), ny), 'f4')
         for name, (shape, dtype) in specs.items():
             result.create_dataset(name, shape, dtype=dtype, **options)
-        for model in MODELS:
+        models = MODELS
+        if h.attrs.get('mission') == 'NISAR':
+            result.attrs['mission'] = 'NISAR'
+            result.attrs['azimuth_comparator_policy'] = 'separate by track; pooled azimuth_direct is intentionally unavailable'
+            models += tuple(f'azimuth_track_{t:03d}' for t in np.unique(h['track'][:]))
+        for model in models:
             names = layout.names(model)
             p = len(names)
             group = result.create_group(model)
@@ -277,7 +287,8 @@ def run_workflow(config_path, stages='run', interrupt=None, batch_size=None, rem
         problems = impossible_settings(config, pairs_by_year, manifest['span_days'], year_minimums)
         if config['noise']['mode'] == 'supplied':
             supplied, _ = read_supplied(config['noise']['files'])
-            absent = [y for y in manifest['years'] if y not in supplied]
+            required = sorted({p['noise_group'] for p in manifest['pairs']}) if manifest.get('mission') == 'NISAR' else manifest['years']
+            absent = [y for y in required if y not in supplied]
             if absent:
                 problems.append(f'supplied noise has no covariance for observed year(s) {absent}')
         elif config['noise']['mode'] == 'pair':

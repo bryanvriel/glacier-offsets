@@ -24,8 +24,8 @@ from .velocity_pixel_general import MODELS, Layout, coverage, screen, solve
 
 # Grounded slow blocks (empirical null) and floating blocks, by CATS response and speed.
 CLASS_DEFAULTS = {'null_max_response': .02, 'null_max_speed': .1, 'floating_min_response': .5}
-PAIR_KEYS = ('order', 'year_index', 'calendar_early', 'calendar_late', 'within_year', 'file_index')
-SOURCE_PAIR_KEYS = ('early', 'late', 'data', 'peak', 'valid')
+PAIR_KEYS = ('order', 'year_index', 'calendar_early', 'calendar_late', 'within_year', 'file_index', 'track', 'reference_acquisition', 'secondary_acquisition')
+SOURCE_PAIR_KEYS = ('early', 'late', 'data', 'peak', 'valid', 'geometry_by_pair')
 
 
 def artifact_paths(result, cache=None):

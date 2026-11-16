@@ -51,7 +51,9 @@ class Layout:
         index = h['year_index'][:]
         order = h['order'][:]
         spacecraft = json.loads(h.attrs['order_spacecraft_json']) if 'order_spacecraft_json' in h.attrs else None
-        return cls(years, [y for k, y in enumerate(years) if np.any(order[index == k] != 0)], spacecraft)
+        result = cls(years, [y for k, y in enumerate(years) if np.any(order[index == k] != 0)], spacecraft)
+        result.mission = h.attrs.get('mission', 'Sentinel-1')
+        return result
 
     @property
     def joint_names(self):
@@ -103,12 +105,21 @@ def load_field(h, body, index, remove_mixed_windows=False):
     for k in ('order', 'year_index', 'calendar_early', 'calendar_late', 'within_year', 'file_index'):
         field[k] = h[k][:]
     field['order'] = field['order'].astype(float)
-    field['geometry_by_file'] = h['geometry_by_file'][:, index]
+    if 'geometry_by_pair' in h:
+        field['geometry_by_pair'] = h['geometry_by_pair'][index]
+        field['track'] = h['track'][:]
+        field['mission'] = 'NISAR'
+        for k in ('reference_acquisition', 'secondary_acquisition'):
+            if k in h: field[k] = h[k][:].astype(str)
+    else:
+        field['geometry_by_file'] = h['geometry_by_file'][:, index]
     return field
 
 
 def pair_geometry(field):
     """(source, pair, radar, ENU) geometry from each pair's own package."""
+    if 'geometry_by_pair' in field:
+        return field['geometry_by_pair']
     if 'geometry_by_file' in field:
         return np.moveaxis(field['geometry_by_file'][field['file_index']], 0, 1)
     return np.moveaxis(field['geometry_by_year'][field['year_index']], 0, 1)
@@ -167,6 +178,9 @@ def _angles(velocities):
 
 def screen(field, layout, screening):
     """Version-1 screen within each year; purged annual predictions across years."""
+    if field.get('mission') == 'NISAR':
+        from .nisar_velocity import screen_nisar
+        return screen_nisar(field, layout, screening)
     good = np.zeros_like(field['valid'])
     within = field['within_year'] if 'within_year' in field else np.ones(field['valid'].shape[1], bool)
     velocities, trainings = [], []
@@ -453,6 +467,10 @@ def coverage(field, layout, good, options):
 
 def projections(field, layout, axis):
     """Azimuth projection of the flow axis for each regime's geometry."""
+    if field.get('mission') == 'NISAR':
+        # RMS is descriptive only; joint NISAR display cuts use estimability.
+        p = np.einsum('sti,si->st', pair_geometry(field)[:, :, 1, :2], axis)
+        return np.stack([np.sqrt(np.nanmean(p[:, field['year_index'] == k]**2, axis=1)) for k in range(len(layout.years))], axis=1)
     return np.stack([np.einsum('si,si->s', regime_geometry(field, k)[:, 1, :2], axis)
                      for k in range(len(layout.years))], axis=1)
 
@@ -494,7 +512,8 @@ def fit_sources(h, body, layout, covariances, parameters, index):
               'year_direction_change_deg': angle, 'azimuth_flow_projection_by_year': projections(f, layout, axis)}
     fits = {}
     for model in MODELS:
-        fitted = solve(f, layout, good, axis, covariances, model, cluster_days=parameters['uncertainty']['cluster_days'],
+        fit_good = np.zeros_like(good) if f.get('mission') == 'NISAR' and model == 'azimuth_direct' else good
+        fitted = solve(f, layout, fit_good, axis, covariances, model, cluster_days=parameters['uncertainty']['cluster_days'],
                        robust_cutoff=s['robust_cutoff'], robust=s['robust'], robust_scale=s['robust_scale'])
         estimable = fitted['estimable'] & support['fit_support']
         fitted['estimable'] = estimable
@@ -502,4 +521,19 @@ def fit_sources(h, body, layout, covariances, parameters, index):
             if name != 'names' and np.issubdtype(np.asarray(value).dtype, np.floating):
                 fitted[name] = np.where(estimable.reshape((-1,)+(1,)*(np.ndim(value)-1)), value, np.nan)
         fits[model] = fitted
+    if f.get('mission') == 'NISAR':
+        from .velocity_quality import quiet_median
+        p = np.einsum('sti,si->st', pair_geometry(f)[:, :, 1, :2], axis)
+        values['azimuth_flow_projection_by_track_year'] = np.stack([
+            np.stack([quiet_median(np.where(good & (f['track'] == track)[None] & (f['year_index'] == k)[None], p, np.nan), axis=1)
+                      for k in range(len(layout.years))], axis=-1) for track in np.unique(f['track'])], axis=1)
+        for track in np.unique(f['track']):
+            take = good & (f['track'] == track)[None]
+            fitted = solve(f, layout, take, axis, covariances, 'azimuth_direct', cluster_days=parameters['uncertainty']['cluster_days'],
+                           robust_cutoff=s['robust_cutoff'], robust=s['robust'], robust_scale=s['robust_scale'])
+            fitted['estimable'] &= coverage(f, layout, take, c)['fit_support']
+            for name, value in fitted.items():
+                if name != 'names' and np.issubdtype(np.asarray(value).dtype, np.floating):
+                    fitted[name] = np.where(fitted['estimable'].reshape((-1,)+(1,)*(np.ndim(value)-1)), value, np.nan)
+            fits[f'azimuth_track_{track:03d}'] = fitted
     return f, good, values, fits

@@ -152,6 +152,10 @@ paths to the new computer. See [portable references](README_DETAILED.md#transfer
 
 ## Correct and package a processed stack
 
+Enriched NISAR GOFF subsets can enter through `glacier-offsets package --nisar-subsets`.
+See [NISAR packaging and multitrack velocity fitting](docs/nisar.md) for the v2
+schema, corrections and examples for both fitting workflows.
+
 These steps are independently invoked. Use the corrections appropriate to your
 dataset and retain the source products needed by each step. Swath correction
 reads retained stack products; tidal correction and horizontal conversion read

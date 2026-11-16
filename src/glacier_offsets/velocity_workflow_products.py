@@ -195,6 +195,9 @@ def export_maps(view):
         a, sigma = joint['amplitude'][:], joint['amplitude_sigma'][:]
         masks = display_masks(estimable, azestimable, standard, speed, angle, projection, a, sigma,
                               joint['phase_sigma_deg'][:], display)
+        if fits.attrs.get('mission') == 'NISAR':
+            masks = display_masks(estimable, azestimable, standard, speed, angle, np.ones_like(projection), a, sigma,
+                                  joint['phase_sigma_deg'][:], display)
         coef, azcoef = joint['coefficients'][:], az['coefficients'][:]
         counts = fits['clean_pairs_by_year'][:]
         fields = {
@@ -215,6 +218,10 @@ def export_maps(view):
             'azimuth_target_condition': (az['target_condition'][:], '1'),
             'range_residual_rms': (joint['rms_m'][:, 0], 'm'), 'azimuth_residual_rms': (joint['rms_m'][:, 1], 'm'),
             'Msf_partial_R2': (joint['partial_r2'][:], '1'), 'calendar_clusters': (joint['calendar_clusters'][:], '1')}
+        for name in fits:
+            if name.startswith('azimuth_track_') and isinstance(fits[name], h5py.Group):
+                for key, unit in [('amplitude', 'm day-1'), ('phase_deg', 'degree'), ('amplitude_sigma', 'm day-1'), ('target_condition', '1')]:
+                    fields[name+'_'+key] = (fits[name][key][:], unit)
         for k, year in enumerate(view.years):
             fields[f'azimuth_flow_projection_{year}'] = (projection[:, k], '1')
             fields[f'clean_pairs_{year}'] = (counts[:, k], '1')
@@ -222,6 +229,9 @@ def export_maps(view):
             fields[f'north_velocity_{year}'] = (coef[:, col[f'north_velocity_{year}']], 'm day-1')
             if f'order_{year}' in col:
                 fields[f'order_displacement_{year}'] = (coef[:, col[f'order_{year}']], 'm')
+            if 'azimuth_flow_projection_by_track_year' in fits:
+                for t, track in enumerate(fits['track'][:]):
+                    fields[f'azimuth_flow_projection_T{track:03d}_{year}'] = (fits['azimuth_flow_projection_by_track_year'][:, t, k], '1')
         for name in ('M2', 'O1'):
             c, s = coef[:, col[f'vertical_{name}_C']], coef[:, col[f'vertical_{name}_S']]
             fields[f'residual_vertical_{name}_C'] = (c, 'm')
@@ -247,7 +257,8 @@ def export_maps(view):
                              vertical_basis='height endpoint differences, M2 and O1; coefficients in metres',
                              uncertainty=view.recipe['diagnostic_uncertainty'],
                              display_settings_json=json.dumps(display, sort_keys=True),
-                             spatial_fit='independent unique radar sources, copied native cells share source fits; no spatial smoothing',
+                             spatial_fit=('geocoded analysis locations; correlated GOFF cells; no spatial smoothing' if fits.attrs.get('mission') == 'NISAR'
+                                          else 'independent unique radar sources, copied native cells share source fits; no spatial smoothing'),
                              recipe_json=json.dumps(view.recipe, sort_keys=True))
             for name, v, dimension in [('x', x, 'x'), ('y', y, 'y')]:
                 variable = dst.create_variable(name, (dimension,), dtype='f8')
@@ -268,7 +279,7 @@ def export_maps(view):
                 variable = dst.create_variable(name, ('y', 'x'), dtype='u1', compression='gzip', compression_opts=2)
                 variable[:] = np.where(footprint, value[safe], False).astype('u1')
                 variable.attrs.update(units='1', grid_mapping='crs')
-            variable = dst.create_variable('source_observation_index', ('y', 'x'), dtype='i8', fillvalue=-1)
+            variable = dst.create_variable('analysis_location_index' if fits.attrs.get('mission') == 'NISAR' else 'source_observation_index', ('y', 'x'), dtype='i8', fillvalue=-1)
             variable[:] = np.where(footprint, view.source_id[safe], -1)
             for group, dimension in [('residual_vertical', 'parameter'), ('azimuth_direct', 'azimuth_parameter')]:
                 group_names = _names(fits[group])
@@ -473,6 +484,9 @@ def verify_v2(view):
                 raise ValueError('Stored flow axes do not reproduce')
             errors = {}
             for model in MODELS:
+                if h.attrs.get('mission') == 'NISAR' and model == 'azimuth_direct':
+                    if fits[model]['estimable'][:].any(): raise ValueError('Pooled NISAR azimuth comparator must be unavailable')
+                    continue
                 original = fits[model]['coefficients'][selected]
                 repeated = solve(f, view.layout, good, axis, covariances, model,
                                  cluster_days=parameters['uncertainty']['cluster_days'],
@@ -484,6 +498,17 @@ def verify_v2(view):
                 errors[model] = float(np.nanmax(abs(repeated['coefficients']-original)))
                 if errors[model] > 1e-9:
                     raise ValueError(f'{model} source fits do not reproduce ({errors[model]:.3g})')
+            if h.attrs.get('mission') == 'NISAR':
+                for track in np.unique(f['track']):
+                    name = f'azimuth_track_{track:03d}'
+                    take = good & (f['track'] == track)[None]
+                    repeated = solve(f, view.layout, take, axis, covariances, 'azimuth_direct',
+                                     cluster_days=parameters['uncertainty']['cluster_days'], robust_cutoff=parameters['screening']['robust_cutoff'],
+                                     robust=parameters['screening']['robust'], robust_scale=parameters['screening']['robust_scale'])
+                    original = fits[name]['coefficients'][selected]; finite = np.isfinite(original)
+                    error = float(np.max(abs(repeated['coefficients'][finite]-original[finite]))) if finite.any() else 0.
+                    if error > 1e-9: raise ValueError(f'{name} does not reproduce')
+                    errors[name] = error
             names = _names(fits['residual_vertical'])
             original = fits['residual_vertical/coefficients'][selected]
             residual = np.where(good[..., None], np.nan_to_num(f['data']-predict(f, view.layout, original, names, stored_axis)), 0.)

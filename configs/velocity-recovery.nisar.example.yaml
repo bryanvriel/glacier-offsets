@@ -1,0 +1,12 @@
+# Run inspect, review the proposed regions, then pilot and map in ice.
+inputs:
+  - /data/nisar/displacements_tide_corrected_horizontal.nc
+output: /data/nisar/velocity-pilot
+regions: /data/nisar/reviewed-regions.json
+noise:
+  mode: pair
+  control_points_per_region: 30
+  min_pair_blocks: 8
+  shrinkage_blocks: 20
+# NISAR spacecraft/swath calibration is not a Sentinel-1 calibration gate.
+# Predictive validation, recovery and pilot mapping gates still apply.

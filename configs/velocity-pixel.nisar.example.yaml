@@ -1,0 +1,23 @@
+# Run in ice, after package -> correct-tides -> to-horizontal.
+# All inputs must be NISAR, with the same layer, polarization and release.
+version: 2
+inputs:
+  - /data/nisar/displacements_tide_corrected_horizontal.nc
+cache_directory: /data/nisar/velocity-cache
+output: /data/nisar/velocity-results
+corrections:
+  ocean_tide: require_existing
+  solid_earth: true
+noise:
+  mode: controls
+  group_by: track_year
+  regions: /data/nisar/reviewed-regions.json
+  block_size_m: 3000
+# For supplied weights, use noise.mode: supplied and files: [noise.json].
+# JSON format: {"covariance_ra_m2_by_group": {"T075:2026": [[1,0],[0,1]], ...}}
+# For exact-package fit-velocity calibration, use mode: pair and file: pair-noise.json;
+# omit group_by/regions/block_size_m in pair mode.
+coverage:
+  min_span_days: 540
+execution:
+  solid_earth_python: /Users/briel/miniforge3/envs/isce3/bin/python

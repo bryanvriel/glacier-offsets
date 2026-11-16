@@ -17,7 +17,8 @@ def point_arrays(point, noise, weighting, take=None):
         good &= quality_rule(point['snr'], point['peak'])
     pair_ids = point['pair_id'][good] if 'pair_id' in point else None
     ra = covariance_ra(noise, point['snr'][good], point['peak'][good], weighting=='quality_robust', pair_ids)
-    covariance = point['inverse'][None] @ ra @ point['inverse'].T[None]
+    inverse = point['inverse'][good] if point['inverse'].ndim == 3 else point['inverse'][None]
+    covariance = inverse @ ra @ np.swapaxes(inverse, -1, -2)
     return point['early'][good], point['late'][good], point['data'][good], covariance, good
 
 
@@ -66,7 +67,7 @@ def control_residuals(points, *, excluded_region=None, train=None):
                 median = np.sum(data[subset]*(w*dt)[:, None], axis=0)/np.sum(w*dt*dt)
             index_test = index[test]
             predicted[index_test] = (late[index_test]-early[index_test])[:, None]*median
-        residual = (data-predicted) @ ra.T
+        residual = (np.einsum('tij,tj->ti', ra, data-predicted) if ra.ndim == 3 else (data-predicted) @ ra.T)
         take = valid & np.isfinite(residual).all(-1)
         if take.sum():
             residuals.extend(residual[take])
@@ -81,6 +82,9 @@ def control_residuals(points, *, excluded_region=None, train=None):
 
 
 def learn_noise(points, excluded_region=None, train=None, options=None):
+    if points and points[0].get('mission') == 'NISAR':
+        from .nisar_fit import learn_noise_nisar
+        return learn_noise_nisar(points, excluded_region, train, options)
     arrays = control_residuals(points, excluded_region=excluded_region, train=train)
     noise = calibrate_noise(*arrays[:4])
     if options and options['mode'] == 'pair':
@@ -336,7 +340,7 @@ def _noise_draw(rng, point, noise, residual_records,cache=None):
                                                pair_ids=point.get('pair_id')))
         if cache is not None:cache[('target',id(point))]=factor
     ra = np.einsum('nij,nj->ni', factor, sampled)
-    return ra @ point['inverse'].T
+    return (np.einsum('tij,tj->ti', point['inverse'], ra) if point['inverse'].ndim == 3 else ra @ point['inverse'].T)
 
 
 def _vertical(early, late, period, amplitude, phase):
@@ -430,12 +434,13 @@ def recovery(points, noise, selected, residual_records, draws=200, seed=12345, t
                         if 'vertical_fraction' in spec or spec.get('azimuth_tides'):
                             fraction = spec.get('vertical_fraction',1.)
                             vertical = _vertical(early,late,M2_PERIOD,.6*fraction,nuisance_phase)+_vertical(early,late,O1_PERIOD,.2*fraction,-nuisance_phase)
-                            projection = point['geometry'][:,2].copy()
+                            projection = point['geometry'][..., 2].copy()
                             if spec.get('azimuth_tides'):
-                                projection[0] = 0.
-                            truth += vertical[:,None]*(point['inverse'] @ projection)
+                                projection[..., 0] = 0.
+                            projected = (np.einsum('tij,tj->ti', point['inverse'], projection) if projection.ndim == 2 else point['inverse'] @ projection)
+                            truth += vertical[:,None]*projected
                         if 'tide_scale' in spec:
-                            truth += (1-spec['tide_scale'])*point['tidal_range_bias'][:,None]*point['inverse'][:,0]
+                            truth += (1-spec['tide_scale'])*point['tidal_range_bias'][:,None]*point['inverse'][..., 0]
                         if spec.get('calibration'):
                             # One shared calibration draw, not independent pixel noise.
                             truth += rng.normal()*point['calibration_std_en']

@@ -41,7 +41,7 @@ def propose(collection, directory, size_m=8000.):
     n_pairs = len(collection.pairs)
     counts = np.zeros(collection.shape, int)
     speed = np.full(collection.shape, np.nan)
-    for i, section in enumerate(collection.sections(128)):
+    for i, section in enumerate(collection.sections(32 if getattr(collection, 'mission', None) == 'NISAR' else 128)):
         if i%10==0:
             logging.info('Inspecting coverage tile %s', i+1)
         tile = collection.tile(section)
@@ -56,6 +56,13 @@ def propose(collection, directory, size_m=8000.):
     response = h['tidal_response_factor'][:] if 'tidal_response_factor' in h.variables else np.full(collection.shape, np.nan)
     height = h['height_m'][:] if 'height_m' in h.variables else np.full(collection.shape, np.nan)
     geom = h['horizontal_geometry_valid_mask'][:] if 'horizontal_geometry_valid_mask' in h.variables else np.isfinite(speed)
+    if getattr(collection, 'mission', None) == 'NISAR':
+        response = np.full(collection.shape, np.nan); height = response.copy(); geom = np.zeros(collection.shape, bool)
+        whole = (slice(0, collection.shape[0]), slice(0, collection.shape[1]))
+        for member in collection.members:
+            for key, dest in [('tidal_response_factor', response), ('height_m', height)]:
+                a = collection.read(member, key, whole); take = np.isfinite(a) & ~np.isfinite(dest); dest[take] = a[take]
+            geom |= collection.read(member, 'horizontal_geometry_valid_mask', whole) == 1
     dx, dy = np.median(abs(np.diff(collection.x))), np.median(abs(np.diff(collection.y)))
     rx, ry = max(1, int(size_m/dx/2)), max(1, int(size_m/dy/2))
     proposals = []
@@ -99,6 +106,12 @@ def propose(collection, directory, size_m=8000.):
                 break
         proposals.extend(selected)
     aliases = []
+    if getattr(collection, 'mission', None) == 'NISAR':
+        row, col = np.unravel_index(np.argmax(counts), counts.shape); point = collection.point(row, col); good = point['valid']
+        summary = alias_diagnostics(point['early'][good], point['late'][good])
+        summary.update(viewing_geometries_at_this_point=len(np.unique(point['track'][good])),
+                       interpretation='NISAR tracks observed at this common map location; correlated GOFF cells')
+        aliases.append({'row': int(row), 'col': int(col), 'sampling': summary})
     for burst in np.unique(collection.owner[collection.owner > 0]):
         take = collection.owner==burst
         representative = np.argmax(np.where(take, counts, -1))

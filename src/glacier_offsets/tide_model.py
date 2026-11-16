@@ -92,11 +92,16 @@ class Cats2008:
         import pyTMD
         # OTIS/TMD3 use UTC days since 1992-01-01 and zero delta-T, matching
         # pyTMD.compute.tide_elevations. This path needs no IERS/network lookup.
-        tide_days = np.array([(float(utc_seconds)-694224000.)/86400.])
+        tide_days = np.atleast_1d((np.asarray(utc_seconds, float)-694224000.)/86400.)
         local = self.local[self.metadata['constituents']].isel(point=indices)
+        paired = np.ndim(utc_seconds) != 0
+        if paired:
+            if tide_days.shape != (len(indices),):
+                raise ValueError('Paired tide times must match selected locations')
+            local = local.rename(point='time').assign_coords(time=tide_days+48622.)
         major = pyTMD.predict.time_series(tide_days, local, corrections='TMD3', deltat=0.)
         minor = pyTMD.predict.infer_minor(tide_days, local, corrections='TMD3', deltat=0.)
         tide = major+minor
-        result = np.asarray(tide.transpose('point', 'time').values[:, 0], dtype='float64')
+        result = np.asarray(tide.values if paired else tide.transpose('point', 'time').values[:, 0], dtype='float64')
         result[~self.available[indices]] = np.nan
         return result

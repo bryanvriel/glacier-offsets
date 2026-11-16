@@ -18,6 +18,7 @@ from .packaging import CALENDAR, TIME_UNITS, content_hashes, strings, tiles, val
 from .products import ChecksumCache, checksum, identity
 from .swath_correction import Inputs
 from .tide_model import Cats2008
+from .displacement import is_nisar, sensitivity
 
 METHOD = 'cats2008-vertical-range-v1'
 IMPLEMENTATION = {name: checksum(Path(__file__).with_name(name)) for name in ('tides.py', 'tide_model.py')}
@@ -47,6 +48,10 @@ def output_lock(parent):
 
 def observation_geometry(h):
     """Deduplicate copied map cells without treating them as independent data."""
+    if is_nisar(h):
+        shape = (len(h.dimensions['y']), len(h.dimensions['x']))
+        return np.arange(np.prod(shape)), {'longitude': h['observation_longitude'][:].ravel(),
+                                          'latitude': h['observation_latitude'][:].ravel()}
     association = h['source_observation_index'][:]
     supported = association >= 0
     ids, first = np.unique(association[supported], return_index=True)
@@ -70,6 +75,11 @@ def observation_geometry(h):
 
 def apply_tides(temp, source_spec, geometry, ids, model, recipe):
     """Change range only, retaining raw values where model predictions are absent."""
+    with h5netcdf.File(temp) as profile:
+        nisar = is_nisar(profile)
+    if nisar:
+        from .nisar_derived import apply_tides_nisar
+        return apply_tides_nisar(temp, source_spec, model, recipe)
     stats = {'corrected_cells': 0, 'uncorrected_valid_cells': 0, 'zero_response_cells': 0, 'max_abs_range_bias_m': 0.}
     with h5netcdf.File(temp, 'a') as h:
         original_hashes = json.loads(h.attrs['content_hashes_json'])
@@ -205,8 +215,8 @@ def validate_tidal_stack(path):
                 if not all(np.isfinite(a[take]).all() and np.isnan(a[~take]).all() for a in (early, late, delta, bias)):
                     raise ValueError('Tidal fields have inconsistent availability')
                 np.testing.assert_allclose(late[take]-early[take], delta[take], rtol=2e-6, atol=1e-6)
-                sensitivity = h['range_sensitivity_enu'][(up, *section)]
-                np.testing.assert_allclose(bias[take], delta[take]*sensitivity[take], rtol=2e-6, atol=1e-6)
+                g_up = sensitivity(h, 'range_sensitivity_enu', i, section)[up]
+                np.testing.assert_allclose(bias[take], delta[take]*g_up[take], rtol=2e-6, atol=1e-6)
                 np.testing.assert_allclose(raw[take].astype(float)-bias[take], corrected[take], rtol=2e-6, atol=2e-6)
         return result | {'correction': METHOD, 'tidal_correction_status': h.attrs['tidal_correction_status'], 'counts': record['counts']}
 
@@ -229,18 +239,20 @@ def correct_tides(source, model_path, *, output=None, response='model', force=Fa
             raise ValueError('Correct tides on the radar-component parent before horizontal conversion')
         if h.attrs.get('tidal_correction_method') or any(s.get('method') == METHOD for s in spec.get('postprocessing', [])):
             raise ValueError('Input already has an ocean-tide correction; use the uncorrected parent stack')
-        for key in ('earlier_burst_time', 'later_burst_time'):
+        for key in (('earlier_observation_time', 'later_observation_time') if is_nisar(h)
+                    else ('earlier_burst_time', 'later_burst_time')):
             if h[key].attrs.get('units') != TIME_UNITS or h[key].attrs.get('calendar') != CALENDAR:
                 raise ValueError('Tidal endpoints must use the package UTC Unix-seconds time convention')
         ids, geometry = observation_geometry(h)
         parent_identity = h.attrs['package_identity']
+        timing = 'per-cell exact UTC earlier/later sensing times' if is_nisar(h) else 'exact UTC earlier/later burst starts from netCDF, indexed by source burst'
     logging.info('Checking local CATS2008 model')
     model_digest = inputs.file(model_path)
     model = Cats2008(model_path, geometry['longitude'], geometry['latitude'], response=response)
     recipe = {'method': METHOD, 'implementation': IMPLEMENTATION, 'response': response,
               'input': {'path': str(source), 'sha256': source_digest, 'package_identity': parent_identity},
               'model_file': {'path': str(model_path), 'sha256': model_digest}, 'pyTMD_version': model.version,
-              'timing': 'exact UTC earlier/later burst starts from netCDF, indexed by source burst',
+              'timing': timing,
               'formula': 'range_corrected = range_input - (eta_later - eta_earlier) * range_sensitivity_enu[up]',
               'basis': 'slant_range', 'interpolation': 'linear complex harmonics; no extrapolation', 'infer_minor': True,
               'unavailable': 'retain_input_with_availability_zero', 'azimuth': 'unchanged'}

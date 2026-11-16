@@ -15,6 +15,7 @@ from .packaging import content_hashes, strings, tiles, validate_package, variabl
 from .products import ChecksumCache, checksum, identity
 from .swath_correction import Inputs
 from .tides import json_scalar, output_lock, validate_tidal_stack
+from .displacement import is_nisar
 
 METHOD = 'radar-to-local-horizontal-zero-up-v1'
 IMPLEMENTATION = {name: checksum(Path(__file__).with_name(name)) for name in ('horizontal.py', 'packaging.py')}
@@ -37,7 +38,7 @@ def settings(max_condition, max_azimuth_scale_ratio, vertical_motion):
 
 
 def input_contract(h):
-    if h.attrs.get('geocoding_resampling') != 'nearest':
+    if not is_nisar(h) and h.attrs.get('geocoding_resampling') != 'nearest':
         raise ValueError('Horizontal conversion requires a nearest-source displacement package')
     axes = h['enu'][:].astype(str).tolist()
     if len(axes) != 3 or set(axes) != {'east', 'north', 'up'}:
@@ -46,7 +47,7 @@ def input_contract(h):
         if h[key].attrs.get('units') != 'm':
             raise ValueError(f'{key} must use metres')
     for key in ('range_sensitivity_enu', 'azimuth_sensitivity_enu'):
-        if h[key].dimensions != ('enu', 'y', 'x') or h[key].attrs.get('units') != '1':
+        if h[key].dimensions != (('time', 'enu', 'y', 'x') if is_nisar(h) else ('enu', 'y', 'x')) or h[key].attrs.get('units') != '1':
             raise ValueError(f'Invalid sensitivity dimensions or units: {key}')
     covariance = all(key in h.variables for key in COVARIANCE_INPUTS)
     if covariance:
@@ -58,6 +59,13 @@ def input_contract(h):
 
 def scale_medians(h):
     """Normalize within each burst, counting each source observation once."""
+    if is_nisar(h):
+        result = {}
+        for i in range(len(h.dimensions['time'])):
+            a = h['azimuth_ground_spacing_m_per_slc_line'][i]
+            good = (h['geometry_valid_mask'][i] == 1) & np.isfinite(a) & (a > 0)
+            result[str(i)] = float(np.median(a[good])) if good.any() else None
+        return result
     association = h['source_observation_index'][:]
     supported = association >= 0
     ids, first = np.unique(association[supported], return_index=True)
@@ -151,6 +159,11 @@ def integer_variable(h, name, dimensions, *, masks=False, **attrs):
 
 
 def apply_horizontal(temp, source_spec, recipe):
+    with h5netcdf.File(temp) as profile:
+        nisar = is_nisar(profile)
+    if nisar:
+        from .nisar_derived import apply_horizontal_nisar
+        return apply_horizontal_nisar(temp, source_spec, recipe)
     counts = {'source_valid_cells': 0, 'converted_cells': 0, 'geometry_rejected_valid_cells': 0,
               'tidal_unavailable_valid_cells': 0, 'numeric_rejected_cells': 0, 'uncertainty_available_cells': 0}
     with h5netcdf.File(temp, 'a') as h:
@@ -221,6 +234,10 @@ def apply_horizontal(temp, source_spec, recipe):
 
 def validate_horizontal_stack(path):
     """Check converted measurements, original fields and geometry using one file."""
+    with h5netcdf.File(path) as profile:
+        if is_nisar(profile):
+            from .nisar_derived import validate_horizontal_nisar
+            return validate_horizontal_nisar(path)
     report = validate_package(path)
     with h5netcdf.File(path) as h:
         if h.attrs.get('horizontal_conversion_method') != METHOD:

@@ -96,6 +96,7 @@ def implementation():
     from .velocity_temporal import backend_fingerprints
     names = ('basis','temporal','pair_noise','fit','io','inspect','pilot','recovery','calibration')
     local = {f'velocity_{name}.py':digest(Path(__file__).with_name(f'velocity_{name}.py')) for name in names}
+    local.update({name: digest(Path(__file__).with_name(name)) for name in ('nisar_fit.py', 'nisar_collection.py', 'displacement.py')})
     return local | backend_fingerprints()
 
 
@@ -141,6 +142,8 @@ def run_recipe(cfg, collection):
 
 def calibration_gate(cfg, collection):
     """Require scientific validation evidence scoped to exact input corrections."""
+    if getattr(collection, 'mission', None) == 'NISAR':
+        return []  # No Sentinel-1 spacecraft/swath correction exists in this profile.
     if cfg['calibration_validation'] is None:
         return ['Spacecraft/swath calibration needs split-year and held-out validation evidence']
     with open(cfg['calibration_validation']) as stream:
@@ -410,7 +413,11 @@ def map_stage(cfg,collection):
                 continue
             if source not in cache:
                 point = {k:v[:,row,col] for k,v in tile.items() if k not in ('inverse','geometry')}
-                point['inverse'] = tile['inverse'][row,col]
+                point['inverse'] = tile['inverse'][:,row,col] if getattr(collection, 'mission', None) == 'NISAR' else tile['inverse'][row,col]
+                if getattr(collection, 'mission', None) == 'NISAR':
+                    point.update(geometry=tile['geometry'][:,row,col], mission='NISAR',
+                                 noise_group=np.array([r['noise_group'] for r in collection.members]),
+                                 track=np.array([r['track'] for r in collection.members]))
                 point['pair_id'] = np.array([p[2] for p in collection.pairs])
                 cache[source] = {}
                 for model,candidate in selected.items():
@@ -463,7 +470,7 @@ def _combine_maps(directory,collection,checkpoint,selected,cfg):
                     target[:] = collection.x
                 elif name=='y':
                     target[:] = collection.y
-                elif name=='source_observation_index':
+                elif name in ('source_observation_index', 'analysis_location_index'):
                     target[:] = source
                 elif v.dimensions[-2:]!=('y','x'):
                     target[...] = v[...]
@@ -475,7 +482,7 @@ def _combine_maps(directory,collection,checkpoint,selected,cfg):
                 section = tuple(slice(*s) for s in record['section'])
                 with h5netcdf.File(path) as tile:
                     for name,v in tile.variables.items():
-                        if v.dimensions[-2:]==('y','x') and name!='source_observation_index':
+                        if v.dimensions[-2:]==('y','x') and name not in ('source_observation_index', 'analysis_location_index'):
                             out[name][(...,*section)] = v[...]
             p = out['p_value'][:].ravel()
             valid = out['fit_valid'][:].ravel().astype(bool)

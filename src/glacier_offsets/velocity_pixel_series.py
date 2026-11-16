@@ -14,6 +14,8 @@ VERTICAL=('vertical_M2_C','vertical_M2_S','vertical_O1_C','vertical_O1_S')
 
 
 def _pair_geometry(field):
+    if 'geometry_by_pair' in field:
+        return field['geometry_by_pair']
     if 'geometry_by_file' in field:return np.moveaxis(field['geometry_by_file'][field['file_index']],0,1)
     return np.moveaxis(field['geometry_by_year'][field['year_index']],0,1)
 

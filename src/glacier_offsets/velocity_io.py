@@ -112,12 +112,19 @@ class Collection:
     """Read only netCDFs; pair IDs, not possibly duplicate midpoints, are keys."""
     def __init__(self, paths, start=None, end=None):
         self.paths = [Path(p).resolve() for p in paths]
+        self._start_value, self._end_value = start, end
         self.start = -np.inf if start is None else float(utc_days(start))
         self.end = np.inf if end is None else float(utc_days(end))
         self.stack = ExitStack()
 
     def __enter__(self):
         try:
+            from .displacement import is_nisar
+            with h5py.File(self.paths[0]) as profile:
+                if is_nisar(profile):
+                    from .nisar_collection import NisarCollection
+                    self._nisar = NisarCollection(self.paths, self._start_value, self._end_value)
+                    return self._nisar.__enter__()
             self.handles = [self.stack.enter_context(h5netcdf.File(p, 'r')) for p in self.paths]
             self.revisions = [revision(p) for p in self.paths]
             self.sources = []
@@ -200,6 +207,8 @@ class Collection:
             raise
 
     def __exit__(self, *args):
+        if hasattr(self, '_nisar'):
+            return self._nisar.__exit__(*args)
         self.stack.close()
 
     def check_revisions(self):
@@ -305,8 +314,10 @@ def save_fit(path, collection, results, parameterization, recipe):
                            vector_basis='local geographic east/north', uncertainty='model conditional; empirical RA noise; paired block draws reported separately',
                            recipe_json=json.dumps(serializable(recipe), sort_keys=True), recipe_identity=fingerprint(recipe),
                            basis_json=json.dumps(first['basis']), created_utc=datetime.now(timezone.utc).isoformat())
+            association_name = 'analysis_location_index' if getattr(collection, 'mission', None) == 'NISAR' else 'source_observation_index'
+            h.attrs['observation_support'] = 'geocoded_cell' if association_name == 'analysis_location_index' else 'native_source'
             for name, dim, data in [('x', ('x',), collection.x), ('y', ('y',), collection.y),
-                                    ('source_observation_index', ('y', 'x'), collection.association)]:
+                                    (association_name, ('y', 'x'), collection.association)]:
                 v = h.create_variable(name, dim, dtype=data.dtype)
                 v[:] = data
             crs = h.create_variable('crs', (), dtype='i4')

@@ -103,9 +103,9 @@ def load_workflow_config(path):
     mode = noise.get('mode')
     if mode not in NOISE_MODES:
         raise ValueError('noise.mode must be supplied, controls or pair')
-    if noise.get('group_by', 'year') != 'year':
-        raise ValueError('noise.group_by supports only year')
-    record = {'mode': mode, 'group_by': 'year'}
+    if noise.get('group_by', 'year') not in ('year', 'track_year'):
+        raise ValueError('noise.group_by supports year or track_year')
+    record = {'mode': mode, 'group_by': noise.get('group_by', 'year')}
     if mode == 'pair':
         if set(noise)-{'mode','file'}:
             raise ValueError('noise.mode: pair accepts only file')

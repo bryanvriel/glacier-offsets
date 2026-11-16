@@ -42,11 +42,13 @@ def run(observations, output, spacing, chunk=8, stop_after=None):
     with h5py.File(observations, 'r') as h:
         lat = h['latitude'][:]
         lon = h['longitude'][:]
-        early = h['early'][:]
-        late = h['late'][:]
+        pair_geometry = 'geometry_by_pair' in h
+        shape = h['early'].shape
+        early = None if pair_geometry else h['early'][:]
+        late = None if pair_geometry else h['late'][:]
         owner = h['owner'][:]
         files = h['file_index'][:]
-        geometry = h['geometry_by_file'][:]
+        geometry = None if pair_geometry else h['geometry_by_file'][:]
     finite, la0, lo0, nlat, nlon = grid_definition(lat, lon, spacing)
 
     @lru_cache(maxsize=80)
@@ -56,6 +58,14 @@ def run(observations, output, spacing, chunk=8, stop_after=None):
                                    la0, spacing, nlat, lo0, spacing, nlon), axis=-1)
 
     def value(seconds, la, lo):
+        if np.ndim(seconds):
+            seconds = np.asarray(seconds)
+            result = np.empty((len(seconds), 3))
+            for second in np.unique(np.floor(seconds)):
+                take = np.floor(seconds) == second
+                fraction = (seconds[take]-second)[:, None]
+                result[take] = value(float(second), la[take], lo[take])*(1-fraction)+value(float(second+1), la[take], lo[take])*fraction
+            return result
         lower = int(np.floor(seconds))
         fraction = seconds-lower
         a = grid(lower)*(1-fraction)+grid(lower+1)*fraction
@@ -78,7 +88,7 @@ def run(observations, output, spacing, chunk=8, stop_after=None):
                                          float(la), .01, 1, float(lo), .01, 1))[:, 0, 0])
         return v[0]*(1-fraction)+v[1]*fraction
 
-    ns, nt = early.shape
+    ns, nt = shape
     mode = 'r+'
     try:
         with h5py.File(output, 'r') as existing:
@@ -103,6 +113,24 @@ def run(observations, output, spacing, chunk=8, stop_after=None):
             errors = np.full(stop-begin, np.nan)
             for t in range(begin, stop):
                 worst = []
+                if pair_geometry:
+                    with h5py.File(observations) as source:
+                        e = source['early'][:, t]
+                        l = source['late'][:, t]
+                        g = source['geometry_by_pair'][:, t]
+                    rows = np.flatnonzero(finite & np.isfinite(e+l))
+                    if len(rows):
+                        delta = value(l[rows]*86400., lat[rows], lon[rows])-value(e[rows]*86400., lat[rows], lon[rows])
+                        block[rows, t-begin] = np.einsum('sci,si->sc', g[rows], delta)
+                        if t % 10 == 0:
+                            for s in np.linspace(0, len(rows)-1, min(8, len(rows)), dtype=int):
+                                r = rows[s]
+                                point = exact(l[r]*86400., lat[r], lon[r])-exact(e[r]*86400., lat[r], lon[r])
+                                worst.append(float(np.max(abs(point-delta[s]))))
+                    if worst:
+                        errors[t-begin] = max(worst)
+                        if max(worst) > TOLERANCE_M: raise ValueError('Solid-Earth interpolation error exceeds 10 micrometres; refine grid')
+                    continue
                 for burst in np.unique(owner):
                     rows = np.flatnonzero((owner == burst) & finite & np.isfinite(early[:, t]+late[:, t]))
                     if not len(rows):

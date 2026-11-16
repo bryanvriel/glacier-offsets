@@ -94,7 +94,13 @@ def read_supplied(entries):
                 raise ValueError(f'{path} has {len(values)} covariances but {len(labels)} YAML year labels')
             labeled = dict(zip(labels, values))
         else:
-            raise ValueError(f'{path}: expected covariance_ra_m2_by_year or a labeled covariance_by_year list')
+            if 'covariance_ra_m2_by_group' in record:
+                for label, value in record['covariance_ra_m2_by_group'].items():
+                    if label in by_year: raise ValueError(f'Duplicate supplied covariance group {label}')
+                    by_year[label] = check_covariance(value, label)
+                sources.append({'path': str(path), 'sha256': digest(path), 'groups': sorted(record['covariance_ra_m2_by_group'])})
+                continue
+            raise ValueError(f'{path}: expected covariance_ra_m2_by_year, covariance_ra_m2_by_group or labeled covariance_by_year')
         for year, value in labeled.items():
             if year in by_year:
                 raise ValueError(f'Year {year} has more than one supplied covariance')
@@ -196,7 +202,7 @@ def estimate_controls(observations, solid_earth, years, selected, screening):
 def noise_artifact(cache_directory, config, observations, solid_earth, years):
     noise = config['noise']
     identity = {'stage': 'noise', 'mode': noise['mode'], 'observations': observations.id, 'years': list(years),
-                'code_sha256': module_fingerprints(ESTIMATOR_MODULES)}
+                'group_by': noise.get('group_by', 'year'), 'code_sha256': module_fingerprints(ESTIMATOR_MODULES+('nisar_velocity',))}
     if noise['mode'] == 'pair':
         identity['pair_calibration_sha256'] = digest(noise['file'])
         return Artifact(cache_directory, 'noise', identity), None
@@ -223,11 +229,25 @@ def prepare_noise(cache_directory, config, observations, solid_earth, years):
         if record is not None:
             return artifact, record
         partial, _ = artifact.begin()
+        with h5py.File(observations.path('observations.h5')) as profile:
+            nisar = profile.attrs.get('mission') == 'NISAR'
+        if nisar and config['noise']['mode'] != 'pair':
+            if config['noise'].get('group_by') != 'track_year':
+                raise ValueError('NISAR controls/supplied noise requires noise.group_by: track_year')
+            from .nisar_velocity import grouped_noise
+            grouped_noise(config, observations, solid_earth, years, partial)
+            return artifact, artifact.publish([NOISE])
         if config['noise']['mode'] == 'pair':
             with h5py.File(observations.path('observations.h5'), 'r') as h:
                 pair_ids = h['pair_id'][:].astype(str).tolist()
                 sources = h['input_sha256'][:].astype(str).tolist()
             pooled, matrices, calibration = read_pair_noise(config['noise']['file'], pair_ids, sources)
+            if nisar:
+                with h5py.File(observations.path('observations.h5')) as h:
+                    labels = h['noise_group'][:].astype(str)
+                noise = calibration['noise']
+                if noise.get('group_by') != 'track_year' or any(noise.get('pair_noise_group', {}).get(p) != label for p, label in zip(pair_ids, labels)):
+                    raise ValueError('NISAR pair calibration must retain matching track/year groups')
             result = {'schema':SCHEMA, 'mode':'pair', 'pair_ids':pair_ids,
                       'covariance_ra_m2_by_pair':matrices.tolist(),
                       'covariance_ra_m2_by_year':{str(y):pooled.tolist() for y in years},

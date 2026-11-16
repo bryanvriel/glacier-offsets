@@ -181,6 +181,11 @@ def compare_geometry(paths):
 
 def collect(paths, cache_directory, verify_content=True):
     """Validate packages and return the deterministic virtual pair manifest."""
+    from .displacement import is_nisar
+    with h5py.File(paths[0]) as profile:
+        if is_nisar(profile):
+            from .nisar_collection import collect_nisar
+            return collect_nisar(paths, cache_directory)
     paths = [Path(p).resolve() for p in paths]
     for path in paths:
         if not path.is_file():

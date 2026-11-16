@@ -87,6 +87,9 @@ def run_view(view,targets):
             eligible=(fits['standard_coverage'][:]&fits['residual_vertical/estimable'][:]
                 &(fits['mean_flow_speed'][:]>=.1)&(np.min(abs(fits['azimuth_flow_projection_by_year'][:]),axis=1)>=.5)
                 &(fits['year_direction_change_deg'][:]<=20)&(tide_response>=.8))
+            if h.attrs.get('mission') == 'NISAR':
+                eligible = (fits['standard_coverage'][:]&fits['residual_vertical/estimable'][:]
+                            &(fits['mean_flow_speed'][:]>=.1)&(fits['year_direction_change_deg'][:]<=20)&(tide_response>=.8))
             points=[]
             for region in targets:
                 west,south,east,north=region['bounds'];cx,cy=region.get('center_xy',((west+east)/2,(south+north)/2))
