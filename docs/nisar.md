@@ -133,6 +133,16 @@ least 20 peak-supported observations per supported location; short records can
 therefore produce an empty regions file. Package provenance records the
 observation-support convention.
 
+Control screening reads coverage masks in HDF5 chunk-aligned tiles, rejects
+non-grounded boxes first, then reads only horizontal displacements, endpoint
+times and quality/validity fields for possible controls. It does not load native
+geometry or reconstruct horizontal vectors. Progress logs distinguish coverage,
+time-series scanning and the final sequential SHA-256 read of the package.
+By default this proposal tool checks package metadata and records that file
+checksum; `--verify-package` additionally verifies every NISAR array before
+screening, which can be expensive. The JSON records the verification mode.
+Fitting retains its independent full package validation.
+
 CATS uses each location's own two endpoint times and pair geometry, changing
 range only. Missing modeled corrections retain input radar values with a separate
 availability mask; they are excluded from horizontal fitting support. Horizontal

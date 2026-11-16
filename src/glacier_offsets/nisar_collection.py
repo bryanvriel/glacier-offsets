@@ -12,6 +12,20 @@ from .velocity_basis import EPOCH_SECONDS, utc_days
 from .velocity_io import digest, revision
 
 
+def frame_candidates(members, priority, read_valid, acquisition_pairs=None):
+    """Shared per-location ownership; invalid low frames allow higher frames."""
+    chosen, candidates = {}, {}
+    for t in priority:
+        r = members[t]
+        if acquisition_pairs is not None and r['acquisition_pair'] not in acquisition_pairs:
+            continue
+        valid = read_valid(t)
+        used = chosen.setdefault(r['acquisition_pair'], np.zeros(valid.shape, bool))
+        candidates[t] = valid & ~used
+        used |= valid
+    return candidates
+
+
 class NisarCollection:
     """GOFF map locations; repeated frames do not create extra measurements."""
     mission = 'NISAR'
@@ -100,13 +114,9 @@ class NisarCollection:
         selected = list(range(len(self.members))) if indices is None else list(indices)
         acquisition_pairs = {self.members[t]['acquisition_pair'] for t in selected}
         out = {k: [] for k in ('early', 'late', 'data', 'data_ra', 'valid', 'snr', 'peak', 'inverse', 'geometry', 'tidal_range_bias', 'overlap_suppressed')}
-        chosen = {}; candidates = {}
-        for t in self.priority:
-            r = self.members[t]
-            if r['acquisition_pair'] not in acquisition_pairs: continue
-            valid = self.read(r, 'valid_mask', section) == 1
-            used = chosen.setdefault(r['acquisition_pair'], np.zeros(valid.shape, bool))
-            candidates[t] = valid & ~used; used |= valid
+        candidates = frame_candidates(self.members, self.priority,
+                                      lambda t: self.read(self.members[t], 'valid_mask', section) == 1,
+                                      acquisition_pairs)
         for t in selected:
             r = self.members[t]
             e, l = (self.read(r, k, section) for k in ('earlier_observation_time', 'later_observation_time'))
