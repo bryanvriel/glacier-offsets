@@ -96,6 +96,45 @@ class MapTests(unittest.TestCase):
             assert_array_equal(maps.amplitude,amplitude[::-1,::-1])
             self.assertFalse(maps.selected[1,0]);self.assertEqual(maps.selected.sum(),5)
 
+    def test_nisar_netcdf_only_analysis_locations(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            index=np.array([[10,-1,30],[40,50,60]])
+            with h5netcdf.File(root/'coefficient_maps.nc','w') as h:
+                h.dimensions={'y':2,'x':3};h.attrs.update(status='complete',EPSG=3031)
+                h.create_variable('x',('x',),data=[40.,280.,520.])
+                h.create_variable('y',('y',),data=[280.,40.])
+                fields={'analysis_location_index':index,'fit_estimable':np.ones((2,3),bool),
+                        'along_display_mask':index>=0,'msf_along_amplitude':np.full((2,3),.1),
+                        'msf_along_phase_deg':np.full((2,3),-120.)}
+                for key,value in fields.items():
+                    h.create_variable(key,('y','x'),data=np.asarray(value,dtype='u1') if value.dtype.kind=='b' else value)
+            maps=read_maps(root)
+            assert_array_equal(maps.source_id,index)
+            assert_array_equal(maps.selected,index>=0)
+            # Rendering from exported maps is independent of fitting/cache files.
+            self.assertEqual(plot_maps(root,dpi=30)[0]['native_cells_displayed'],5)
+
+    def test_v2_nisar_source_maps_without_local_observation_cache(self):
+        from glacier_offsets.velocity_pixel_config import DEFAULT_PARAMETERS
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);index=source_fixture(root)
+            with h5py.File(root/'observations.h5') as obs,h5py.File(root/'source_coefficients.h5','a') as fits:
+                for key in ('x','y','map_source_index'):fits[key]=obs[key][:]
+                fits.attrs.update(mission='NISAR',EPSG=3031)
+                fits['azimuth_flow_projection_by_year'][:]=0.
+                fits['azimuth_direct/estimable'][:]=False
+            (root/'observations.h5').unlink()
+            (root/'run-manifest.json').write_text(json.dumps({'config':{'display':DEFAULT_PARAMETERS['display'],
+                'diagnostics':{'regions':None}}}))
+            before=digest(root/'source_coefficients.h5')
+            maps=read_maps(root)
+            self.assertEqual(maps.files[0],(root/'source_coefficients.h5').resolve())
+            assert_array_equal(maps.selected,index==0)
+            self.assertFalse(read_maps(root,'msf-azimuth').selected.any())
+            self.assertEqual(plot_maps(root,dpi=30)[0]['native_cells_displayed'],int((index==0).sum()))
+            self.assertEqual(digest(root/'source_coefficients.h5'),before)
+
     def test_rendering_from_another_directory_and_saved_settings(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);source_fixture(root);elsewhere=root/'elsewhere';elsewhere.mkdir()

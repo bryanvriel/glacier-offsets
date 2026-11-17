@@ -81,8 +81,10 @@ def _source_maps(directory,component,mask):
         is_az=component=='msf-azimuth';group=az if is_az else joint
         estimable=group['estimable'][:];standard=fits['standard_coverage'][:]
         if mask in ('along','phase-quality','flow-proxy'):
+            projection=fits['azimuth_flow_projection_by_year'][:]
+            if fits.attrs.get('mission')=='NISAR':projection=np.ones_like(projection)
             choices=display_masks(joint['estimable'][:],az['estimable'][:],standard,
-                fits['mean_flow_speed'][:],fits['year_direction_change_deg'][:],fits['azimuth_flow_projection_by_year'][:],
+                fits['mean_flow_speed'][:],fits['year_direction_change_deg'][:],projection,
                 joint['amplitude'][:],joint['amplitude_sigma'][:],joint['phase_sigma_deg'][:],display)
             selected=estimable&choices[{'along':'along','phase-quality':'phase_quality','flow-proxy':'proxy'}[mask]]
         else:selected=estimable&(standard if mask=='standard' else True)
@@ -104,7 +106,9 @@ def _netcdf_maps(directory,component,mask):
     path=directory/'coefficient_maps.nc';prefix=COMPONENTS[component][0]
     with h5py.File(path) as h:
         if h.attrs.get('status')!='complete':raise ValueError('Coefficient maps are incomplete')
-        source_id=h['source_observation_index'][:];foot=source_id>=0
+        association='analysis_location_index' if 'analysis_location_index' in h else 'source_observation_index'
+        if association not in h:raise ValueError('Coefficient maps lack analysis_location_index or source_observation_index')
+        source_id=h[association][:];foot=source_id>=0
         estimable=h['azimuth_fit_estimable' if component=='msf-azimuth' else 'fit_estimable'][:].astype(bool)
         names={'standard':'standard_coverage_mask','along':'along_display_mask',
                'phase-quality':'phase_quality_display_mask','flow-proxy':'along_flow_proxy_mask'}
@@ -119,10 +123,10 @@ def _netcdf_maps(directory,component,mask):
 def read_maps(directory,component='msf-along',mask='default'):
     """Prefer source fits; also support a directory containing only exported NetCDF."""
     directory,config_file=resolve_map_input(directory);mask=_mask_name(component,mask)
-    if (directory/'source_coefficients.h5').exists() and (directory/'observations.h5').exists():
+    if (directory/'source_coefficients.h5').exists() and ((directory/'observations.h5').exists() or (directory/'run-manifest.json').exists()):
         result=_source_maps(directory,component,mask)
     elif (directory/'coefficient_maps.nc').exists():result=_netcdf_maps(directory,component,mask)
-    else:raise ValueError('Directory needs observations.h5 + source_coefficients.h5, or coefficient_maps.nc')
+    else:raise ValueError('Directory needs source fits with observations/run manifest, or coefficient_maps.nc')
     if result.x.ndim!=1 or result.y.ndim!=1 or min(len(result.x),len(result.y))<2:
         raise ValueError('Map needs one-dimensional x/y coordinates with at least two cells each')
     for coordinate in (result.x,result.y):

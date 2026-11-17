@@ -557,9 +557,21 @@ def report_v2(view, series=None):
     verification = json.loads((out/'verification.json').read_text())
     manifest = view.manifest
     recipe = view.recipe
-    noise_rows = [[y, f"{d['sigma_range_m']:.4f}", f"{d['sigma_azimuth_m']:.4f}", f"{d['correlation']:.3f}",
-                   next((c['samples'] for c in noise.get('calibration', []) if c['year'] == int(y)), 'supplied')]
-                  for y, d in noise['diagnostics'].items()]
+    groups = noise.get('covariance_ra_m2_by_group')
+    label = 'Track/year' if groups else 'Year'
+    if groups:
+        from .velocity_annual_noise import diagnostics
+        noise_diagnostics = {k: diagnostics(np.asarray(v)) for k, v in sorted(groups.items())}
+    else:
+        noise_diagnostics = noise.get('diagnostics')
+        if noise_diagnostics is None:
+            from .velocity_annual_noise import diagnostics
+            noise_diagnostics = {k: diagnostics(np.asarray(v)) for k, v in noise['covariance_ra_m2_by_year'].items()}
+    noise_rows = [[key, f"{d['sigma_range_m']:.4f}", f"{d['sigma_azimuth_m']:.4f}", f"{d['correlation']:.3f}",
+                   next((c['samples'] for c in noise.get('calibration', [])
+                         if str(c.get('group', c.get('year'))) == str(key)),
+                        'supplied' if manifest['config']['noise']['mode']=='supplied' else 'not recorded')]
+                  for key, d in noise_diagnostics.items()]
     solid = manifest['artifacts']['solid_earth']
     lines = [f'# {view.period} pixel inversion (version-2 workflow)', '',
              '![Along-flow Msf amplitude and phase](msf_quicklook.png)', '',
@@ -576,10 +588,10 @@ def report_v2(view, series=None):
              f"Observation cache `{manifest['artifacts']['observations']['id']}`; noise `{manifest['artifacts']['noise']['id']}`.", '',
              '## Noise calibration', '',
              f"Mode: {noise['mode']}.", '',
-             (f"Pair-specific covariance for {len(noise['pair_ids'])} pairs; the annual rows below contain the pooled fallback. "
-              'Control biases are recorded, not subtracted. Per-source counts of downweighted pairs are stored with the fits.'
+             (f"Pair-specific covariance for {len(noise['pair_ids'])} pairs; rows below summarize {label.lower()} covariances. "
+              'No control bias is subtracted. Per-source counts of downweighted pairs are stored with the fits.'
               if noise['mode']=='pair' else 'Annual range/azimuth covariances:'), '',
-             _table(['Year', 'σ range (m)', 'σ azimuth (m)', 'Correlation', 'Samples'], noise_rows), '',
+             _table([label, 'σ range (m)', 'σ azimuth (m)', 'Correlation', 'Samples'], noise_rows), '',
              '## Effective settings', '',
              'Screen: '+recipe['screen']+'.', '',
              'Remove mixed windows: '+str(recipe['parameters']['screening']['remove_mixed_windows']).lower()+'.', '',

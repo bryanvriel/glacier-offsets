@@ -110,7 +110,8 @@ def main(argv=None):
         logging.error('Interrupted (%s); completed checkpoints are kept and the next run resumes them', error or 'signal')
         return 130
     except (ValueError, OSError, ImportError, KeyError) as error:
-        parser.error(str(error))
+        logging.error('%s failed: %s', args.command, error)
+        return 2
 
 
 def _is_v2_config(path):

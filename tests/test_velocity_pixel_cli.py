@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import yaml
 
@@ -15,6 +16,16 @@ from glacier_offsets.velocity_pixel_runtime import module_fingerprints,verify_co
 
 
 class PortablePixelTests(unittest.TestCase):
+    def test_runtime_failure_does_not_print_argument_usage(self):
+        with patch('glacier_offsets.velocity_workflow_config.config_version', return_value=2), patch(
+                'glacier_offsets.velocity_workflow.run_workflow', side_effect=KeyError('late map error')):
+            stderr=io.StringIO()
+            with redirect_stderr(stderr),self.assertLogs(level='ERROR') as logs:
+                self.assertEqual(main(['velocity-pixels','run','run.yaml']),2)
+            self.assertIn('run failed',logs.output[0])
+            self.assertIn('late map error',logs.output[0])
+            self.assertNotIn('usage:',stderr.getvalue())
+
     def test_package_fit_and_reuse_from_different_directories(self):
         from test_velocity_pixel_config import RunnerTests
         with tempfile.TemporaryDirectory() as tmp:

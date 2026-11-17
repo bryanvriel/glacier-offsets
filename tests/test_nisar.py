@@ -389,7 +389,21 @@ class NisarTests(unittest.TestCase):
             self.assertFalse(h['azimuth_direct/estimable'][:].any())
             for track in (53, 75, 104, 154): self.assertIn(f'azimuth_track_{track:03d}', h)
         view = RunView.v2(self.root/'fit'); export_maps(view); verify_v2(view)
-        run_workflow(config, 'fit')
+        # A late plotting failure must preserve fitted/exported stages and rerun
+        # only the unfinished products, with external observation-cache files.
+        from glacier_offsets.velocity_io import digest
+        before = digest(self.root/'fit/source_coefficients.h5')
+        with patch('glacier_offsets.velocity_pixel_maps.plot_maps', side_effect=KeyError('late plot failure')):
+            with self.assertRaisesRegex(KeyError, 'late plot failure'): run_workflow(config, 'run')
+        self.assertTrue((self.root/'fit/stages/export.json').exists())
+        self.assertFalse((self.root/'fit/stages/maps.json').exists())
+        self.assertFalse((self.root/'fit/observations.h5').exists())
+        with patch('glacier_offsets.velocity_workflow.run_fit', side_effect=AssertionError('must reuse fits')):
+            resumed = run_workflow(config, 'run')
+        self.assertEqual(resumed['stage'], 'complete')
+        self.assertEqual(digest(self.root/'fit/source_coefficients.h5'), before)
+        for stage in ('maps', 'verify', 'report'):
+            self.assertTrue((self.root/'fit/stages'/f'{stage}.json').exists())
 
     def test_short_record_and_layer_rejection(self):
         from glacier_offsets.velocity_collection import collect

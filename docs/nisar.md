@@ -177,6 +177,15 @@ checksum; `--verify-package` additionally verifies every NISAR array before
 screening, which can be expensive. The JSON records the verification mode.
 Fitting retains its independent full package validation.
 
+If `velocity-pixels run` stops after reporting completed fits and exported maps,
+keep the result/cache directories and rerun the same command after updating the
+installation. Completed fits are checksum-verified and reused; unfinished plot,
+verification and report stages resume. Version-2 plots can read the map association
+stored in `source_coefficients.h5` without a local observation-cache copy. Exported
+NISAR maps use `analysis_location_index`; Sentinel-1 maps use
+`source_observation_index`. NISAR reports summarize track/year noise covariance
+groups directly, including older cached noise records without annual diagnostics.
+
 ### Pixel-workflow performance
 
 `velocity-pixels` verifies the complete package once per file SHA-256 and
