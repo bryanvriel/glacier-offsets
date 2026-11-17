@@ -20,7 +20,7 @@ def verified_nisar(path, cache, expected=None):
     else:
         logging.info('Checksumming NISAR package: %s', path)
         sha = digest(path)
-    implementation = {k: digest(Path(__file__).with_name(k)) for k in ('displacement.py', 'velocity_io.py', 'nisar_validation.py')}
+    implementation = {k: digest(Path(__file__).with_name(k)) for k in ('displacement.py', 'nisar_grid.py', 'velocity_io.py', 'nisar_validation.py')}
     key = {'schema': 'nisar-validation-v1', 'sha256': sha, 'implementation': implementation}
     record = Path(cache)/'verified-nisar'/(fingerprint(key)+'.json')
     def read():

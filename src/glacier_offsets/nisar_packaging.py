@@ -17,6 +17,7 @@ from .displacement import NISAR_SCHEMA, text, valid_nisar_mask, covariance_valid
 from .products import checksum, identity
 from .velocity_io import revision, serializable
 from .nisar_geometry import GeometryRunner
+from .nisar_grid import axis_selection, decimation_factor, sampling_record
 
 
 METHOD = 'nisar-reference-enu-central-difference-v1'
@@ -194,10 +195,13 @@ def select_revisions(records, policy):
     return selected, sorted(superseded, key=lambda r: (r['granuleId'], r['path']))
 
 
-def package_nisar(paths, *, layer=1, output, force=False, revisions='error', workers=None, geometry_cache=None):
+def package_nisar(paths, *, layer=1, output, force=False, revisions='error', workers=None, geometry_cache=None, decimation=1):
     from .packaging import variable, strings, timestamp, content_hashes
     from .tides import output_lock
     started = perf_counter()
+    decimation = decimation_factor(decimation)
+    sampling = sampling_record(decimation)
+    step = sampling['posting_m']
     destination = Path(output).expanduser().resolve()
     if destination.suffix != '.nc' or layer not in (1, 2, 3):
         raise ValueError('NISAR packaging needs a .nc output and layer 1, 2, or 3')
@@ -222,8 +226,15 @@ def package_nisar(paths, *, layer=1, output, force=False, revisions='error', wor
     records.sort(key=lambda r: ((r['earlier']+r['later'])/2, r['granuleId']))
     x = np.arange(min(r['x'][0] for r in records), max(r['x'][-1] for r in records)+40, 80.)
     y = np.arange(max(r['y'][0] for r in records), min(r['y'][-1] for r in records)-40, -80.)
-    grid = {'epsg': 3031, 'shape': [len(y), len(x)], 'transform': [x[0]-40, 80., 0., y[0]+40, 0., -80.]}
-    implementation = {k: checksum(Path(__file__).with_name(k)) for k in ('nisar_packaging.py', 'nisar_geometry.py', 'displacement.py')}
+    x, y = x[axis_selection(x, decimation)], y[axis_selection(y, decimation)]
+    for r in records:
+        r['source_selection'] = (axis_selection(r['y'], decimation), axis_selection(r['x'], decimation))
+        r['y'], r['x'] = r['y'][r['source_selection'][0]], r['x'][r['source_selection'][1]]
+        r['sampling'] = sampling
+    if not len(x) or not len(y) or not any(len(r['x']) and len(r['y']) for r in records):
+        raise ValueError('Decimation leaves no sampled GOFF cells; use a smaller factor or larger subset')
+    grid = {'epsg': 3031, 'shape': [len(y), len(x)], 'transform': [x[0]-step/2, step, 0., y[0]+step/2, 0., -step]}
+    implementation = {k: checksum(Path(__file__).with_name(k)) for k in ('nisar_packaging.py', 'nisar_geometry.py', 'nisar_grid.py', 'displacement.py')}
     dependencies = {}
     for name in ('numpy', 'scipy', 'pyproj'):
         try:
@@ -241,6 +252,7 @@ def package_nisar(paths, *, layer=1, output, force=False, revisions='error', wor
     geometry = GeometryRunner(workers, cache, fingerprint)
     spec = {'schema': NISAR_SCHEMA, 'mission': 'NISAR', 'layer': layer, 'frequency': 'A', 'polarization': 'HH',
             'release': records[0]['signature'], 'grid': grid, 'geometry_method': METHOD,
+            'sampling': sampling,
             'implementation': implementation, 'geometry_dependencies': dependencies,
             'revision_selection': {'policy': revisions, 'superseded_inputs': superseded},
             'inputs': [{k: r[k] for k in ('granuleId', 'path', 'sha256')} for r in records]}
@@ -265,6 +277,7 @@ def package_nisar(paths, *, layer=1, output, force=False, revisions='error', wor
                                  mission='NISAR', source='raw', EPSG=3031, Conventions='CF-1.10', format='xarray',
                                  observation_support='geocoded_cell', geocoding_resampling='bilinear',
                                  matching_layer=layer, frequency='A', polarization='HH', geometry_method=METHOD,
+                                 decimation_factor=decimation, map_posting_m=step, sampling_method='integer_decimation',
                                  data_maturity=records[0]['maturity'],
                                  revision_policy=revisions, superseded_product_count=len(superseded),
                                  axis_sign='later-minus-earlier; positive range away from sensor; positive azimuth increasing sensing time',
@@ -315,8 +328,11 @@ def package_nisar(paths, *, layer=1, output, force=False, revisions='error', wor
                     logging.info('Importing NISAR %s (%d/%d)', r['granuleId'], i+1, len(records))
                     with h5py.File(r['path'], 'r') as h:
                         out['source_metadata_json'][i] = metadata_json(h)
-                        ro = int(round((y[0]-r['y'][0])/80)); co = int(round((r['x'][0]-x[0])/80))
                         out['input_mask'][i] = np.uint32(255)
+                        if not len(r['x']) or not len(r['y']):
+                            logging.info('No cells on the selected lattice in %s; retaining empty product slice', r['granuleId'])
+                            continue
+                        ro = int(round((y[0]-r['y'][0])/step)); co = int(round((r['x'][0]-x[0])/step))
                         for sec, a, mask, z, cube, native in geometry.tiles(h, r, layer):
                             dest = (slice(ro+sec[0].start, ro+sec[0].stop), slice(co+sec[1].start, co+sec[1].stop)); slot = (i, *dest)
                             for k in VARIABLES: out['source_'+k][slot] = a[k]

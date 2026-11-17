@@ -66,14 +66,8 @@ def validate_nisar(path):
         if (np.any(np.diff(h['time'][:]) < 0) or np.any(h['later_time'][:] <= h['earlier_time'][:])
                 or not np.allclose(h['time'][:], (h['earlier_time'][:]+h['later_time'][:])/2, rtol=0, atol=5e-7)):
             raise ValueError('Invalid scene timing')
-        grid = spec['grid']; gt = grid['transform']
-        if (grid['shape'] != list(shape[1:]) or int(h.attrs['EPSG']) != 3031
-                or gt[1:3] != [80., 0.] or gt[4:6] != [0., -80.]):
-            raise ValueError('Invalid package grid')
-        for k, expected in [('x', gt[0]+(np.arange(shape[2])+.5)*gt[1]),
-                            ('y', gt[3]+(np.arange(shape[1])+.5)*gt[5])]:
-            if not np.array_equal(h[k][:], expected):
-                raise ValueError('Invalid pixel-center coordinates')
+        from .nisar_grid import validate_grid
+        validate_grid(h, spec, shape[1:])
         for k in ('range_displacement_m', 'azimuth_displacement_m', 'snr', 'correlation_peak', 'valid_mask',
                   'earlier_observation_time', 'later_observation_time', 'geometry_valid_mask'):
             if h[k].dimensions != ('time', 'y', 'x'):

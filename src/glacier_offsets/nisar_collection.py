@@ -11,6 +11,7 @@ from pyproj import CRS
 from .displacement import is_nisar, text, validate_nisar
 from .velocity_basis import EPOCH_SECONDS, utc_days
 from .velocity_io import digest, revision
+from .nisar_grid import validate_grid
 
 
 def frame_candidates(members, priority, read_valid, acquisition_pairs=None):
@@ -45,7 +46,7 @@ class NisarCollection:
             self.handles = [self.stack.enter_context(h5netcdf.File(p)) for p in self.paths]
             self.raw_handles = [self.stack.enter_context(h5py.File(p)) for p in self.paths]
             self.datasets = {}
-            self.sources = []; self.members = []; self.pairs = []; ids = set(); signatures = []
+            self.sources = []; self.members = []; self.pairs = []; ids = set(); signatures = []; spacings = []
             self.revisions = [revision(p) for p in self.paths]
             for fi, (path, h) in enumerate(zip(self.paths, self.handles)):
                 if not is_nisar(h): raise ValueError('Joint NISAR/Sentinel-1 fitting is not supported')
@@ -61,6 +62,7 @@ class NisarCollection:
                 if any('solid_earth' in k.lower() or 'body_tide' in k.lower() for k in (*h.attrs, *h.variables)):
                     raise ValueError('Solid-Earth correction must be applied exactly once at fitting')
                 spec = json.loads(text(h['provenance_json'][()]))
+                spacings.append(validate_grid(h, spec, (len(h.dimensions['y']), len(h.dimensions['x']))))
                 signatures.append((spec['frequency'], spec['polarization'], spec['layer'], tuple(spec['release'])))
                 self.sources.append({'path': str(path), 'sha256': sha, 'package_identity': h.attrs['package_identity'],
                                      'correction_history': [text(h[k][()]) for k in h.variables if k.endswith('provenance_json') and k != 'provenance_json']})
@@ -79,15 +81,18 @@ class NisarCollection:
                                          'noise_group': f'T{track:03d}:{year}'})
             if any(s != signatures[0] for s in signatures):
                 raise ValueError('NISAR collections must share layer, frequency, polarization and processing release')
+            if any(s != spacings[0] for s in spacings):
+                raise ValueError('NISAR collections must share map posting and decimation factor')
+            self.spacing = spacings[0]
             self.members.sort(key=lambda r: (r['earlier'], r['later'], r['pair_id']))
             if not self.members: raise ValueError('No NISAR pair overlaps the selected period')
             keys = [(r['acquisition_pair'], r['frame']) for r in self.members]
             if len(set(keys)) != len(keys): raise ValueError('Conflicting reprocessed copies of the same acquisition pair/frame')
             self.priority = sorted(range(len(self.members)), key=lambda i: (self.members[i]['frame'], self.members[i]['pair_id']))
-            self.x = np.arange(min(h['x'][0] for h in self.handles), max(h['x'][-1] for h in self.handles)+40, 80.)
-            self.y = np.arange(max(h['y'][0] for h in self.handles), min(h['y'][-1] for h in self.handles)-40, -80.)
+            self.x = np.arange(min(h['x'][0] for h in self.handles), max(h['x'][-1] for h in self.handles)+self.spacing/2, self.spacing)
+            self.y = np.arange(max(h['y'][0] for h in self.handles), min(h['y'][-1] for h in self.handles)-self.spacing/2, -self.spacing)
             self.shape = (len(self.y), len(self.x)); self.enu = ['east', 'north', 'up']
-            self.offsets = [(int(round((self.y[0]-h['y'][0])/80)), int(round((h['x'][0]-self.x[0])/80))) for h in self.handles]
+            self.offsets = [(int(round((self.y[0]-h['y'][0])/self.spacing)), int(round((h['x'][0]-self.x[0])/self.spacing))) for h in self.handles]
             self.association = np.arange(np.prod(self.shape), dtype='i8').reshape(self.shape)
             self.owner = np.zeros(self.shape, int)
             self.pairs = [(r['file'], r['slot'], r['pair_id'], np.array([(r['earlier']-EPOCH_SECONDS)/86400]),
@@ -182,7 +187,7 @@ def collect_nisar(paths, cache_directory):
                              'earlier_spacecraft': 'NISAR', 'later_spacecraft': 'NISAR'})
         years = sorted({r['year'] for r in pairs})
         grid = {'EPSG': 3031, 'crs_wkt': CRS.from_epsg(3031).to_wkt(), 'shape': list(c.shape),
-                'transform': [float(c.x[0]-40), 80., 0., float(c.y[0]+40), 0., -80.]}
+                'transform': [float(c.x[0]-c.spacing/2), c.spacing, 0., float(c.y[0]+c.spacing/2), 0., -c.spacing]}
         return {'schema': 'glacier-offsets-nisar-collection-v2', 'mission': 'NISAR', 'grid': grid,
                 'inputs': [s | {'revision': list(revision(s['path'])), 'validity_mask': 'valid_mask', 'source': 'raw',
                                'pairs': sum(r['file'] == i for r in pairs)} for i, s in enumerate(c.sources)],

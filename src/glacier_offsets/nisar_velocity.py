@@ -15,7 +15,7 @@ from .velocity_io import digest, write_json
 
 def prepare_nisar_observations(cache, manifest, chunk, hook):
     artifact = Artifact(cache, 'observations', {'schema': 'nisar-observations-v4-compact', 'collection': manifest,
-                        'implementation': {k: digest(Path(__file__).with_name(k)) for k in ('nisar_velocity.py', 'nisar_collection.py', 'nisar_validation.py', 'displacement.py')}})
+                        'implementation': {k: digest(Path(__file__).with_name(k)) for k in ('nisar_velocity.py', 'nisar_collection.py', 'nisar_grid.py', 'nisar_validation.py', 'displacement.py')}})
     record = artifact.complete()
     if record:
         logging.info('Reusing verified NISAR observations %s', artifact.id)

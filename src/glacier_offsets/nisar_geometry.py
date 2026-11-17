@@ -102,7 +102,10 @@ class GeometryRunner:
         total = ((len(record['y'])+255)//256)*((len(record['x'])+255)//256)
         before = self.stats.copy()
         completed = 0
-        prefix = identity({'source_sha256': record['sha256'], 'layer': layer, **self.fingerprint})
+        source_selection = record.get('source_selection', (slice(0, None, 1), slice(0, None, 1)))
+        prefix = identity({'source_sha256': record['sha256'], 'layer': layer,
+                           'sampling': record.get('sampling'),
+                           'source_selection': [[s.start, s.stop, s.step] for s in source_selection], **self.fingerprint})
 
         def finish(item):
             nonlocal completed, last_log
@@ -136,8 +139,10 @@ class GeometryRunner:
             return sec, arrays, mask, height, cube, native
 
         for sec in tiles((len(record['y']), len(record['x']))):
-            arrays = {k: h[f'layer{layer}/{k}'][sec] for k in VARIABLES}
-            mask, height = h['mask'][sec], h['surfaceHeight'][sec]
+            source = tuple(slice(s.start+t.start*s.step, s.start+(t.stop-1)*s.step+1, s.step)
+                           for s, t in zip(source_selection, sec))
+            arrays = {k: h[f'layer{layer}/{k}'][source] for k in VARIABLES}
+            mask, height = h['mask'][source], h['surfaceHeight'][source]
             px, py = np.meshgrid(record['x'][sec[1]], record['y'][sec[0]])
             points = np.stack([height.ravel(), py.ravel(), px.ravel()], -1)
             cube = {k: f(points) for k, f in interps.items()}

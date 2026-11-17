@@ -78,11 +78,45 @@ Cache hits avoid native solves; importing arrays, compression and validation sti
 take time. Small imports may run faster serially because process startup has a
 fixed cost.
 
+### Optional integer decimation
+
+`--decimation N` retains every Nth native cell in both map axes before geometry
+calculation. The default is 1 (80 m); factors 2 and 3 give 160 m and 240 m:
+
+```bash
+glacier-offsets package --nisar-subsets /data/nisar/subsets \
+  --layer 1 --decimation 3 --output /data/nisar/displacements_240m.nc
+```
+
+Both axes use the fixed EPSG:3031 center lattice `40 + 80*N*k` metres. The global
+anchor keeps different subsets, frames and tracks at common locations, independent
+of input order or bounding-box edges. Coordinates are cropped to retained centers;
+the output transform uses half the new posting around those centers. Products
+with no retained cell keep an empty granule slice. A selection with no retained
+cells anywhere fails explicitly.
+
+This is point decimation, with no additional interpolation, filtering or averaging.
+Retained offsets, source values, masks, heights, covariance and per-cell sensing
+times keep their original values and units. Azimuth ground spacing per SLC line
+also retains its native meaning. Native geometry is calculated only at retained
+eligible cells. Sampling settings enter package provenance, geometry cache keys,
+package identity and validation. Embedded source metadata still describes the
+original input subset. `geocoding_resampling: bilinear` describes upstream GOFF
+geocoding; `sampling.additional_resampling: none` describes this importer.
+
+Corrections, control selection and both fitting readers accept the coarse grid.
+Collections require a consistent posting/factor and global alignment; native and
+coarse versions of a product are alternative samplings, not extra observations.
+Regenerate grounded-control regions and empirical-noise calibration for the coarse
+package. Physical control-block sizes remain in metres; fewer retained locations
+may affect minimum-support requirements. Exact 200 m posting is unavailable through
+integer decimation of 80 m inputs.
+
 Each output contains one selected matching layer, frequency A and HH polarization.
 It may include different tracks and frames, but all inputs must have consistent
-maturity and processing release. Aligned EPSG:3031 80 m grids are placed on their
-union with missing support padded; offsets are not resampled. Layers are separate
-experiments, never independent observations to pool. In the checked P05023 data,
+maturity and processing release. Aligned EPSG:3031 inputs are placed on the union
+of the selected lattice with missing support padded; offsets are not resampled.
+Layers are separate experiments, never independent observations to pool. In the checked P05023 data,
 matching windows are 32/64/128 pixels, with search half-widths **32/32/16 pixels**
 and a 15-pixel skip. The 80 m posting is not the independent spatial resolution.
 
