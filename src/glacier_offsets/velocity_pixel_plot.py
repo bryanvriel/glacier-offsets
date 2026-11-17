@@ -117,8 +117,8 @@ def run_view(view,targets):
                 point['Msf_amplitude_m_day']=float(np.hypot(*cs));point['Msf_phase_deg']=float(np.degrees(np.arctan2(cs[1],cs[0])))
                 residual=field['data'][j]-series['predicted_radar_displacement_m'][j]
                 rms=np.sqrt(np.mean(residual[good[j]]**2,axis=0));expected=fits['residual_vertical/rms_m'][point['source_index']]
-                error=float(np.max(abs(rms-expected)));replay.append(error)
-                if error>1e-6:raise ValueError('Stored radar RMS does not reproduce')
+                from .velocity_verification import check_stored_rms
+                error=check_stored_rms(rms[None],expected[None],source_ids=[point['source_id']]);replay.append(error)
                 valid=field['valid'][j]
                 columns={'pair_id':pair_id,'year':np.asarray(years)[year],
                     'early_UTC':[str(v) if np.isfinite(d) else '' for v,d in zip(dates(np.nan_to_num(field['early'][j])),field['early'][j])],

@@ -186,6 +186,15 @@ NISAR maps use `analysis_location_index`; Sentinel-1 maps use
 `source_observation_index`. NISAR reports summarize track/year noise covariance
 groups directly, including older cached noise records without annual diagnostics.
 
+RMS verification separates numerical-model agreement from diagnostic encoding.
+Standalone physical predictions must reproduce the solver's float64 RMS within
+1e-6 m. Stored RMS fields are float32, so their replay check includes the exact
+storage rounding interval plus that numerical tolerance; large RMS values can
+otherwise cause false failures from encoding alone. Verification records both
+the physical replay error and the raw storage-rounding difference. A real
+mismatch reports the source ID, channel, values and difference. Coefficient
+replay, input checksums, and fit-file integrity checks remain in force.
+
 ### Pixel-workflow performance
 
 `velocity-pixels` verifies the complete package once per file SHA-256 and

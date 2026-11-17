@@ -21,10 +21,11 @@ from .velocity_io import digest, write_json
 from .velocity_pixel_config import display_masks, parameters_from_recipe
 from .velocity_pixel_general import Layout, load_field, screen, solve, predict, MODELS
 from .velocity_pixel_runtime import module_fingerprints
+from .velocity_verification import check_physical_rms, check_stored_rms
 
 
 EXPORT_MODULES = ('velocity_workflow_products', 'velocity_pixel_maps', 'velocity_pixel_plot', 'velocity_pixel_series',
-                  'velocity_basis', 'velocity_temporal', 'velocity_vertical', 'velocity_pixel_general')
+                  'velocity_basis', 'velocity_temporal', 'velocity_vertical', 'velocity_pixel_general', 'velocity_verification')
 
 
 class RunView:
@@ -483,6 +484,7 @@ def verify_v2(view):
             if not np.allclose(axis, stored_axis, rtol=0, atol=1e-12):
                 raise ValueError('Stored flow axes do not reproduce')
             errors = {}
+            replayed_joint_rms = None
             for model in MODELS:
                 if h.attrs.get('mission') == 'NISAR' and model == 'azimuth_direct':
                     if fits[model]['estimable'][:].any(): raise ValueError('Pooled NISAR azimuth comparator must be unavailable')
@@ -498,6 +500,7 @@ def verify_v2(view):
                 errors[model] = float(np.nanmax(abs(repeated['coefficients']-original)))
                 if errors[model] > 1e-9:
                     raise ValueError(f'{model} source fits do not reproduce ({errors[model]:.3g})')
+                if model == 'residual_vertical': replayed_joint_rms = repeated['rms_m']
             if h.attrs.get('mission') == 'NISAR':
                 for track in np.unique(f['track']):
                     name = f'azimuth_track_{track:03d}'
@@ -513,9 +516,9 @@ def verify_v2(view):
             original = fits['residual_vertical/coefficients'][selected]
             residual = np.where(good[..., None], np.nan_to_num(f['data']-predict(f, view.layout, original, names, stored_axis)), 0.)
             rms = np.sqrt(np.sum(residual**2, axis=1)/good.sum(1)[:, None])
-            rms_error = float(np.max(abs(rms-fits['residual_vertical/rms_m'][selected])))
-            if rms_error > 1e-6:
-                raise ValueError('Standalone radar prediction/RMS does not reproduce')
+            source_ids = fits['source_id'][selected]
+            rms_error = check_physical_rms(rms, replayed_joint_rms, source_ids=source_ids)
+            stored_rms_error = check_stored_rms(replayed_joint_rms, fits['residual_vertical/rms_m'][selected], source_ids=source_ids)
             with h5netcdf.File(view.out/'coefficient_maps.nc', 'r') as maps:
                 rr, cc = fits['row'][selected], fits['col'][selected]
                 values = maps['residual_vertical_coefficients'][:][:, rr, cc].T
@@ -536,9 +539,11 @@ def verify_v2(view):
     record = {'status': 'passed', 'inputs_unchanged': True, 'cache_artifacts_verified': True,
               'sampled_sources': len(selected), 'coefficient_replay_max_error': errors,
               'independent_prediction_rms_max_error_m': rms_error, 'native_copy_mapping_exact': True,
+              'stored_rms_max_rounding_error_m': stored_rms_error,
+              'rms_verification': 'float64 physical replay <= 1e-6 m; stored diagnostics checked against dtype rounding intervals plus 1e-6 m',
               'crs_from_inputs': True, 'parameters': parameters, 'years': view.years,
               'regional_year_check': 'not run; version-2 results have no frozen regional cohort',
-              'verification_code_sha256': module_fingerprints(('velocity_workflow_products',)),
+              'verification_code_sha256': module_fingerprints(('velocity_workflow_products', 'velocity_verification')),
               'checked_utc': datetime.now(timezone.utc).isoformat()}
     write_json(view.out/'verification.json', record)
     logging.info('Verification passed: coefficient replay %s, RMS %.3g m', errors, rms_error)
