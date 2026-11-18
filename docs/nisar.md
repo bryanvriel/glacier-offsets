@@ -42,6 +42,33 @@ superseded input checksums in package provenance and the command report. Source
 files are left intact. The highest counter is an explicit revision-selection
 policy, not a claim of better measurement accuracy.
 
+Use `--nisar-exclude FILENAME.h5` to skip a reviewed bad granule without
+moving or deleting any subsets. Repeat the option to skip multiple files:
+
+```bash
+glacier-offsets package --nisar-subsets /data/nisar/subsets \
+  --nisar-exclude bad_frame122.h5 --nisar-exclude bad_frame123.h5 \
+  --output /data/nisar/displacements_qc.nc
+```
+
+Use exact filenames, including `.h5`. Each must match exactly one discovered
+input. Exclusions happen before checksumming, revision selection and native
+geometry, and the skipped filenames and paths appear in the report and package
+provenance. Exclude every unwanted revision explicitly. For a rebuilt package,
+rerun tide correction and horizontal conversion before fitting. GOFF masks and
+correlation peaks can miss spatially coherent offset errors; the importer does
+not automatically reject a granule based on anomalous horizontal motion.
+
+To review the source offsets before packaging, run from the repository root:
+
+```bash
+PYTHONPATH=src python tools/plot_nisar_offsets.py ./lar2_subsets ./goff_quicklooks
+```
+
+This writes one PNG per completed `.h5` file, with range and azimuth offsets
+in metres side by side and GOFF mask-invalid values in gray. It uses layer 1 by
+default. Set `--limit 20` to use the same ±20 m color scale across the batch.
+
 ### Packaging speed and restart
 
 Native geometry runs in separate processes, using the available CPU count capped

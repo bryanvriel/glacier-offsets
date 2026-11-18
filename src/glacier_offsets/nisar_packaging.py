@@ -195,7 +195,28 @@ def select_revisions(records, policy):
     return selected, sorted(superseded, key=lambda r: (r['granuleId'], r['path']))
 
 
-def package_nisar(paths, *, layer=1, output, force=False, revisions='error', workers=None, geometry_cache=None, decimation=1):
+def select_files(paths, exclude_filenames):
+    files = []
+    for path in paths:
+        path = Path(path).expanduser().resolve()
+        files.extend(sorted(path.glob('*.h5')) if path.is_dir() else [path])
+    if not files or len(set(files)) != len(files) or any(not path.is_file() or path.suffix != '.h5' for path in files):
+        raise ValueError('Select distinct completed .h5 subsets')
+    excluded = []
+    for filename in sorted(set(exclude_filenames)):
+        matches = [path for path in files if path.name == filename]
+        if len(matches) != 1:
+            raise ValueError(f'--nisar-exclude {filename!r} must match exactly one input .h5 filename; found {len(matches)}')
+        path = matches[0]
+        files.remove(path)
+        excluded.append({'filename': filename, 'path': str(path)})
+    if not files:
+        raise ValueError('NISAR exclusions leave no inputs to package')
+    return files, excluded
+
+
+def package_nisar(paths, *, layer=1, output, force=False, revisions='error', workers=None, geometry_cache=None,
+                  decimation=1, exclude_filenames=()):
     from .packaging import variable, strings, timestamp, content_hashes
     from .tides import output_lock
     started = perf_counter()
@@ -205,12 +226,9 @@ def package_nisar(paths, *, layer=1, output, force=False, revisions='error', wor
     destination = Path(output).expanduser().resolve()
     if destination.suffix != '.nc' or layer not in (1, 2, 3):
         raise ValueError('NISAR packaging needs a .nc output and layer 1, 2, or 3')
-    files = []
-    for p in paths:
-        p = Path(p).expanduser().resolve()
-        files.extend(sorted(p.glob('*.h5')) if p.is_dir() else [p])
-    if not files or len(set(files)) != len(files) or any(not p.is_file() or p.suffix != '.h5' for p in files):
-        raise ValueError('Select distinct completed .h5 subsets')
+    files, excluded = select_files(paths, exclude_filenames)
+    for item in excluded:
+        logging.warning('Excluding NISAR subset by request: %s', item['path'])
     records = []
     for i, p in enumerate(files):
         phase = perf_counter()
@@ -256,6 +274,8 @@ def package_nisar(paths, *, layer=1, output, force=False, revisions='error', wor
             'implementation': implementation, 'geometry_dependencies': dependencies,
             'revision_selection': {'policy': revisions, 'superseded_inputs': superseded},
             'inputs': [{k: r[k] for k in ('granuleId', 'path', 'sha256')} for r in records]}
+    if excluded:
+        spec['excluded_inputs'] = excluded
     destination.parent.mkdir(parents=True, exist_ok=True)
     with output_lock(destination.parent), geometry:
         if destination.exists():
@@ -264,7 +284,8 @@ def package_nisar(paths, *, layer=1, output, force=False, revisions='error', wor
                     raise ValueError('Refusing to replace an unrelated file')
                 if old.attrs['package_identity'] == identity(spec) and not force:
                     logging.info('Validating existing NISAR package for reuse: %s', destination)
-                    return validate_nisar(destination) | {'reused': True, 'superseded_products': superseded}
+                    return validate_nisar(destination) | {'reused': True, 'superseded_products': superseded,
+                                                          'excluded_inputs': excluded}
             if not force:
                 raise ValueError('Output differs; choose another output or use --force')
         with tempfile.TemporaryDirectory(prefix='.nisar-package-', dir=destination.parent) as tmp:
@@ -378,4 +399,5 @@ def package_nisar(paths, *, layer=1, output, force=False, revisions='error', wor
         elapsed = perf_counter()-started
         logging.info('Published NISAR package in %.1fs; %s', elapsed, geometry.stats)
         return result | {'path': str(destination), 'reused': False, 'superseded_products': superseded,
+                         'excluded_inputs': excluded,
                          'performance': {'workers': geometry.workers, 'elapsed_seconds': elapsed, **geometry.stats}}

@@ -540,6 +540,8 @@ def main(argv=None):
                         help='NISAR integer sampling stride in both axes (default: 1); 3 gives 240 m without averaging')
     parser.add_argument('--nisar-revisions', choices=('error', 'latest'), default='error',
                         help='Duplicate GOFF revisions: reject (default) or choose the highest final counter')
+    parser.add_argument('--nisar-exclude', metavar='FILENAME.h5', action='append', default=[],
+                        help='Skip an exact GOFF subset filename before import (repeat for multiple files)')
     parser.add_argument('--workers', type=int, help='NISAR geometry processes (default: available CPUs, capped at 4); use 1 for serial')
     cache = parser.add_mutually_exclusive_group()
     cache.add_argument('--geometry-cache', help='NISAR geometry cache directory (default: .nisar-geometry-cache beside output)')
@@ -558,10 +560,12 @@ def main(argv=None):
             from .nisar_packaging import package_nisar
             report = package_nisar(args.nisar_subsets, layer=args.layer, output=args.output, force=args.force,
                                    revisions=args.nisar_revisions, workers=args.workers, geometry_cache=args.geometry_cache,
-                                   decimation=args.decimation)
+                                   decimation=args.decimation, exclude_filenames=args.nisar_exclude)
         else:
             if args.nisar_revisions != 'error':
                 raise ValueError('--nisar-revisions applies only to --nisar-subsets')
+            if args.nisar_exclude:
+                raise ValueError('--nisar-exclude applies only to --nisar-subsets')
             if args.workers is not None or args.geometry_cache is not None:
                 raise ValueError('--workers and geometry cache options apply only to --nisar-subsets')
             if args.decimation != 1:

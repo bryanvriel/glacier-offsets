@@ -220,6 +220,29 @@ class NisarTests(unittest.TestCase):
             self.assertEqual(importer.call_args.kwargs['revisions'], 'latest')
         self.assertEqual(main(['stack.yaml', '--nisar-revisions', 'latest']), 2)
 
+    def test_cli_excludes_reviewed_subset_before_import(self):
+        from glacier_offsets.packaging import main
+        source = enriched(self.root/'keep.h5')
+        excluded = self.root/'exclude.h5'
+        excluded.write_bytes(b'not an enriched subset')
+        out = self.root/'package.nc'
+        args = ['--nisar-subsets', str(self.root), '--nisar-exclude', excluded.name, '--output', str(out), '--workers', '1']
+        with patch('glacier_offsets.nisar_packaging.native_geometry', test_geometry), patch('builtins.print'):
+            self.assertEqual(main(args), 0)
+            self.assertEqual(main(args), 0)
+        with h5netcdf.File(out) as h:
+            spec = json.loads(h['provenance_json'][()].decode())
+            self.assertEqual([r['path'] for r in spec['inputs']], [str(source.resolve())])
+            self.assertEqual(spec['excluded_inputs'], [{'filename': excluded.name, 'path': str(excluded.resolve())}])
+        self.assertEqual(excluded.read_bytes(), b'not an enriched subset')
+        before = out.read_bytes()
+        with self.assertRaisesRegex(ValueError, 'found 0'):
+            package_nisar([self.root], output=out, exclude_filenames=['typo.h5'], force=True)
+        with self.assertRaisesRegex(ValueError, 'leave no inputs'):
+            package_nisar([self.root], output=out, exclude_filenames=[source.name, excluded.name], force=True)
+        self.assertEqual(out.read_bytes(), before)
+        self.assertEqual(main(['stack.yaml', '--nisar-exclude', excluded.name]), 2)
+
     def test_frame_overlap_ownership_and_reprocessed_rejection(self):
         from glacier_offsets.nisar_collection import NisarCollection, collect_nisar
         path = synthetic(self.root/'raw.nc', n=2, tracks=(75,))
