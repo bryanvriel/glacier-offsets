@@ -11,13 +11,15 @@ import numpy as np
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
 
-from glacier_offsets.displacement import valid_nisar_mask
+from glacier_offsets.displacement import text, valid_nisar_mask
 
 
 def plot_subset(source, output, layer, fixed_limit):
     with h5py.File(source, 'r') as h:
         x, y = h['x'][:], h['y'][:]
         epsg = int(h.attrs.get('epsg', 3031))
+        dates = '_'.join(text(h[f'identification/{role}ZeroDopplerStartTime'][()])[:10]
+                         for role in ('reference', 'secondary'))
         valid = valid_nisar_mask(h['mask'][:])
         offsets = [h[f'layer{layer}/{name}'][:] for name in ('slantRangeOffset', 'alongTrackOffset')]
     if valid.shape != (len(y), len(x)) or any(offset.shape != valid.shape for offset in offsets):
@@ -42,7 +44,7 @@ def plot_subset(source, output, layer, fixed_limit):
             ax.set(title=f'{label} · {mask.mean():.0%} valid', xlabel=f'EPSG:{epsg} x (m)')
         axes[0].set_ylabel(f'EPSG:{epsg} y (m)')
         axes[0].locator_params(nbins=5)
-        fig.suptitle(f'{source.stem}\nLayer {layer}', fontsize=9)
+        fig.suptitle(f'{source.stem}\n{dates} · Layer {layer}', fontsize=9)
         fig.savefig(output, dpi=150)
     finally:
         plt.close(fig)
