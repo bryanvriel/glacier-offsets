@@ -287,9 +287,9 @@ differences can arise when source slices use different nominal reference-height
 surfaces. With an orbit available, the reader checks the zero-Doppler/range
 equations, requires each adjacent complete row to fit one reference height
 (at most 1 m height spread), and requires every boundary fragment to match one
-of those two surfaces within 1 m. Reference heights must lie within the annotated
-grid's height envelope (including zero), with a two-azimuth-pixel allowance;
-zero-Doppler residuals must also be within two azimuth pixels. Only complete,
+of those two surfaces within 1 m. A source slice's nominal reference height can
+fall outside the point heights retained in the cropped grid. Zero-Doppler
+residuals must also be within two azimuth pixels. Only complete,
 matching range-sample rows qualify. The reader retains a complete following-source
 row when available, otherwise a complete preceding-source row. It copies that
 entire row without averaging, interpolation or coordinate changes. The logged
