@@ -132,6 +132,19 @@ class AnnotationGeometryTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'coordinates disagree'):
                     boundary_grid(tree)
 
+    def test_source_surface_can_exceed_the_assembled_grid_point_heights(self):
+        tree, orbit = reference_surface_annotation()
+        grid = tree.find('geolocationGrid/geolocationGridPointList')
+        for point in grid:
+            point.find('height').text = '200'
+
+        normalized, affected = boundary_grid(tree, orbit)
+
+        self.assertEqual(affected, {0, 1})
+        selected = normalized.findall('.//geolocationGridPoint[line="1000"]')
+        self.assertEqual([ET.tostring(point) for point in selected],
+                         [ET.tostring(point) for point in grid[3:6]])
+
     def test_orbit_join_does_not_accept_arbitrary_conflicts_or_partial_rows(self):
         for problem in ('position','range','doppler','height','fragment','neighbour','time'):
             with self.subTest(problem=problem):

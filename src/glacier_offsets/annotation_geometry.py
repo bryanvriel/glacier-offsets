@@ -22,12 +22,12 @@ def _row_runs(grid, line):
     return runs
 
 
-def _orbit_row(row, orbit, spacing, bounds):
+def _orbit_row(row, orbit, spacing):
     """Check zero Doppler and infer the row's nominal reference height.
 
-    Annotation coordinates may use one nominal height per source slice rather
-    than each point's height field. Solve the range equation along the WGS84
-    normal and require one common height across the row. No coordinates change.
+    Solve the range equation along the WGS84 normal and require one common
+    height across the row. The source slice's nominal height can fall outside
+    the point heights retained in a cropped assembled grid.
     """
     import numpy as np
     import isce3
@@ -56,8 +56,7 @@ def _orbit_row(row, orbit, spacing, bounds):
             raise ValueError('invalid orbit intersection in source row')
         heights.append(float(height))
         along.append(float(abs(np.dot(target, velocity)/speed)))
-    if (not heights or max(heights)-min(heights) > 1.0 or max(along) > 2*spacing
-            or min(heights) < bounds[0] or max(heights) > bounds[1]):
+    if not heights or max(heights)-min(heights) > 1.0 or max(along) > 2*spacing:
         raise ValueError('source row is inconsistent with a common radar reference surface')
     return {'height_m': float(np.median(heights)), 'height_span_m': max(heights)-min(heights),
             'max_zero_doppler_distance_m': max(along)}
@@ -75,10 +74,8 @@ def source_boundary_row(tree, line, orbit):
     lines = int(tree.findtext('swathTiming/linesPerBurst'))
     samples = int(tree.findtext('swathTiming/samplesPerBurst'))
     spacing = float(tree.findtext('imageAnnotation/imageInformation/azimuthPixelSpacing'))
-    reported = [float(p.findtext('height')) for p in grid]
-    if not all(math.isfinite(h) for h in reported):
+    if not all(math.isfinite(float(p.findtext('height'))) for p in grid):
         raise ValueError('invalid annotated heights')
-    bounds = min(0., min(reported))-2*spacing, max(0., max(reported))+2*spacing
     previous, following = _row_runs(grid, line-lines), _row_runs(grid, line+lines)
     if len(previous) != 1 or len(following) != 1:
         raise ValueError('source join needs unambiguous adjacent rows')
@@ -86,8 +83,8 @@ def source_boundary_row(tree, line, orbit):
     if (len(pixels) < 3 or pixels != sorted(set(pixels)) or pixels[0] != 0 or pixels[-1] != samples-1
             or [int(p.findtext('pixel')) for p in following[0]] != pixels):
         raise ValueError('source join needs matching complete adjacent rows')
-    before = _orbit_row(previous[0], orbit, spacing, bounds)
-    after = _orbit_row(following[0], orbit, spacing, bounds)
+    before = _orbit_row(previous[0], orbit, spacing)
+    after = _orbit_row(following[0], orbit, spacing)
     if abs(before['height_m']-after['height_m']) <= 2.:
         raise ValueError('coordinate conflict is not a change of source reference surface')
     candidates = []
@@ -95,7 +92,7 @@ def source_boundary_row(tree, line, orbit):
         actual = [int(p.findtext('pixel')) for p in row]
         if any(pixel not in pixels for pixel in actual):
             raise ValueError('source row has unexpected range samples')
-        checked = _orbit_row(row, orbit, spacing, bounds)
+        checked = _orbit_row(row, orbit, spacing)
         distances = [abs(checked['height_m']-r['height_m']) for r in (before, after)]
         if min(distances) > 1.:
             raise ValueError('source fragment does not match either neighbouring reference surface')

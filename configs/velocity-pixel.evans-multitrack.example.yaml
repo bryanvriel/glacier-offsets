@@ -1,0 +1,32 @@
+# Copy into the Evans project's configs directory. Select the PySolid interpreter below.
+version: 2
+collection:
+  mode: sentinel1_multitrack
+inputs:
+  - ../work/stack-path37/packages/horizontal_tide_corrected_w128x512.nc
+  - ../work/stack/packages/horizontal_tide_corrected_w128x512.nc
+cache_directory: ../work/stack/velocity_pixels_proposal/cache
+output: ../work/velocity_multitrack/path37_path65
+
+corrections:
+  ocean_tide: require_existing
+  solid_earth: true
+noise:
+  mode: controls
+  group_by: track_year
+  regions: regions.iw3_anchors.controls_only.json
+coverage:
+  min_pairs_per_year: 10
+  min_pairs_per_year_scaling: span
+  min_pairs_total: 40
+  min_pairs_standard: 40
+  min_span_days: 540
+screening:
+  min_peak: 0.05
+  robust: huber
+  robust_scale: source
+diagnostics:
+  regions: null
+execution:
+  solid_earth_python: /path/to/isce3/bin/python
+  batch_size: 384

@@ -102,30 +102,41 @@ def _source_maps(directory,component,mask):
             int(np.asarray(obs.attrs.get('EPSG',3031)).ravel()[0]))
 
 
-def _netcdf_maps(directory,component,mask):
+def _netcdf_maps(directory,component,mask,track=None):
     path=directory/'coefficient_maps.nc';prefix=COMPONENTS[component][0]
     with h5py.File(path) as h:
         if h.attrs.get('status')!='complete':raise ValueError('Coefficient maps are incomplete')
         association='analysis_location_index' if 'analysis_location_index' in h else 'source_observation_index'
         if association not in h:raise ValueError('Coefficient maps lack analysis_location_index or source_observation_index')
         source_id=h[association][:];foot=source_id>=0
-        estimable=h['azimuth_fit_estimable' if component=='msf-azimuth' else 'fit_estimable'][:].astype(bool)
+        if component=='msf-azimuth' and 'msf_azimuth_amplitude_by_track' in h:
+            tracks=h['track'][:].tolist()
+            if track not in tracks:
+                raise ValueError(f'Choose an azimuth track from {tracks}')
+            i=tracks.index(track)
+            amplitude,phase,estimable=(h[f'msf_azimuth_{name}_by_track'][i] for name in ('amplitude','phase_deg','estimable'))
+        else:
+            if 'msf_azimuth_amplitude_by_track' in h and component.startswith('vertical-'):
+                prefix=component.replace('-','_')
+            amplitude,phase=(h[prefix+'_'+name][:] for name in ('amplitude','phase_deg'))
+            estimable=h['azimuth_fit_estimable' if component=='msf-azimuth' else 'fit_estimable'][:]
         names={'standard':'standard_coverage_mask','along':'along_display_mask',
                'phase-quality':'phase_quality_display_mask','flow-proxy':'along_flow_proxy_mask'}
-        selected=foot&estimable
+        selected=foot&estimable.astype(bool)
         if mask!='estimable':selected&=h[names[mask]][:].astype(bool)
         origin=h.attrs.get('phase_origin','2000-01-01 00:00 UTC')
         if isinstance(origin,bytes):origin=origin.decode()
-        return MapData(h['x'][:],h['y'][:],h[prefix+'_amplitude'][:],h[prefix+'_phase_deg'][:],
+        return MapData(h['x'][:],h['y'][:],amplitude,phase,
             foot,selected,source_id,mask,str(origin),(path,),int(np.asarray(h.attrs.get('EPSG',3031)).ravel()[0]))
 
 
-def read_maps(directory,component='msf-along',mask='default'):
+def read_maps(directory,component='msf-along',mask='default',track=None):
     """Prefer source fits; also support a directory containing only exported NetCDF."""
+    from .velocity_multitrack_workflow import is_multitrack
     directory,config_file=resolve_map_input(directory);mask=_mask_name(component,mask)
-    if (directory/'source_coefficients.h5').exists() and ((directory/'observations.h5').exists() or (directory/'run-manifest.json').exists()):
+    if not is_multitrack(directory) and (directory/'source_coefficients.h5').exists() and ((directory/'observations.h5').exists() or (directory/'run-manifest.json').exists()):
         result=_source_maps(directory,component,mask)
-    elif (directory/'coefficient_maps.nc').exists():result=_netcdf_maps(directory,component,mask)
+    elif (directory/'coefficient_maps.nc').exists():result=_netcdf_maps(directory,component,mask,track)
     else:raise ValueError('Directory needs source fits with observations/run manifest, or coefficient_maps.nc')
     if result.x.ndim!=1 or result.y.ndim!=1 or min(len(result.x),len(result.y))<2:
         raise ValueError('Map needs one-dimensional x/y coordinates with at least two cells each')
@@ -148,14 +159,25 @@ def read_maps(directory,component='msf-along',mask='default'):
 
 
 def plot_maps(directory,*,component='msf-along',mask='default',amplitude_max=None,
-              phase_range='signed',output_dir=None,dpi=180,regions=None):
+              phase_range='signed',output_dir=None,dpi=180,regions=None,track=None):
     if component not in (*COMPONENTS,'all'):raise ValueError(f'Unknown component: {component}')
     if amplitude_max is not None and (not np.isfinite(amplitude_max) or amplitude_max<=0):raise ValueError('amplitude-max must be positive')
     if phase_range not in ('signed','positive'):raise ValueError('phase-range must be signed or positive')
     if isinstance(dpi,bool) or not isinstance(dpi,int) or dpi<=0:raise ValueError('dpi must be a positive integer')
     directory,config_file=resolve_map_input(directory)
     components=tuple(COMPONENTS) if component=='all' else (component,)
-    data={name:read_maps(directory,name,mask) for name in components}
+    azimuth_tracks=[None]
+    netcdf=directory/'coefficient_maps.nc'
+    if 'msf-azimuth' in components and netcdf.is_file():
+        with h5py.File(netcdf,'r') as h:
+            if 'msf_azimuth_amplitude_by_track' in h:
+                azimuth_tracks=h['track'][:].tolist()
+    if track is not None and track not in azimuth_tracks:
+        raise ValueError('--track requires a saved multitrack azimuth comparator')
+    if track is not None:
+        azimuth_tracks=[track]
+    data={(name,t):read_maps(directory,name,mask,t) for name in components
+          for t in (azimuth_tracks if name=='msf-azimuth' else [None])}
     if regions is None and (directory/'run-manifest.json').exists():
         regions=json.loads((directory/'run-manifest.json').read_text())['config']['diagnostics']['regions']
     region_file=auxiliary_path(directory,'regions',regions)
@@ -170,8 +192,11 @@ def plot_maps(directory,*,component='msf-along',mask='default',amplitude_max=Non
     from matplotlib.patches import Rectangle
     out=Path(output_dir).expanduser().resolve() if output_dir is not None else directory/'amplitude_phase_maps'
     out.mkdir(parents=True,exist_ok=True);records=[]
-    for name,maps in data.items():
+    for (name,orbit),maps in data.items():
         prefix,title,units,default_max,_=COMPONENTS[name];maximum=default_max if amplitude_max is None else amplitude_max
+        if orbit is not None:
+            prefix+=f'_T{orbit:03d}'
+            title+=f' (path {orbit:03d})'
         x,y=maps.x,maps.y;dx=x[1]-x[0];dy=y[1]-y[0]
         extent=np.array([x[0]-dx/2,x[-1]+dx/2,y[-1]+dy/2,y[0]-dy/2])/1000
         phase=(maps.phase+180)%360-180 if phase_range=='signed' else maps.phase%360
@@ -197,6 +222,8 @@ def plot_maps(directory,*,component='msf-along',mask='default',amplitude_max=Non
             'phase_limits_deg':phase_limits,'phase_origin':maps.phase_origin,'native_cells_displayed':int(maps.selected.sum()),
             'unique_sources_displayed':len(np.unique(maps.source_id[maps.selected])),
             'files':[str(path) for path in paths]})
+        if orbit is not None:
+            records[-1]['track']=orbit
         print(paths[0])
     inputs={str(path):digest(path) for maps in data.values() for path in maps.files}
     if config_file is not None:inputs[str(config_file)]=digest(config_file)
@@ -209,6 +236,7 @@ def plot_maps(directory,*,component='msf-along',mask='default',amplitude_max=Non
 def add_arguments(parser):
     parser.add_argument('directory',type=Path,metavar='DIRECTORY_OR_YAML',help='Velocity output directory or the inversion YAML (uses its output path)')
     parser.add_argument('--component',choices=(*COMPONENTS,'all'),default='msf-along')
+    parser.add_argument('--track',type=int,help='Relative orbit for a multitrack azimuth comparator (default: all tracks)')
     parser.add_argument('--mask',choices=MASKS,default='default',help='default: along for joint components, standard for direct azimuth')
     parser.add_argument('--amplitude-max',type=float,help='Upper color limit in m/day (horizontal) or m (vertical); clips colors only')
     parser.add_argument('--phase-range',choices=('signed','positive'),default='signed',help='signed: -180..180; positive: 0..360 degrees')
@@ -219,7 +247,7 @@ def add_arguments(parser):
 
 def run_cli(args):
     return plot_maps(args.directory,component=args.component,mask=args.mask,amplitude_max=args.amplitude_max,
-        phase_range=args.phase_range,output_dir=args.output_dir,dpi=args.dpi,regions=args.regions)
+        phase_range=args.phase_range,output_dir=args.output_dir,dpi=args.dpi,regions=args.regions,track=args.track)
 
 
 def main(argv=None):

@@ -25,6 +25,7 @@ opens any input. `fit` with a version-2 YAML stops after fitting; `export`,
 | Key | Meaning |
 | --- | --- |
 | `version: 2` | Required |
+| `collection.mode` | Optional `sentinel1_multitrack` for aligned relative orbits |
 | `inputs` | Displacement packages (`glacier-offsets-displacements-v1`), any number, any order |
 | `cache_directory` | Shared immutable artifacts; may serve several result directories |
 | `output` | Result directory; must differ from the cache |
@@ -44,7 +45,7 @@ the inputs, or too few pairs in a year) are reported together before any
 preparation. `remove_mixed_windows` stays `false` by default; `run`/`fit` accept
 `--remove-mixed-windows`/`--no-remove-mixed-windows` and `--batch-size`.
 
-### Virtual collection
+### Default virtual collection
 
 Packages must share EPSG/CRS definition, `x`/`y`, geometry, reference-date and
 layout identities, burst IDs, source associations and ownership, reference
@@ -58,6 +59,48 @@ order does not matter; nothing is merged, reprojected or bridged, and exact
 owning-burst endpoints are never replaced by scene times.
 `collection-manifest.json` records every pair's file, slot, calendar-midpoint
 year, spacecraft order and whether it crosses a calendar year.
+
+### Joint Sentinel-1 tracks
+
+Use [the Evans multitrack example](../../configs/velocity-pixel.evans-multitrack.example.yaml)
+for paths 37 and 65. Copy it into the Evans project’s `configs` directory and
+set `execution.solid_earth_python` to the interpreter that provides PySolid.
+
+```bash
+glacier-offsets velocity-pixels pilot configs/velocity-pixel.evans-multitrack.example.yaml configs/gps_points.evans_msf.csv
+glacier-offsets velocity-pixels run configs/velocity-pixel.evans-multitrack.example.yaml
+```
+
+`collection.mode: sentinel1_multitrack` takes one self-contained displacement
+package per Sentinel-1 relative orbit. The packages need the same regular
+EPSG:3031 grid posting and integer cell offsets. The common footprint is
+joined by cell center. Each tuple of native match centers is fitted once and
+indexed by `source_observation_index` in the maps. Native chip separation is
+recorded in metres. Different matching strides can reuse one chip across
+multiple tuples, so map statistics use 3 km block representatives without
+repeating native chips.
+
+This mode uses `noise.mode: controls` and `noise.group_by: track_year`. It
+reuses compatible native observation and solid-Earth corrections. Each track's
+screen and noise calibration use its own observations and reviewed grounded
+controls. The joint model projects shared annual EN, along-flow Msf, and residual
+vertical M2/O1 into each track's range and azimuth at its exact burst endpoints.
+The alternating spacecraft displacement is a separate azimuth term for each
+track and year. Coverage combines the per-track yearly minimums with the joint
+span, phase and information checks.
+
+The pilot writes `evans-pilot.md` and `evans-pilot.json` with source replay,
+timing-based injections and paired, acquisition-purged held-out scores. The map
+workflow writes `coefficient_maps.nc`, `map-summary.json`, and `report.md`. The
+NetCDF provides the annual EN covariance, jointly estimated Msf amplitude and
+phase, Msf information by track, per-track pair counts and radar RMS, and
+separate direct-azimuth Msf comparators on its `track` coordinate. Conditional
+uncertainty uses calendar clusters shared across the tracks. These outputs are
+exploratory estimates.
+
+Use `velocity-pixels maps CONFIG --component msf-azimuth --track 37` to plot an
+individual comparator. The azimuth map command plots each track when the track
+option is omitted.
 
 ### Cache artifacts and the run manifest
 

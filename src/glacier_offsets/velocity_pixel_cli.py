@@ -57,6 +57,9 @@ def main(argv=None):
     add_arguments(maps)
     report = commands.add_parser('report', help='Write a report inside the result directory')
     report.add_argument('output', type=Path, help='Result directory or inversion YAML')
+    pilot = commands.add_parser('pilot', help='Run the Sentinel-1 multitrack point pilot and held-out comparisons')
+    pilot.add_argument('config', type=Path)
+    pilot.add_argument('points', type=Path, help='CSV with name, longitude and latitude columns')
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
     try:
@@ -77,12 +80,25 @@ def main(argv=None):
             if args.remove_mixed_windows is not None:
                 options += ['--remove-mixed-windows' if args.remove_mixed_windows else '--no-remove-mixed-windows']
             fit_main(options)
+        elif args.command == 'pilot':
+            from .velocity_multitrack_pilot import run_pilot
+            print(run_pilot(args.config, args.points))
         elif args.command == 'export':
-            from .velocity_pixel_export import export
-            export(_output(args.output), args.regions)
+            from .velocity_multitrack_workflow import is_multitrack
+            out = _output(args.output)
+            if is_multitrack(out):
+                from .velocity_multitrack_workflow import export
+                export(out)
+            else:
+                from .velocity_pixel_export import export
+                export(out, args.regions)
         elif args.command == 'verify':
             out = _output(args.output)
-            if _v2(out):
+            from .velocity_multitrack_workflow import is_multitrack
+            if is_multitrack(out):
+                from .velocity_multitrack_workflow import verify
+                verify(out)
+            elif _v2(out):
                 from .velocity_workflow_products import RunView, verify_v2
                 verify_v2(RunView.v2(out))
             else:
@@ -90,13 +106,22 @@ def main(argv=None):
                 verify(out, args.regional_support)
         elif args.command == 'plot':
             from .velocity_pixel_plot import run as plot_run
-            plot_run(_output(args.output), args.regions)
+            from .velocity_multitrack_workflow import is_multitrack
+            out = _output(args.output)
+            if is_multitrack(out):
+                raise ValueError('Use velocity-pixels pilot CONFIG POINTS.csv for multitrack point diagnostics')
+            plot_run(out, args.regions)
         elif args.command == 'maps':
             from .velocity_pixel_maps import run_cli
             run_cli(args)
         else:
             out = _output(args.output)
-            if _v2(out):
+            from .velocity_multitrack_workflow import is_multitrack
+            if is_multitrack(out):
+                from .velocity_multitrack_workflow import report
+                report(out)
+                print(out/'report.md')
+            elif _v2(out):
                 import json
                 from .velocity_workflow_products import RunView, report_v2
                 points = out/'point_timeseries/points.json'

@@ -19,7 +19,8 @@ CONTROL_MINIMUM_SAMPLES = 40  # calibrate_noise's existing held-out residual min
 EXECUTION_DEFAULTS = {'solid_earth_python': None, 'batch_size': 512,
                       'preparation_chunk_pairs': 8, 'solid_earth_spacing_deg': 0.1}
 TOP_LEVEL = {'version', 'inputs', 'cache_directory', 'output', 'corrections', 'noise',
-             'diagnostics', 'execution', *DEFAULT_PARAMETERS}
+             'diagnostics', 'execution', 'collection', *DEFAULT_PARAMETERS}
+MULTITRACK = 'sentinel1_multitrack'
 
 
 def config_version(path):
@@ -89,6 +90,12 @@ def load_workflow_config(path):
         raise ValueError('Choose an output directory different from cache_directory')
     if result['output'] in inputs or result['cache_directory'] in inputs:
         raise ValueError('cache_directory and output must not be input files')
+    multitrack = 'collection' in raw
+    if multitrack:
+        collection = _mapping(raw, 'collection', ('mode',))
+        if collection.get('mode') != MULTITRACK or len(inputs) < 2:
+            raise ValueError(f'collection.mode: {MULTITRACK} requires at least two input packages')
+        result['collection'] = collection
 
     corrections = _mapping(raw, 'corrections', ('ocean_tide', 'solid_earth'))
     ocean = corrections.get('ocean_tide', 'require_existing')
@@ -103,9 +110,14 @@ def load_workflow_config(path):
     mode = noise.get('mode')
     if mode not in NOISE_MODES:
         raise ValueError('noise.mode must be supplied, controls or pair')
-    if noise.get('group_by', 'year') not in ('year', 'track_year'):
+    group_by = noise.get('group_by', 'track_year' if multitrack else 'year')
+    if group_by not in ('year', 'track_year'):
         raise ValueError('noise.group_by supports year or track_year')
-    record = {'mode': mode, 'group_by': noise.get('group_by', 'year')}
+    if multitrack and group_by != 'track_year':
+        raise ValueError(f'collection.mode: {MULTITRACK} requires noise.group_by: track_year')
+    if multitrack and mode != 'controls':
+        raise ValueError(f'collection.mode: {MULTITRACK} requires noise.mode: controls')
+    record = {'mode': mode, 'group_by': group_by}
     if mode == 'pair':
         if set(noise)-{'mode','file'}:
             raise ValueError('noise.mode: pair accepts only file')
