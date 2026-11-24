@@ -78,6 +78,10 @@ class Layout:
         partner = self.order_spacecraft.get(str(year), {}).get('partner') or 'S1B'
         return f'{partner}_later - {partner}_earlier; azimuth displacement metres'
 
+    def order_columns(self, field):
+        for year in self.order_years:
+            yield f'order_{year}', field['order']*(field['year_index'] == self.years.index(year))
+
     def record(self):
         return {'years': list(self.years), 'order_years': list(self.order_years),
                 'order_spacecraft': self.order_spacecraft,
@@ -248,11 +252,10 @@ def pair_covariance(field, covariances):
 
 def design(field, layout, axis, covariances, model='residual_vertical'):
     early, late = field['early'], field['late']
-    year = field['year_index']
-    order = field['order']
-    overlap = np.nan_to_num(layout.overlaps(early, late))
+    basis = field.get('temporal_basis')
+    overlap = np.nan_to_num(layout.overlaps(early, late)) if basis is None else basis['overlap']
     ns, nt = early.shape
-    hb = np.nan_to_num(harmonic(early, late))
+    hb = np.nan_to_num(harmonic(early, late)) if basis is None else basis['msf']
     names = layout.names(model)
     joint = model == 'residual_vertical'
     if model not in MODELS:
@@ -260,23 +263,20 @@ def design(field, layout, axis, covariances, model='residual_vertical'):
     a = np.zeros((ns, nt, 2 if joint else 1, len(names)))
     geom = pair_geometry(field)
     ny = len(layout.years)
-    order_columns = {y: names.index(f'order_{y}') for y in layout.order_years}
+    for name, column in layout.order_columns(field):
+        a[:, :, int(joint), names.index(name)] = column
     if joint:
         for k in range(ny):
             a[:, :, :, 2*k:2*k+2] = overlap[:, :, k, None, None]*geom[..., :2]
-        for k, y in enumerate(layout.years):
-            if y in order_columns:
-                a[:, :, 1, order_columns[y]] = order[None]*(year == k)[None]
         start = names.index(VERTICAL_NAMES[0])
-        a[:, :, :, start:start+4] = vertical_columns(early, late)[:, :, None, :]*geom[..., 2, None]
+        vertical = vertical_columns(early, late) if basis is None else basis['vertical']
+        a[:, :, :, start:start+4] = vertical[:, :, None, :]*geom[..., 2, None]
         a[:, :, :, -2:] = hb[:, :, None, :]*np.einsum('stci,si->stc', geom[..., :2], axis)[..., None]
         inv = np.linalg.inv(np.linalg.cholesky(pair_covariance(field,covariances)))
         y = field['data']
     else:
-        for k, yr in enumerate(layout.years):
+        for k in range(ny):
             a[:, :, 0, k] = overlap[:, :, k]
-            if yr in order_columns:
-                a[:, :, 0, order_columns[yr]] = order[None]*(year == k)[None]
         a[:, :, 0, -2:] = hb
         inv = (1/np.sqrt(pair_covariance(field,covariances)[:, 1, 1]))[:, None, None]
         y = field['data'][:, :, [1]]
@@ -298,8 +298,18 @@ def robust_mode(robust, covariances):
     return robust
 
 
+def target_information(normal):
+    """Schur complement for the last two columns after nuisance elimination."""
+    nn, nh = normal[:, :-2, :-2], normal[:, :-2, -2:]
+    sc = np.sqrt(np.maximum(np.diagonal(nn, axis1=1, axis2=2), 1e-30))
+    ninv = np.linalg.pinv(nn/sc[:, :, None]/sc[:, None, :], rcond=1e-10, hermitian=True)/sc[:, :, None]/sc[:, None, :]
+    info = normal[:, -2:, -2:]-np.einsum('sji,sjk,skl->sil', nh, ninv, nh)
+    return (info+info.swapaxes(1, 2))/2
+
+
 def solve(field, layout, good, axis, covariances, model='residual_vertical', *, cluster_days=30., robust_cutoff=3.,
-          robust='auto', robust_scale='covariance', max_iterations=30):
+          robust='auto', robust_scale='covariance', max_iterations=30, annual_uncertainty=False,
+          information_groups=None, batched=False):
     """Independent-source GLS with calendar-cluster diagnostic covariance.
 
     With Huber weighting, pair weights are min(1, cutoff/|r|) for the whitened
@@ -324,14 +334,21 @@ def solve(field, layout, good, axis, covariances, model='residual_vertical', *, 
     residual = np.zeros_like(y)
     rank = np.zeros(ns, int)
     iterations = np.zeros(ns, int)
-    active = np.arange(ns)
+    active = np.flatnonzero(good.any(1)) if batched else np.arange(ns)
     for iteration in range(max_iterations if robust == 'huber' else 1):
         if not len(active):
             break
         k = active
         iterations[k] = iteration+1
-        nk = np.einsum('st,stci,stcj->sij', w[k], a[k], a[k])
-        rhs = np.einsum('st,stci,stc->si', w[k], a[k], y[k])
+        if batched:
+            flat = a[k].reshape(len(k), nt*nc, np_)
+            weighted_transpose = (w[k, :, None, None]*a[k]).reshape(flat.shape).swapaxes(-1, -2)
+            nk = weighted_transpose @ flat
+            nk = (nk+nk.swapaxes(-1,-2))/2
+            rhs = (weighted_transpose @ y[k].reshape(len(k), nt*nc, 1))[..., 0]
+        else:
+            nk = np.einsum('st,stci,stcj->sij', w[k], a[k], a[k])
+            rhs = np.einsum('st,stci,stc->si', w[k], a[k], y[k])
         scale = np.sqrt(np.maximum(np.diagonal(nk, axis1=1, axis2=2), 1e-30))
         unit = nk/scale[:, :, None]/scale[:, None, :]
         eig = np.linalg.eigvalsh(unit)
@@ -356,12 +373,7 @@ def solve(field, layout, good, axis, covariances, model='residual_vertical', *, 
         w[k[moving]] = updated[moving]
         active = k[moving]
     # Target information after marginalizing all nuisance coefficients.
-    nn = normal[:, :-2, :-2]
-    nh = normal[:, :-2, -2:]
-    sc = np.sqrt(np.maximum(np.diagonal(nn, axis1=1, axis2=2), 1e-30))
-    ninv = np.linalg.pinv(nn/sc[:, :, None]/sc[:, None, :], rcond=1e-10, hermitian=True)/sc[:, :, None]/sc[:, None, :]
-    info = normal[:, -2:, -2:]-np.einsum('sji,sjk,skl->sil', nh, ninv, nh)
-    info = (info+info.swapaxes(1, 2))/2
+    info = target_information(normal)
     teig = np.linalg.eigvalsh(info)
     condition = np.divide(teig[:, 1], teig[:, 0], out=np.full(ns, np.inf), where=teig[:, 0] > 0)
     estimable = (rank == np_) & (teig[:, 0] > 1e-8) & (condition < 1e8)
@@ -395,7 +407,7 @@ def solve(field, layout, good, axis, covariances, model='residual_vertical', *, 
     sse = np.einsum('st,stc->s', w, residual**2)
     improvement = np.einsum('si,sij,sj->s', cs, info, cs)
     partial_r2 = improvement/np.maximum(sse+improvement, 1e-30)
-    return {'coefficients': coef, 'names': names, 'cs': cs, 'amplitude': amplitude, 'phase_deg': phase,
+    result = {'coefficients': coef, 'names': names, 'cs': cs, 'amplitude': amplitude, 'phase_deg': phase,
             'coefficient_covariance': cov, 'amplitude_sigma': amplitude_sigma, 'phase_sigma_deg': phase_sigma,
             'target_condition': condition, 'rank': rank, 'estimable': estimable, 'rms_m': rms,
             'partial_r2': partial_r2, 'calendar_clusters': nb,
@@ -403,6 +415,23 @@ def solve(field, layout, good, axis, covariances, model='residual_vertical', *, 
             'robust_channel_scale': channel_scale, 'robust_iterations': iterations,
             # Per-source Msf C/S influence of each calendar cluster (uncorrected sums; cov = cr1 * sum b b').
             'cluster_influence': adjusted, 'cluster_ids': blocks, 'cluster_cr1': cr1}
+    if annual_uncertainty:
+        if model != 'residual_vertical':
+            raise ValueError('Annual EN uncertainty requires the joint radar model')
+        annual = np.einsum('sip,sbp->sbi', inverse[:, :2*len(layout.years)], clusters)
+        annual = annual.reshape(ns, len(blocks), len(layout.years), 2)
+        result.update(annual_en_covariance=np.einsum('sbki,sbkj,s->skij', annual, annual, cr1),
+                      target_information=info,
+                      target_min_information=teig[:, 0])
+    if information_groups is not None:
+        group_information = []
+        for take in information_groups:
+            block = a[:, take]
+            flat = block.reshape(ns, nc*int(take.sum()), np_)
+            weight = (w[:, take, None, None]*block).reshape(flat.shape)
+            group_information.append(np.linalg.eigvalsh(target_information(weight.swapaxes(-1,-2) @ flat))[:, 0])
+        result['target_min_information_by_group'] = np.stack(group_information, axis=1)
+    return result
 
 
 def year_pair_minimums(calendar_early, calendar_late, year_index, years, min_pairs, scaling='none'):
@@ -463,17 +492,20 @@ def predict(field, layout, coefficients, names, axis):
     index = {name: j for j, name in enumerate(names)}
     early, late = field['early'], field['late']
     geom = pair_geometry(field)
-    overlap = np.nan_to_num(layout.overlaps(early, late))
+    basis = field.get('temporal_basis')
+    overlap = np.nan_to_num(layout.overlaps(early, late)) if basis is None else basis['overlap']
     prediction = np.zeros(early.shape+(2,))
     for k, y in enumerate(layout.years):
         velocity = coef[:, [index[f'east_velocity_{y}'], index[f'north_velocity_{y}']]]
         prediction += overlap[:, :, k, None]*np.einsum('stci,si->stc', geom[..., :2], velocity)
-        if f'order_{y}' in index:
-            prediction[..., 1] += field['order'][None]*(field['year_index'] == k)[None]*coef[:, index[f'order_{y}'], None]
+    for name, column in layout.order_columns(field):
+        prediction[..., 1] += column*coef[:, index[name], None]
     vertical = coef[:, [index[name] for name in VERTICAL_NAMES]]
-    prediction += np.einsum('stj,sj->st', vertical_columns(early, late), vertical)[..., None]*geom[..., 2]
+    tide_basis = vertical_columns(early, late) if basis is None else basis['vertical']
+    prediction += np.einsum('stj,sj->st', tide_basis, vertical)[..., None]*geom[..., 2]
     target = coef[:, [index[name] for name in TARGET_NAMES]]
-    prediction += (np.einsum('stj,sj->st', np.nan_to_num(harmonic(early, late)), target)[..., None]
+    msf = np.nan_to_num(harmonic(early, late)) if basis is None else basis['msf']
+    prediction += (np.einsum('stj,sj->st', msf, target)[..., None]
                    * np.einsum('stci,si->stc', geom[..., :2], axis))
     return prediction
 

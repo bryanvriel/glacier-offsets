@@ -26,7 +26,7 @@ from .velocity_pixel_general import Layout, fit_sources, parameter_units, robust
 from .velocity_pixel_runtime import module_fingerprints
 from .velocity_prepare import prepare_observations
 from .velocity_solid_earth import Interrupted, check_worker, interpreter, prepare_solid_earth
-from .velocity_workflow_config import impossible_settings, load_workflow_config, scientific_parameters
+from .velocity_workflow_config import MULTITRACK, impossible_settings, load_workflow_config, scientific_parameters
 
 
 RUN_MANIFEST = 'run-manifest.json'
@@ -267,9 +267,16 @@ def run_workflow(config_path, stages='run', interrupt=None, batch_size=None, rem
         config['execution']['batch_size'] = batch_size
     hook = _hook(interrupt)
     preflight(config, stages)
+    if config.get('collection', {}).get('mode') == MULTITRACK:
+        from .velocity_multitrack_workflow import run
+        solid_stop = interrupt['after'] if interrupt and interrupt.get('stage') == 'solid_earth' else None
+        return run(config, stages, hook, solid_stop)
     out = Path(config['output'])
     cache = Path(config['cache_directory'])
     with writer_lock(out):
+        from .velocity_multitrack_workflow import is_multitrack
+        if is_multitrack(out):
+            raise ValueError('Choose a separate output directory for the single-track collection')
         cache.mkdir(parents=True, exist_ok=True)
         manifest = collect(config['inputs'], cache)
         pairs_by_year = {int(k): v for k, v in manifest['pairs_by_year'].items()}
